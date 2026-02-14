@@ -1,6 +1,8 @@
 import { Router, Response } from 'express';
 import { AuditActionType } from '@prisma/client';
+import bcrypt from 'bcryptjs';
 import { authenticateUser, AuthRequest } from '../middleware/auth.middleware';
+import { strictRateLimiter } from '../middleware/rateLimit.middleware';
 import { prisma } from '../db/client';
 import * as auditService from '../services/audit.service';
 import {
@@ -17,12 +19,16 @@ const router = Router();
 
 router.use(authenticateUser);
 
-const resolveOrganizationIdForUser = async (userId: string) => {
+const resolveOrganizationAuthForUser = async (userId: string) => {
     const user = await prisma.user.findUnique({
         where: { id: userId },
-        select: { organizationId: true }
+        select: { organizationId: true, password: true }
     });
-    return user?.organizationId || null;
+    if (!user) return null;
+    return {
+        organizationId: user.organizationId || null,
+        passwordHash: user.password
+    };
 };
 
 const logOrgLinkAudit = async (
@@ -85,12 +91,12 @@ router.get('/link-requests', async (req: AuthRequest, res: Response) => {
             return res.status(401).json({ message: 'Unauthorized' });
         }
 
-        const organizationId = await resolveOrganizationIdForUser(userId);
-        if (!organizationId) {
+        const orgAuth = await resolveOrganizationAuthForUser(userId);
+        if (!orgAuth?.organizationId) {
             return res.status(403).json({ message: 'Organization account required' });
         }
 
-        const requests = await listOrganizationPendingLinkRequests(organizationId);
+        const requests = await listOrganizationPendingLinkRequests(orgAuth.organizationId);
         res.json({ requests });
     } catch (error: any) {
         console.error('[Org Link Requests] List error:', error);
@@ -98,7 +104,7 @@ router.get('/link-requests', async (req: AuthRequest, res: Response) => {
     }
 });
 
-router.post('/link-requests/:requestId/approve', async (req: AuthRequest, res: Response) => {
+router.post('/link-requests/:requestId/approve', strictRateLimiter, async (req: AuthRequest, res: Response) => {
     try {
         const requestId = Array.isArray(req.params.requestId)
             ? req.params.requestId[0]
@@ -108,9 +114,20 @@ router.post('/link-requests/:requestId/approve', async (req: AuthRequest, res: R
             return res.status(401).json({ message: 'Unauthorized' });
         }
 
-        const organizationId = await resolveOrganizationIdForUser(userId);
-        if (!organizationId) {
+        const orgAuth = await resolveOrganizationAuthForUser(userId);
+        if (!orgAuth?.organizationId) {
             return res.status(403).json({ message: 'Organization account required' });
+        }
+        const organizationId = orgAuth.organizationId;
+
+        const password = typeof req.body?.password === 'string' ? req.body.password : '';
+        if (!password.trim()) {
+            return res.status(400).json({ message: 'Password confirmation is required' });
+        }
+
+        const isPasswordValid = await bcrypt.compare(password, orgAuth.passwordHash);
+        if (!isPasswordValid) {
+            return res.status(401).json({ message: 'Invalid credentials' });
         }
 
         const result = await approveOrganizationLinkRequest({
@@ -134,6 +151,10 @@ router.post('/link-requests/:requestId/approve', async (req: AuthRequest, res: R
             res.status(409).json(toEnterpriseLimitResponse(error));
             return;
         }
+        if (error?.message === 'Link request already processed') {
+            res.status(409).json({ message: 'Link request already processed' });
+            return;
+        }
         res.status(400).json({ message: error.message || 'Failed to approve link request' });
     }
 });
@@ -148,10 +169,11 @@ router.post('/link-requests/:requestId/deny', async (req: AuthRequest, res: Resp
             return res.status(401).json({ message: 'Unauthorized' });
         }
 
-        const organizationId = await resolveOrganizationIdForUser(userId);
-        if (!organizationId) {
+        const orgAuth = await resolveOrganizationAuthForUser(userId);
+        if (!orgAuth?.organizationId) {
             return res.status(403).json({ message: 'Organization account required' });
         }
+        const organizationId = orgAuth.organizationId;
 
         const request = await denyOrganizationLinkRequest({
             requestId,
@@ -163,7 +185,7 @@ router.post('/link-requests/:requestId/deny', async (req: AuthRequest, res: Resp
             req,
             AuditActionType.REJECT,
             'EnterpriseOrgLinkRequest',
-            `ENTERPRISE_LINK_REQUEST_DENIED organization=${organizationId} request=${requestId}`,
+            `ENTERPRISE_LINK_REQUEST_DENIED organization=${organizationId} request=${requestId} workspace=${request.workspaceId || 'unknown'}`,
             requestId
         );
 

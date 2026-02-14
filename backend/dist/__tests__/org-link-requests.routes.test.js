@@ -39,7 +39,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const supertest_1 = __importDefault(require("supertest"));
 const vitest_1 = require("vitest");
-const { prismaMock, listRequestsMock, approveMock, denyMock, logActionMock } = vitest_1.vi.hoisted(() => ({
+const { prismaMock, listRequestsMock, approveMock, denyMock, logActionMock, compareMock } = vitest_1.vi.hoisted(() => ({
     prismaMock: {
         user: {
             findUnique: vitest_1.vi.fn()
@@ -52,7 +52,8 @@ const { prismaMock, listRequestsMock, approveMock, denyMock, logActionMock } = v
     listRequestsMock: vitest_1.vi.fn(),
     approveMock: vitest_1.vi.fn(),
     denyMock: vitest_1.vi.fn(),
-    logActionMock: vitest_1.vi.fn()
+    logActionMock: vitest_1.vi.fn(),
+    compareMock: vitest_1.vi.fn()
 }));
 vitest_1.vi.mock('../middleware/auth.middleware', () => ({
     authenticateUser: (req, _res, next) => {
@@ -71,6 +72,12 @@ vitest_1.vi.mock('../services/enterprise-linking.service', () => ({
 vitest_1.vi.mock('../services/audit.service', () => ({
     logAction: logActionMock
 }));
+vitest_1.vi.mock('bcryptjs', () => ({
+    default: {
+        compare: compareMock
+    },
+    compare: compareMock
+}));
 const org_link_requests_routes_1 = __importDefault(require("../routes/org.link-requests.routes"));
 (0, vitest_1.describe)('org link request routes', () => {
     const app = (0, express_1.default)();
@@ -78,17 +85,19 @@ const org_link_requests_routes_1 = __importDefault(require("../routes/org.link-r
     app.use('/', org_link_requests_routes_1.default);
     (0, vitest_1.beforeEach)(() => {
         vitest_1.vi.clearAllMocks();
-        prismaMock.user.findUnique.mockResolvedValue({ organizationId: 'org-1' });
+        prismaMock.user.findUnique.mockResolvedValue({ organizationId: 'org-1', password: 'hash' });
         prismaMock.admin.findUnique.mockResolvedValue(null);
         prismaMock.admin.findFirst.mockResolvedValue({ id: 'admin-1', role: 'SUPER_ADMIN' });
+        compareMock.mockResolvedValue(true);
     });
     (0, vitest_1.it)('approves request and writes audit log entry', async () => {
         approveMock.mockResolvedValue({
             request: { id: 'req-1', status: 'APPROVED' },
             link: { workspaceId: 'ws-1', organizationId: 'org-1' }
         });
-        const res = await (0, supertest_1.default)(app).post('/link-requests/req-1/approve').send({});
+        const res = await (0, supertest_1.default)(app).post('/link-requests/req-1/approve').send({ password: 'Secret@123' });
         (0, vitest_1.expect)(res.status).toBe(200);
+        (0, vitest_1.expect)(compareMock).toHaveBeenCalledWith('Secret@123', 'hash');
         (0, vitest_1.expect)(approveMock).toHaveBeenCalledWith({
             requestId: 'req-1',
             organizationId: 'org-1',
@@ -119,7 +128,7 @@ const org_link_requests_routes_1 = __importDefault(require("../routes/org.link-r
     (0, vitest_1.it)('returns 409 when approval exceeds enterprise linked organization quota', async () => {
         const { EnterpriseLimitReachedError } = await Promise.resolve().then(() => __importStar(require('../services/enterprise-quota.service')));
         approveMock.mockRejectedValue(new EnterpriseLimitReachedError('LINKED_ORGS', 5, 5));
-        const res = await (0, supertest_1.default)(app).post('/link-requests/req-3/approve').send({});
+        const res = await (0, supertest_1.default)(app).post('/link-requests/req-3/approve').send({ password: 'Secret@123' });
         (0, vitest_1.expect)(res.status).toBe(409);
         (0, vitest_1.expect)(res.body).toEqual(vitest_1.expect.objectContaining({
             error: 'LIMIT_REACHED',
@@ -127,5 +136,12 @@ const org_link_requests_routes_1 = __importDefault(require("../routes/org.link-r
             limit: 5,
             current: 5
         }));
+    });
+    (0, vitest_1.it)('rejects approval when password confirmation is invalid', async () => {
+        compareMock.mockResolvedValue(false);
+        const res = await (0, supertest_1.default)(app).post('/link-requests/req-1/approve').send({ password: 'WrongPass' });
+        (0, vitest_1.expect)(res.status).toBe(401);
+        (0, vitest_1.expect)(res.body.message).toBe('Invalid credentials');
+        (0, vitest_1.expect)(approveMock).not.toHaveBeenCalled();
     });
 });

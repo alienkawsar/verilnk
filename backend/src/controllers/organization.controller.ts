@@ -204,8 +204,30 @@ export const getMyOrganization = async (req: Request, res: Response): Promise<vo
 
         const { entitlements, organization, wasUpdated } = await resolveOrganizationEntitlements(user.organization as any);
         const orgResponse = wasUpdated ? { ...user.organization, ...organization } : user.organization;
+        const linkedEnterpriseWorkspace = await prisma.workspaceOrganization.findFirst({
+            where: { organizationId: orgResponse.id },
+            orderBy: { createdAt: 'asc' },
+            select: {
+                workspaceId: true,
+                workspace: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
+                }
+            }
+        });
 
-        res.json({ ...orgResponse, entitlements });
+        res.json({
+            ...orgResponse,
+            entitlements,
+            linkedEnterpriseWorkspace: linkedEnterpriseWorkspace
+                ? {
+                    id: linkedEnterpriseWorkspace.workspace?.id || linkedEnterpriseWorkspace.workspaceId,
+                    name: linkedEnterpriseWorkspace.workspace?.name || linkedEnterpriseWorkspace.workspaceId
+                }
+                : null
+        });
     } catch (error: any) {
         res.status(500).json({ message: 'Error fetching organization' });
     }

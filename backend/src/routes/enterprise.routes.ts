@@ -147,10 +147,24 @@ const createEnterpriseOrganizationSchema = z.object({
     logo: z.string().optional()
 });
 
-const createLinkRequestSchema = z.object({
-    identifier: z.string().min(2),
-    message: z.string().max(500).optional()
-});
+const linkIdentifierMethodSchema = z.enum(['EMAIL', 'DOMAIN', 'SLUG']);
+
+const createLinkRequestSchema = z.union([
+    z.object({
+        linkMethod: z.literal('ORG_ID'),
+        organizationId: z.string().uuid(),
+        message: z.string().max(500).optional()
+    }),
+    z.object({
+        linkMethod: linkIdentifierMethodSchema,
+        identifier: z.string().min(2),
+        message: z.string().max(500).optional()
+    }),
+    z.object({
+        identifier: z.string().min(2),
+        message: z.string().max(500).optional()
+    })
+]);
 
 const resolveEnterpriseProfileContext = async (userId: string) => {
     const access = await getUserEnterpriseAccess(userId);
@@ -726,7 +740,9 @@ router.post('/workspaces/:id/link-requests', async (req: AuthRequest, res: Respo
             workspaceId: id,
             enterpriseId: enterpriseAccess.organizationId,
             requestedByUserId: req.user.id as string,
-            identifier: payload.identifier,
+            linkMethod: 'linkMethod' in payload ? payload.linkMethod : undefined,
+            identifier: 'identifier' in payload ? payload.identifier : undefined,
+            organizationId: 'organizationId' in payload ? payload.organizationId : undefined,
             message: payload.message
         });
 

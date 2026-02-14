@@ -71,8 +71,8 @@ export const fetchOrgLinkRequests = async () => {
     return deduplicatedGet('/org/link-requests', { params: { _t: Date.now() } });
 };
 
-export const approveOrgLinkRequest = async (requestId: string) => {
-    const response = await api.post(`/org/link-requests/${requestId}/approve`);
+export const approveOrgLinkRequest = async (requestId: string, password: string) => {
+    const response = await api.post(`/org/link-requests/${requestId}/approve`, { password });
     return response.data;
 };
 

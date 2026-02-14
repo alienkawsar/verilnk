@@ -1,4 +1,4 @@
-import { PlanStatus, PlanType, OrgStatus, Prisma } from '@prisma/client';
+import { PlanStatus, PlanType, OrgStatus } from '@prisma/client';
 import { prisma } from '../db/client';
 
 export type EnterpriseQuotaResource = 'WORKSPACES' | 'LINKED_ORGS' | 'API_KEYS' | 'MEMBERS';
@@ -30,16 +30,6 @@ export const DEFAULT_ENTERPRISE_QUOTAS: EnterpriseQuotaLimits = {
     maxLinkedOrgs: 50,
     maxApiKeys: 10,
     maxMembers: 100
-};
-
-const toNumber = (value: unknown, fallback = 0): number => {
-    if (typeof value === 'number' && Number.isFinite(value)) return value;
-    if (typeof value === 'bigint') return Number(value);
-    if (typeof value === 'string') {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : fallback;
-    }
-    return fallback;
 };
 
 const toNullableNumber = (value: unknown): number | null => {
@@ -187,7 +177,7 @@ export const getEnterpriseQuotaSnapshotByOrganizationId = async (
 
     const linkRequestModel = (prisma as any).enterpriseOrgLinkRequest;
 
-    const [linkedOrgRows, activeApiKeyCount, workspaceMemberCount, pendingInviteRows, pendingRequests] = await Promise.all([
+    const [linkedOrgRows, activeApiKeyCount, workspaceMemberCount, pendingInviteCount, pendingRequests] = await Promise.all([
         prisma.workspaceOrganization.findMany({
             where: { workspaceId: { in: workspaceIds } },
             select: { organizationId: true }
@@ -201,12 +191,12 @@ export const getEnterpriseQuotaSnapshotByOrganizationId = async (
         prisma.workspaceMember.count({
             where: { workspaceId: { in: workspaceIds } }
         }),
-        prisma.$queryRaw<Array<{ count: unknown }>>`
-            SELECT COUNT(*) AS "count"
-            FROM "Invite"
-            WHERE "workspaceId" IN (${Prisma.join(workspaceIds)})
-              AND "status" = ${'PENDING'}
-        `,
+        prisma.invite.count({
+            where: {
+                workspaceId: { in: workspaceIds },
+                status: 'PENDING'
+            }
+        }),
         linkRequestModel?.findMany
             ? linkRequestModel.findMany({
                 where: {
@@ -235,8 +225,6 @@ export const getEnterpriseQuotaSnapshotByOrganizationId = async (
         }
     }
 
-    const pendingInvitesCount = toNumber(pendingInviteRows?.[0]?.count, 0);
-
     return {
         enterpriseId,
         limits,
@@ -244,7 +232,7 @@ export const getEnterpriseQuotaSnapshotByOrganizationId = async (
             workspaces: workspaceIds.length,
             linkedOrgs: trackedLinkedOrganizationIds.size,
             apiKeys: activeApiKeyCount,
-            members: workspaceMemberCount + pendingInvitesCount
+            members: workspaceMemberCount + pendingInviteCount
         },
         workspaceIds,
         trackedLinkedOrganizationIds

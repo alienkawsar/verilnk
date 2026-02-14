@@ -12,7 +12,7 @@ import LockedFeatureCard from '@/components/analytics/LockedFeatureCard';
 import VerifiedBadge from '@/components/ui/VerifiedBadge';
 import { useToast } from '@/components/ui/Toast';
 import { useRouter } from 'next/navigation';
-import { Loader2, Settings, LayoutDashboard, Globe, MapPin, Building2, Phone, Mail, FileText, CheckCircle, Clock, XCircle, LineChart, Lock, Copy, Ban, Shield, ArrowUpRight, CreditCard, ImageIcon, Link as LinkIcon, Upload, X, ExternalLink, Eye } from 'lucide-react';
+import { Loader2, Settings, LayoutDashboard, Globe, MapPin, Building2, Phone, Mail, FileText, CheckCircle, Clock, XCircle, LineChart, Lock, Copy, Ban, Shield, ArrowUpRight, CreditCard, ImageIcon, Link as LinkIcon, Upload, X, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
 
@@ -28,6 +28,12 @@ export default function OrgDashboard() {
     const [enterpriseLinkRequests, setEnterpriseLinkRequests] = useState<any[]>([]);
     const [loadingData, setLoadingData] = useState(true);
     const [processingLinkRequestId, setProcessingLinkRequestId] = useState<string | null>(null);
+    const [linkRequestsLoading, setLinkRequestsLoading] = useState(false);
+    const [linkRequestsError, setLinkRequestsError] = useState<string | null>(null);
+    const [approveLinkModalOpen, setApproveLinkModalOpen] = useState(false);
+    const [linkRequestToApprove, setLinkRequestToApprove] = useState<any | null>(null);
+    const [linkApprovalPassword, setLinkApprovalPassword] = useState('');
+    const [showLinkApprovalPassword, setShowLinkApprovalPassword] = useState(false);
 
     // Advanced Analytics Data (PRO+)
     const [heatmapData, setHeatmapData] = useState<any>(null);
@@ -44,6 +50,7 @@ export default function OrgDashboard() {
     // UI
     const [activeTab, setActiveTab] = useState<'overview' | 'billing' | 'settings' | 'requests' | 'security'>('overview');
     const [uploadingLogo, setUploadingLogo] = useState(false);
+    const [showOrganizationId, setShowOrganizationId] = useState(false);
 
     // Forms
     const [formData, setFormData] = useState({
@@ -100,6 +107,22 @@ export default function OrgDashboard() {
         }
     }, [user]);
 
+    const loadEnterpriseLinkRequests = async () => {
+        setLinkRequestsLoading(true);
+        setLinkRequestsError(null);
+        try {
+            const response = await fetchOrgLinkRequests();
+            setEnterpriseLinkRequests(response?.requests || []);
+        } catch (error: any) {
+            const message = error?.response?.data?.message || 'Failed to load pending enterprise link requests';
+            setEnterpriseLinkRequests([]);
+            setLinkRequestsError(message);
+            showToast(message, 'error');
+        } finally {
+            setLinkRequestsLoading(false);
+        }
+    };
+
     const loadData = async (orgId: string) => {
         setLoadingData(true);
         try {
@@ -108,18 +131,17 @@ export default function OrgDashboard() {
             setOrgData(orgRes);
 
             // 2. Fetch Common Data
-            const [reqRes, c, cat, linkRequestRes] = await Promise.all([
+            const [reqRes, c, cat] = await Promise.all([
                 fetchMyRequests(),
                 fetchCountries(),
-                fetchCategories(),
-                fetchOrgLinkRequests().catch(() => ({ requests: [] }))
+                fetchCategories()
             ]);
 
             // Filter organization requests
             setRequests(reqRes);
             setCountries(c);
             setCategories(cat);
-            setEnterpriseLinkRequests(linkRequestRes?.requests || []);
+            await loadEnterpriseLinkRequests();
 
             // 3. Conditionally Fetch Analytics if APPROVED + Entitled
             if (orgRes.status === 'APPROVED' && orgRes.entitlements?.analyticsLevel !== 'NONE') {
@@ -312,23 +334,35 @@ export default function OrgDashboard() {
         }
     };
 
-    const handleEnterpriseLinkRequestDecision = async (
-        requestId: string,
-        decision: 'approve' | 'deny'
-    ) => {
+    const openApproveLinkRequestModal = (request: any) => {
+        setLinkRequestToApprove(request);
+        setLinkApprovalPassword('');
+        setShowLinkApprovalPassword(false);
+        setApproveLinkModalOpen(true);
+    };
+
+    const closeApproveLinkRequestModal = () => {
+        setApproveLinkModalOpen(false);
+        setLinkRequestToApprove(null);
+        setLinkApprovalPassword('');
+        setShowLinkApprovalPassword(false);
+    };
+
+    const handleApproveEnterpriseLinkRequest = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!linkRequestToApprove) return;
+        if (!linkApprovalPassword.trim()) {
+            showToast('Organization password is required', 'error');
+            return;
+        }
+
+        const requestId = linkRequestToApprove.id;
         try {
             setProcessingLinkRequestId(requestId);
-            if (decision === 'approve') {
-                await approveOrgLinkRequest(requestId);
-                showToast('Enterprise link request approved', 'success');
-            } else {
-                await denyOrgLinkRequest(requestId);
-                showToast('Enterprise link request denied', 'success');
-            }
-
-            setEnterpriseLinkRequests((current) =>
-                current.filter((request) => request.id !== requestId)
-            );
+            await approveOrgLinkRequest(requestId, linkApprovalPassword);
+            showToast('Enterprise link request approved', 'success');
+            closeApproveLinkRequestModal();
+            await loadEnterpriseLinkRequests();
         } catch (error: any) {
             showToast(
                 error?.response?.data?.message || 'Failed to process link request',
@@ -336,6 +370,66 @@ export default function OrgDashboard() {
             );
         } finally {
             setProcessingLinkRequestId(null);
+        }
+    };
+
+    const handleDenyEnterpriseLinkRequest = async (requestId: string) => {
+        if (!confirm('Deny this enterprise link request?')) return;
+        try {
+            setProcessingLinkRequestId(requestId);
+            await denyOrgLinkRequest(requestId);
+            showToast('Enterprise link request denied', 'success');
+            await loadEnterpriseLinkRequests();
+        } catch (error: any) {
+            showToast(
+                error?.response?.data?.message || 'Failed to process link request',
+                'error'
+            );
+        } finally {
+            setProcessingLinkRequestId(null);
+        }
+    };
+
+    const organizationId = user?.organizationId || orgData?.id || '';
+
+    const getMaskedOrganizationId = (value: string) => {
+        if (!value) return '••••••••••••';
+        const visibleChars = 6;
+        const visiblePart = value.slice(-visibleChars);
+        const maskedLength = Math.max(0, value.length - visibleChars);
+        return `${'•'.repeat(maskedLength)}${visiblePart}`;
+    };
+
+    const copyOrganizationId = async () => {
+        if (!organizationId) {
+            showToast('Organization ID unavailable', 'error');
+            return;
+        }
+
+        try {
+            await navigator.clipboard.writeText(organizationId);
+            showToast('ID Copied', 'success');
+            return;
+        } catch {
+            try {
+                const textarea = document.createElement('textarea');
+                textarea.value = organizationId;
+                textarea.setAttribute('readonly', '');
+                textarea.style.position = 'fixed';
+                textarea.style.top = '-9999px';
+                document.body.appendChild(textarea);
+                textarea.focus();
+                textarea.select();
+                const copied = document.execCommand('copy');
+                document.body.removeChild(textarea);
+
+                if (!copied) {
+                    throw new Error('Copy failed');
+                }
+                showToast('ID Copied', 'success');
+            } catch {
+                showToast('Failed to copy ID', 'error');
+            }
         }
     };
 
@@ -358,6 +452,7 @@ export default function OrgDashboard() {
     const planStatus = orgData?.planStatus || 'ACTIVE';
     const planEndAt = orgData?.planEndAt ? new Date(orgData.planEndAt) : null;
     const trialEndAt = entitlements?.trialEndsAt ? new Date(entitlements.trialEndsAt) : null;
+    const linkedEnterpriseWorkspaceName = orgData?.linkedEnterpriseWorkspace?.name || orgData?.linkedEnterpriseWorkspace?.id || '';
     const planExpiryLabel = planEndAt ? planEndAt.toLocaleDateString() : 'No expiry';
     const planStatusLabel = entitlements?.isExpired ? 'EXPIRED' : planStatus;
     const chartData = stats?.daily || stats?.stats || [];
@@ -473,15 +568,20 @@ export default function OrgDashboard() {
 
                                 {/* CTA Button */}
                                 {orgData?.status === 'APPROVED' && !isRestricted && (
-                                    <Link
-                                        href={`/org/${user?.organizationId}`}
-                                        target="_blank"
-                                        className="inline-flex items-center justify-center gap-2 px-5 py-2.5 text-sm font-medium btn-primary rounded-xl shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-0.5"
-                                    >
-                                        <Eye className="w-4 h-4" />
-                                        View Public Profile
-                                        <ExternalLink className="w-3.5 h-3.5" />
-                                    </Link>
+                                    <div className="inline-flex items-center gap-2">
+                                        {linkedEnterpriseWorkspaceName && (
+                                            <span className="text-xs text-slate-500 dark:text-slate-400 max-w-[220px] md:max-w-[320px] truncate whitespace-nowrap">
+                                                Linked to Enterprise · {linkedEnterpriseWorkspaceName}
+                                            </span>
+                                        )}
+                                        <Link
+                                            href={`/org/${user?.organizationId}`}
+                                            target="_blank"
+                                            className="inline-flex items-center justify-center px-4 py-2 text-sm font-medium btn-primary rounded-xl shadow-lg shadow-blue-500/25 transition-all hover:-translate-y-0.5"
+                                        >
+                                            Public Page
+                                        </Link>
+                                    </div>
                                 )}
                                 {isRestricted && (
                                     <button
@@ -753,50 +853,6 @@ export default function OrgDashboard() {
                                     </div>
                                 </div>
 
-                                <div className="md:col-span-1 surface-card rounded-xl p-6 shadow-sm">
-                                    <h3 className="text-slate-900 dark:text-white font-semibold mb-4 text-lg">
-                                        Enterprise Link Requests
-                                    </h3>
-                                    {enterpriseLinkRequests.length === 0 ? (
-                                        <p className="text-sm text-slate-500 dark:text-slate-400">
-                                            No pending enterprise link requests.
-                                        </p>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            {enterpriseLinkRequests.map((request) => (
-                                                <div
-                                                    key={request.id}
-                                                    className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 flex flex-col md:flex-row md:items-center md:justify-between gap-3"
-                                                >
-                                                    <div>
-                                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
-                                                            {request.enterprise?.name || 'Enterprise workspace request'}
-                                                        </p>
-                                                        <p className="text-xs text-slate-500 dark:text-slate-400">
-                                                            Workspace: {request.workspace?.name || 'Unknown'} • Requested {new Date(request.createdAt).toLocaleDateString()}
-                                                        </p>
-                                                    </div>
-                                                    <div className="flex items-center gap-2">
-                                                        <button
-                                                            onClick={() => handleEnterpriseLinkRequestDecision(request.id, 'deny')}
-                                                            disabled={processingLinkRequestId === request.id}
-                                                            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
-                                                        >
-                                                            Deny
-                                                        </button>
-                                                        <button
-                                                            onClick={() => handleEnterpriseLinkRequestDecision(request.id, 'approve')}
-                                                            disabled={processingLinkRequestId === request.id}
-                                                            className="px-3 py-1.5 text-xs font-medium rounded-lg btn-primary disabled:opacity-50"
-                                                        >
-                                                            {processingLinkRequestId === request.id ? 'Processing...' : 'Approve'}
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
                             </div>
                         )}
 
@@ -878,6 +934,73 @@ export default function OrgDashboard() {
 
                         {activeTab === 'settings' && (
                             <div className="w-full space-y-6">
+                                {linkRequestsLoading && (
+                                    <div className="rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40 p-3 text-xs text-slate-500 dark:text-slate-400">
+                                        Checking pending enterprise link requests...
+                                    </div>
+                                )}
+                                {linkRequestsError && !linkRequestsLoading && (
+                                    <div className="rounded-lg border border-amber-200 dark:border-amber-500/30 bg-amber-50 dark:bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+                                        {linkRequestsError}
+                                    </div>
+                                )}
+                                {enterpriseLinkRequests.length > 0 && (
+                                    <div className="surface-card rounded-xl border border-[var(--app-border)] p-4 sm:p-5 space-y-4">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div>
+                                                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                                                    Pending Enterprise Link Requests
+                                                </h3>
+                                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                                    Review incoming workspace link requests before updating organization settings.
+                                                </p>
+                                            </div>
+                                            <span className="inline-flex min-w-6 justify-center rounded-full border border-blue-200 dark:border-blue-500/30 bg-blue-100 dark:bg-blue-500/10 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:text-blue-300">
+                                                {enterpriseLinkRequests.length}
+                                            </span>
+                                        </div>
+                                        <div className="space-y-3">
+                                            {enterpriseLinkRequests.map((request) => (
+                                                <div
+                                                    key={request.id}
+                                                    className="rounded-lg border border-slate-200 dark:border-slate-700 p-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3"
+                                                >
+                                                    <div className="space-y-1">
+                                                        <p className="text-sm font-medium text-slate-900 dark:text-white">
+                                                            {request.enterprise?.name || request.enterpriseId || 'Enterprise request'}
+                                                        </p>
+                                                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                                                            Workspace: {request.workspace?.name || request.workspaceId || 'Unknown'} · Requested {new Date(request.createdAt).toLocaleString()}
+                                                        </p>
+                                                        {request.message && (
+                                                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                                                                Note: {request.message}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDenyEnterpriseLinkRequest(request.id)}
+                                                            disabled={processingLinkRequestId === request.id}
+                                                            className="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                                                        >
+                                                            {processingLinkRequestId === request.id ? 'Processing...' : 'Deny'}
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openApproveLinkRequestModal(request)}
+                                                            disabled={processingLinkRequestId === request.id}
+                                                            className="px-3 py-1.5 text-xs font-medium rounded-lg btn-primary disabled:opacity-50"
+                                                        >
+                                                            Approve
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                                 {isRestricted && (
                                     <div className="bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-500/20 rounded-lg p-4 flex gap-3 text-red-800 dark:text-red-200 text-sm animate-pulse-slow">
                                         <Ban className="w-5 h-5 shrink-0 text-red-600 dark:text-red-400" />
@@ -1020,6 +1143,44 @@ export default function OrgDashboard() {
 
                         {activeTab === 'security' && (
                             <div className="w-full space-y-8">
+                                <div>
+                                    <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Account Security</h2>
+                                    <div className="surface-card rounded-xl p-4 sm:p-5 shadow-sm">
+                                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                                            <div className="space-y-1">
+                                                <p className="text-sm font-medium text-slate-800 dark:text-slate-200">Organization ID</p>
+                                                {organizationId ? (
+                                                    <p className="font-mono text-sm text-slate-700 dark:text-slate-300 break-all">
+                                                        {showOrganizationId ? organizationId : getMaskedOrganizationId(organizationId)}
+                                                    </p>
+                                                ) : (
+                                                    <div className="h-5 w-48 rounded bg-slate-200 dark:bg-slate-700 animate-pulse" />
+                                                )}
+                                            </div>
+                                            <div className="flex items-center gap-2 self-start sm:self-auto">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowOrganizationId((prev) => !prev)}
+                                                    disabled={!organizationId}
+                                                    aria-label={showOrganizationId ? 'Hide ID' : 'Show ID'}
+                                                    className="p-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                                >
+                                                    {showOrganizationId ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={copyOrganizationId}
+                                                    disabled={!organizationId}
+                                                    aria-label="Copy ID"
+                                                    className="p-2 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                                                >
+                                                    <Copy className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 {/* Email Update */}
                                 <div>
                                     <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Login Email</h2>
@@ -1133,6 +1294,77 @@ export default function OrgDashboard() {
                                         <StatusBadge status={req.status} />
                                     </div>
                                 ))}
+                            </div>
+                        )}
+
+                        {approveLinkModalOpen && linkRequestToApprove && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                                <div className="surface-card rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+                                    <div className="p-5 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
+                                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                                            Confirm link request
+                                        </h3>
+                                        <button
+                                            type="button"
+                                            onClick={closeApproveLinkRequestModal}
+                                            disabled={Boolean(processingLinkRequestId)}
+                                            className="text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white disabled:opacity-50"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                    <form onSubmit={handleApproveEnterpriseLinkRequest} className="p-5 space-y-4">
+                                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                                            Confirm the request from <span className="font-medium text-slate-800 dark:text-slate-200">{linkRequestToApprove.enterprise?.name || 'enterprise workspace'}</span> by entering your organization password.
+                                        </p>
+                                        <div className="space-y-2">
+                                            <label htmlFor="org-link-request-password" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                                Organization password
+                                            </label>
+                                            <div className="relative">
+                                                <input
+                                                    id="org-link-request-password"
+                                                    type={showLinkApprovalPassword ? 'text' : 'password'}
+                                                    value={linkApprovalPassword}
+                                                    onChange={(e) => setLinkApprovalPassword(e.target.value)}
+                                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 pr-11 py-2 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                                    placeholder="Enter your password"
+                                                    autoComplete="current-password"
+                                                    autoFocus
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowLinkApprovalPassword((prev) => !prev)}
+                                                    aria-label={showLinkApprovalPassword ? 'Hide password' : 'Show password'}
+                                                    className="absolute inset-y-0 right-2 inline-flex items-center justify-center px-1.5 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-md"
+                                                >
+                                                    {showLinkApprovalPassword ? (
+                                                        <EyeOff className="w-4 h-4" />
+                                                    ) : (
+                                                        <Eye className="w-4 h-4" />
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={closeApproveLinkRequestModal}
+                                                disabled={Boolean(processingLinkRequestId)}
+                                                className="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                                            >
+                                                Cancel
+                                            </button>
+                                            <button
+                                                type="submit"
+                                                disabled={Boolean(processingLinkRequestId)}
+                                                className="px-4 py-2 rounded-lg btn-primary text-sm font-medium disabled:opacity-50"
+                                            >
+                                                {processingLinkRequestId ? 'Processing...' : 'Confirm & Link'}
+                                            </button>
+                                        </div>
+                                    </form>
+                                </div>
                             </div>
                         )}
                     </div>

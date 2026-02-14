@@ -16,6 +16,11 @@ const LINK_REQUEST_INTENT = {
     LINK_EXISTING: 'LINK_EXISTING',
     CREATE_UNDER_ENTERPRISE: 'CREATE_UNDER_ENTERPRISE'
 };
+const ELIGIBLE_ORGANIZATION_WHERE = {
+    deletedAt: null,
+    status: client_1.OrgStatus.APPROVED,
+    isRestricted: false
+};
 const getLinkRequestModel = () => {
     const model = client_2.prisma.enterpriseOrgLinkRequest;
     if (!model) {
@@ -67,16 +72,11 @@ const resolveOrganizationByIdentifier = async (identifier) => {
     if (!normalized) {
         throw new Error('Organization identifier is required');
     }
-    const baseWhere = {
-        deletedAt: null,
-        status: client_1.OrgStatus.APPROVED,
-        isRestricted: false
-    };
     const candidates = [];
     if (normalized.includes('@')) {
         const byEmail = await client_2.prisma.organization.findFirst({
             where: {
-                ...baseWhere,
+                ...ELIGIBLE_ORGANIZATION_WHERE,
                 email: normalized
             },
             select: { id: true, name: true, slug: true, email: true, website: true }
@@ -88,7 +88,7 @@ const resolveOrganizationByIdentifier = async (identifier) => {
     if (/^[a-z0-9-]{2,}$/i.test(slugCandidate)) {
         const bySlug = await client_2.prisma.organization.findFirst({
             where: {
-                ...baseWhere,
+                ...ELIGIBLE_ORGANIZATION_WHERE,
                 slug: slugCandidate
             },
             select: { id: true, name: true, slug: true, email: true, website: true }
@@ -100,7 +100,7 @@ const resolveOrganizationByIdentifier = async (identifier) => {
     if (domain) {
         const domainCandidates = await client_2.prisma.organization.findMany({
             where: {
-                ...baseWhere,
+                ...ELIGIBLE_ORGANIZATION_WHERE,
                 website: { contains: domain, mode: 'insensitive' }
             },
             select: { id: true, name: true, slug: true, email: true, website: true },
@@ -128,6 +128,23 @@ const resolveOrganizationByIdentifier = async (identifier) => {
         return exactEmail;
     throw new Error('Multiple organizations matched. Use exact organization email or slug.');
 };
+const resolveOrganizationById = async (organizationId) => {
+    const normalized = organizationId.trim();
+    if (!normalized) {
+        throw new Error('Organization identifier is required');
+    }
+    const organization = await client_2.prisma.organization.findFirst({
+        where: {
+            ...ELIGIBLE_ORGANIZATION_WHERE,
+            id: normalized
+        },
+        select: { id: true, name: true, slug: true, email: true, website: true }
+    });
+    if (!organization) {
+        throw new Error('No eligible organization found for this identifier');
+    }
+    return organization;
+};
 const listWorkspaceLinkRequests = async (workspaceId, enterpriseId) => {
     const linkRequestModel = getLinkRequestModel();
     return linkRequestModel.findMany({
@@ -151,9 +168,15 @@ const listWorkspaceLinkRequests = async (workspaceId, enterpriseId) => {
 };
 exports.listWorkspaceLinkRequests = listWorkspaceLinkRequests;
 const createWorkspaceLinkRequest = async (input) => {
-    const { workspaceId, enterpriseId, requestedByUserId, identifier, message } = input;
+    const { workspaceId, enterpriseId, requestedByUserId, linkMethod, identifier, organizationId, message } = input;
     await ensureWorkspaceScopedToEnterprise(workspaceId, enterpriseId);
-    const organization = await resolveOrganizationByIdentifier(identifier);
+    const normalizedIdentifier = identifier?.trim() || '';
+    const normalizedOrganizationId = organizationId?.trim() || '';
+    const isOrgIdMethod = linkMethod === 'ORG_ID';
+    const organization = isOrgIdMethod
+        ? await resolveOrganizationById(normalizedOrganizationId)
+        : await resolveOrganizationByIdentifier(normalizedIdentifier);
+    const requestIdentifier = isOrgIdMethod ? normalizedOrganizationId : normalizedIdentifier;
     if (organization.id === enterpriseId) {
         throw new Error('Enterprise organization is already linked');
     }
@@ -191,7 +214,7 @@ const createWorkspaceLinkRequest = async (input) => {
             workspaceId,
             organizationId: organization.id,
             requestedByUserId,
-            requestIdentifier: identifier.trim(),
+            requestIdentifier,
             message: message?.trim() || null,
             intentType: LINK_REQUEST_INTENT.LINK_EXISTING,
             status: LINK_REQUEST_STATUS.PENDING
@@ -259,12 +282,14 @@ const approveOrganizationLinkRequest = async (input) => {
         const request = await linkRequestModel.findFirst({
             where: {
                 id: input.requestId,
-                organizationId: input.organizationId,
-                status: LINK_REQUEST_STATUS.PENDING
+                organizationId: input.organizationId
             }
         });
         if (!request) {
             throw new Error('Pending link request not found');
+        }
+        if (request.status !== LINK_REQUEST_STATUS.PENDING) {
+            throw new Error('Link request already processed');
         }
         if (!request.workspaceId) {
             throw new Error('Request does not target a workspace');

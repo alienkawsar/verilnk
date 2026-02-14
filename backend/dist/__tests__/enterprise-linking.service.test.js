@@ -155,13 +155,48 @@ const enterprise_linking_service_1 = require("../services/enterprise-linking.ser
         (0, vitest_1.expect)(prismaMock.enterpriseOrgLinkRequest.create).toHaveBeenCalledTimes(1);
         (0, vitest_1.expect)(prismaMock.workspaceOrganization.create).not.toHaveBeenCalled();
     });
+    (0, vitest_1.it)('creates a PENDING link request when using organization ID method', async () => {
+        const orgId = '550e8400-e29b-41d4-a716-446655440000';
+        prismaMock.workspaceOrganization.findUnique
+            .mockResolvedValueOnce({ id: 'scope-ok' })
+            .mockResolvedValueOnce(null);
+        prismaMock.organization.findFirst.mockResolvedValue({
+            id: 'org-target',
+            name: 'Target Org',
+            slug: 'target-org',
+            email: 'owner@target.org',
+            website: 'https://target.org'
+        });
+        prismaMock.enterpriseOrgLinkRequest.findFirst.mockResolvedValue(null);
+        prismaMock.enterpriseOrgLinkRequest.create.mockResolvedValue({
+            id: 'req-org-id',
+            enterpriseId: 'org-enterprise',
+            workspaceId: 'ws-1',
+            organizationId: 'org-target',
+            status: 'PENDING'
+        });
+        const request = await (0, enterprise_linking_service_1.createWorkspaceLinkRequest)({
+            workspaceId: 'ws-1',
+            enterpriseId: 'org-enterprise',
+            requestedByUserId: 'user-1',
+            linkMethod: 'ORG_ID',
+            organizationId: orgId
+        });
+        (0, vitest_1.expect)(request.status).toBe('PENDING');
+        (0, vitest_1.expect)(prismaMock.organization.findFirst).toHaveBeenCalledWith(vitest_1.expect.objectContaining({
+            where: vitest_1.expect.objectContaining({ id: orgId })
+        }));
+        (0, vitest_1.expect)(prismaMock.workspaceOrganization.create).not.toHaveBeenCalled();
+    });
     (0, vitest_1.it)('creates workspace link when organization approves request', async () => {
         prismaMock.$transaction.mockImplementation(async (callback) => callback({
             enterpriseOrgLinkRequest: {
                 findFirst: vitest_1.vi.fn().mockResolvedValue({
                     id: 'req-approve',
                     workspaceId: 'ws-1',
+                    enterpriseId: 'org-enterprise',
                     organizationId: 'org-target',
+                    status: 'PENDING',
                     requestedByUserId: 'enterprise-user-1'
                 }),
                 update: vitest_1.vi.fn().mockResolvedValue({

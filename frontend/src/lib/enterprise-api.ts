@@ -450,7 +450,9 @@ export async function getWorkspaceLinkRequests(
 
 export async function requestWorkspaceLink(
     workspaceId: string,
-    payload: { identifier: string; message?: string }
+    payload:
+        | { identifier: string; message?: string; linkMethod?: 'EMAIL' | 'DOMAIN' | 'SLUG' }
+        | { linkMethod: 'ORG_ID'; organizationId: string; message?: string }
 ): Promise<{ request: EnterpriseLinkRequest }> {
     return apiRequest(`/enterprise/workspaces/${workspaceId}/link-requests`, {
         method: 'POST',

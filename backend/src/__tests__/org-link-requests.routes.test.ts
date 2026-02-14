@@ -2,7 +2,7 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { prismaMock, listRequestsMock, approveMock, denyMock, logActionMock } = vi.hoisted(() => ({
+const { prismaMock, listRequestsMock, approveMock, denyMock, logActionMock, compareMock } = vi.hoisted(() => ({
     prismaMock: {
         user: {
             findUnique: vi.fn()
@@ -15,7 +15,8 @@ const { prismaMock, listRequestsMock, approveMock, denyMock, logActionMock } = v
     listRequestsMock: vi.fn(),
     approveMock: vi.fn(),
     denyMock: vi.fn(),
-    logActionMock: vi.fn()
+    logActionMock: vi.fn(),
+    compareMock: vi.fn()
 }));
 
 vi.mock('../middleware/auth.middleware', () => ({
@@ -39,6 +40,13 @@ vi.mock('../services/audit.service', () => ({
     logAction: logActionMock
 }));
 
+vi.mock('bcryptjs', () => ({
+    default: {
+        compare: compareMock
+    },
+    compare: compareMock
+}));
+
 import orgLinkRequestRoutes from '../routes/org.link-requests.routes';
 
 describe('org link request routes', () => {
@@ -48,9 +56,10 @@ describe('org link request routes', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        prismaMock.user.findUnique.mockResolvedValue({ organizationId: 'org-1' });
+        prismaMock.user.findUnique.mockResolvedValue({ organizationId: 'org-1', password: 'hash' });
         prismaMock.admin.findUnique.mockResolvedValue(null);
         prismaMock.admin.findFirst.mockResolvedValue({ id: 'admin-1', role: 'SUPER_ADMIN' });
+        compareMock.mockResolvedValue(true);
     });
 
     it('approves request and writes audit log entry', async () => {
@@ -59,9 +68,10 @@ describe('org link request routes', () => {
             link: { workspaceId: 'ws-1', organizationId: 'org-1' }
         });
 
-        const res = await request(app).post('/link-requests/req-1/approve').send({});
+        const res = await request(app).post('/link-requests/req-1/approve').send({ password: 'Secret@123' });
 
         expect(res.status).toBe(200);
+        expect(compareMock).toHaveBeenCalledWith('Secret@123', 'hash');
         expect(approveMock).toHaveBeenCalledWith({
             requestId: 'req-1',
             organizationId: 'org-1',
@@ -103,7 +113,7 @@ describe('org link request routes', () => {
             new EnterpriseLimitReachedError('LINKED_ORGS', 5, 5)
         );
 
-        const res = await request(app).post('/link-requests/req-3/approve').send({});
+        const res = await request(app).post('/link-requests/req-3/approve').send({ password: 'Secret@123' });
 
         expect(res.status).toBe(409);
         expect(res.body).toEqual(
@@ -114,5 +124,15 @@ describe('org link request routes', () => {
                 current: 5
             })
         );
+    });
+
+    it('rejects approval when password confirmation is invalid', async () => {
+        compareMock.mockResolvedValue(false);
+
+        const res = await request(app).post('/link-requests/req-1/approve').send({ password: 'WrongPass' });
+
+        expect(res.status).toBe(401);
+        expect(res.body.message).toBe('Invalid credentials');
+        expect(approveMock).not.toHaveBeenCalled();
     });
 });

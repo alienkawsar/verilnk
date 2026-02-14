@@ -116,10 +116,23 @@ const createEnterpriseOrganizationSchema = zod_1.z.object({
     about: zod_1.z.string().optional(),
     logo: zod_1.z.string().optional()
 });
-const createLinkRequestSchema = zod_1.z.object({
-    identifier: zod_1.z.string().min(2),
-    message: zod_1.z.string().max(500).optional()
-});
+const linkIdentifierMethodSchema = zod_1.z.enum(['EMAIL', 'DOMAIN', 'SLUG']);
+const createLinkRequestSchema = zod_1.z.union([
+    zod_1.z.object({
+        linkMethod: zod_1.z.literal('ORG_ID'),
+        organizationId: zod_1.z.string().uuid(),
+        message: zod_1.z.string().max(500).optional()
+    }),
+    zod_1.z.object({
+        linkMethod: linkIdentifierMethodSchema,
+        identifier: zod_1.z.string().min(2),
+        message: zod_1.z.string().max(500).optional()
+    }),
+    zod_1.z.object({
+        identifier: zod_1.z.string().min(2),
+        message: zod_1.z.string().max(500).optional()
+    })
+]);
 const resolveEnterpriseProfileContext = async (userId) => {
     const access = await (0, enterprise_entitlement_1.getUserEnterpriseAccess)(userId);
     if (!access.hasAccess || !access.organizationId)
@@ -595,7 +608,9 @@ router.post('/workspaces/:id/link-requests', async (req, res) => {
             workspaceId: id,
             enterpriseId: enterpriseAccess.organizationId,
             requestedByUserId: req.user.id,
-            identifier: payload.identifier,
+            linkMethod: 'linkMethod' in payload ? payload.linkMethod : undefined,
+            identifier: 'identifier' in payload ? payload.identifier : undefined,
+            organizationId: 'organizationId' in payload ? payload.organizationId : undefined,
             message: payload.message
         });
         await logEnterpriseAdminActionIfApplicable(req, client_1.AuditActionType.CREATE, 'EnterpriseOrgLinkRequest', `ENTERPRISE_LINK_REQUEST_CREATED enterprise=${enterpriseAccess.organizationId} workspace=${id} organization=${request.organizationId}`, request.id);

@@ -9,17 +9,6 @@ exports.DEFAULT_ENTERPRISE_QUOTAS = {
     maxApiKeys: 10,
     maxMembers: 100
 };
-const toNumber = (value, fallback = 0) => {
-    if (typeof value === 'number' && Number.isFinite(value))
-        return value;
-    if (typeof value === 'bigint')
-        return Number(value);
-    if (typeof value === 'string') {
-        const parsed = Number(value);
-        return Number.isFinite(parsed) ? parsed : fallback;
-    }
-    return fallback;
-};
 const toNullableNumber = (value) => {
     if (value === null || value === undefined)
         return null;
@@ -139,7 +128,7 @@ const getEnterpriseQuotaSnapshotByOrganizationId = async (enterpriseId) => {
         };
     }
     const linkRequestModel = client_2.prisma.enterpriseOrgLinkRequest;
-    const [linkedOrgRows, activeApiKeyCount, workspaceMemberCount, pendingInviteRows, pendingRequests] = await Promise.all([
+    const [linkedOrgRows, activeApiKeyCount, workspaceMemberCount, pendingInviteCount, pendingRequests] = await Promise.all([
         client_2.prisma.workspaceOrganization.findMany({
             where: { workspaceId: { in: workspaceIds } },
             select: { organizationId: true }
@@ -153,12 +142,12 @@ const getEnterpriseQuotaSnapshotByOrganizationId = async (enterpriseId) => {
         client_2.prisma.workspaceMember.count({
             where: { workspaceId: { in: workspaceIds } }
         }),
-        client_2.prisma.$queryRaw `
-            SELECT COUNT(*) AS "count"
-            FROM "Invite"
-            WHERE "workspaceId" IN (${client_1.Prisma.join(workspaceIds)})
-              AND "status" = ${'PENDING'}
-        `,
+        client_2.prisma.invite.count({
+            where: {
+                workspaceId: { in: workspaceIds },
+                status: 'PENDING'
+            }
+        }),
         linkRequestModel?.findMany
             ? linkRequestModel.findMany({
                 where: {
@@ -183,7 +172,6 @@ const getEnterpriseQuotaSnapshotByOrganizationId = async (enterpriseId) => {
             }
         }
     }
-    const pendingInvitesCount = toNumber(pendingInviteRows?.[0]?.count, 0);
     return {
         enterpriseId,
         limits,
@@ -191,7 +179,7 @@ const getEnterpriseQuotaSnapshotByOrganizationId = async (enterpriseId) => {
             workspaces: workspaceIds.length,
             linkedOrgs: trackedLinkedOrganizationIds.size,
             apiKeys: activeApiKeyCount,
-            members: workspaceMemberCount + pendingInvitesCount
+            members: workspaceMemberCount + pendingInviteCount
         },
         workspaceIds,
         trackedLinkedOrganizationIds

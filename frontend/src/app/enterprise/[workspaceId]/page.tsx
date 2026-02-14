@@ -78,6 +78,41 @@ import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation
 import { useToast } from '@/components/ui/Toast';
 
 type Tab = 'organizations' | 'members' | 'api-keys' | 'usage' | 'analytics';
+type LinkRequestMethod = 'EMAIL' | 'DOMAIN' | 'SLUG' | 'ORG_ID';
+
+const ORG_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const LINK_REQUEST_METHOD_OPTIONS: Array<{
+    value: LinkRequestMethod;
+    label: string;
+    placeholder: string;
+    helper: string;
+}> = [
+    {
+        value: 'EMAIL',
+        label: 'Email',
+        placeholder: 'owner@organization.com',
+        helper: 'Use the organization login email.'
+    },
+    {
+        value: 'DOMAIN',
+        label: 'Domain',
+        placeholder: 'organization.com',
+        helper: 'Use the primary organization website domain.'
+    },
+    {
+        value: 'SLUG',
+        label: 'Slug',
+        placeholder: 'organization-slug',
+        helper: 'Use the public organization slug.'
+    },
+    {
+        value: 'ORG_ID',
+        label: 'Organization ID',
+        placeholder: 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx',
+        helper: 'Use the exact organization ID (UUID).'
+    }
+];
 
 const roleBadgeClass = (role: string) => {
     switch (role) {
@@ -149,7 +184,9 @@ export default function WorkspacePage() {
     const [showKey, setShowKey] = useState(false);
     const [creating, setCreating] = useState(false);
     const [linkingOrg, setLinkingOrg] = useState(false);
+    const [requestLinkMethod, setRequestLinkMethod] = useState<LinkRequestMethod>('EMAIL');
     const [requestIdentifier, setRequestIdentifier] = useState('');
+    const [requestIdentifierError, setRequestIdentifierError] = useState<string | null>(null);
     const [requestMessage, setRequestMessage] = useState('');
     const [creatingOrganization, setCreatingOrganization] = useState(false);
     const [uploadingOrgLogo, setUploadingOrgLogo] = useState(false);
@@ -218,6 +255,9 @@ export default function WorkspacePage() {
         && quotaLimits.maxApiKeys > 0
         && quotaUsage.apiKeys >= quotaLimits.maxApiKeys
     );
+    const selectedLinkMethod = LINK_REQUEST_METHOD_OPTIONS.find(
+        (option) => option.value === requestLinkMethod
+    ) || LINK_REQUEST_METHOD_OPTIONS[0];
 
     useEffect(() => {
         loadWorkspace();
@@ -528,20 +568,47 @@ export default function WorkspacePage() {
         }
     };
 
+    const validateLinkRequestIdentifier = (value: string, method: LinkRequestMethod): string | null => {
+        if (!value.trim()) {
+            return 'Identifier is required';
+        }
+        if (method === 'ORG_ID' && !ORG_ID_REGEX.test(value.trim())) {
+            return 'Enter a valid organization ID (UUID)';
+        }
+        return null;
+    };
+
     const handleCreateLinkRequest = async () => {
-        if (!requestIdentifier.trim()) return;
+        const identifierValue = requestIdentifier.trim();
+        const validationError = validateLinkRequestIdentifier(identifierValue, requestLinkMethod);
+        if (validationError) {
+            setRequestIdentifierError(validationError);
+            return;
+        }
+        setRequestIdentifierError(null);
         if (linkedOrgLimitReached) {
             showQuotaLimitToast('Linked Organizations', quotaUsage?.linkedOrgs, quotaLimits?.maxLinkedOrgs);
             return;
         }
         try {
             setLinkingOrg(true);
-            await requestWorkspaceLink(workspaceId, {
-                identifier: requestIdentifier.trim(),
-                message: requestMessage.trim() || undefined,
-            });
+            const payload =
+                requestLinkMethod === 'ORG_ID'
+                    ? {
+                        linkMethod: 'ORG_ID' as const,
+                        organizationId: identifierValue,
+                        message: requestMessage.trim() || undefined
+                    }
+                    : {
+                        linkMethod: requestLinkMethod,
+                        identifier: identifierValue,
+                        message: requestMessage.trim() || undefined
+                    };
+            await requestWorkspaceLink(workspaceId, payload);
             setShowRequestLinkModal(false);
+            setRequestLinkMethod('EMAIL');
             setRequestIdentifier('');
+            setRequestIdentifierError(null);
             setRequestMessage('');
             await loadTabData('organizations');
             await refreshEnterpriseAccess();
@@ -703,6 +770,8 @@ export default function WorkspacePage() {
             showQuotaLimitToast('Linked Organizations', quotaUsage?.linkedOrgs, quotaLimits?.maxLinkedOrgs);
             return;
         }
+        setRequestLinkMethod('EMAIL');
+        setRequestIdentifierError(null);
         setShowRequestLinkModal(true);
     };
 
@@ -1682,13 +1751,53 @@ export default function WorkspacePage() {
                             Request Existing Organization Link
                         </h2>
                         <div className="space-y-4">
-                            <input
-                                type="text"
-                                value={requestIdentifier}
-                                onChange={(e) => setRequestIdentifier(e.target.value)}
-                                placeholder="Enter org website, org login email, or public slug"
-                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
-                            />
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                                    Link method
+                                </p>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {LINK_REQUEST_METHOD_OPTIONS.map((option) => (
+                                        <button
+                                            key={option.value}
+                                            type="button"
+                                            onClick={() => {
+                                                setRequestLinkMethod(option.value);
+                                                setRequestIdentifierError(null);
+                                            }}
+                                            className={`px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                                                requestLinkMethod === option.value
+                                                    ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-400'
+                                                    : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                            }`}
+                                        >
+                                            {option.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div>
+                                <input
+                                    type="text"
+                                    value={requestIdentifier}
+                                    onChange={(e) => {
+                                        setRequestIdentifier(e.target.value);
+                                        if (requestIdentifierError) setRequestIdentifierError(null);
+                                    }}
+                                    placeholder={selectedLinkMethod.placeholder}
+                                    className={`w-full px-4 py-2.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                                        requestIdentifierError
+                                            ? 'border-red-400 dark:border-red-500'
+                                            : 'border-slate-300 dark:border-slate-700'
+                                    }`}
+                                />
+                                {requestIdentifierError ? (
+                                    <p className="text-xs text-red-500 mt-1">{requestIdentifierError}</p>
+                                ) : (
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                        {selectedLinkMethod.helper}
+                                    </p>
+                                )}
+                            </div>
                             <textarea
                                 value={requestMessage}
                                 onChange={(e) => setRequestMessage(e.target.value)}
@@ -1703,7 +1812,9 @@ export default function WorkspacePage() {
                             <button
                                 onClick={() => {
                                     setShowRequestLinkModal(false);
+                                    setRequestLinkMethod('EMAIL');
                                     setRequestIdentifier('');
+                                    setRequestIdentifierError(null);
                                     setRequestMessage('');
                                 }}
                                 className="flex-1 px-4 py-2.5 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800"

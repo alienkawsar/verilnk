@@ -227,7 +227,29 @@ const getMyOrganization = async (req, res) => {
         }
         const { entitlements, organization, wasUpdated } = await (0, entitlement_service_1.resolveOrganizationEntitlements)(user.organization);
         const orgResponse = wasUpdated ? { ...user.organization, ...organization } : user.organization;
-        res.json({ ...orgResponse, entitlements });
+        const linkedEnterpriseWorkspace = await client_1.prisma.workspaceOrganization.findFirst({
+            where: { organizationId: orgResponse.id },
+            orderBy: { createdAt: 'asc' },
+            select: {
+                workspaceId: true,
+                workspace: {
+                    select: {
+                        id: true,
+                        name: true
+                    }
+                }
+            }
+        });
+        res.json({
+            ...orgResponse,
+            entitlements,
+            linkedEnterpriseWorkspace: linkedEnterpriseWorkspace
+                ? {
+                    id: linkedEnterpriseWorkspace.workspace?.id || linkedEnterpriseWorkspace.workspaceId,
+                    name: linkedEnterpriseWorkspace.workspace?.name || linkedEnterpriseWorkspace.workspaceId
+                }
+                : null
+        });
     }
     catch (error) {
         res.status(500).json({ message: 'Error fetching organization' });
