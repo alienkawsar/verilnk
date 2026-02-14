@@ -1,0 +1,20 @@
+--- Starting Proxy Auth Verification ---
+
+[1] Testing Proxy Login (/api/auth/admin/login)...
+Status: 500
+Headers: Object [AxiosHeaders] {
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'origin-when-cross-origin',
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-embedder-policy': 'require-corp',
+  'permissions-policy': 'camera=(), geolocation=(), microphone=(self), payment=(), usb=()',
+  'content-security-policy-report-only': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; font-src 'self' https: data:; connect-src 'self' https: http://localhost:* ws: wss: https://www.google.com https://www.recaptcha.net; media-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'none'",
+  vary: 'rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch',
+  'content-type': 'application/json',
+  date: 'Mon, 02 Feb 2026 10:21:23 GMT',
+  connection: 'close',
+  'transfer-encoding': 'chunked'
+}
+Body: { message: 'Login successful but no token returned' }
+FAIL: Login failed { message: 'Login successful but no token returned' }

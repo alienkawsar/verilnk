@@ -1,0 +1,25 @@
+src/controllers/admin.enterprise.controller.ts(95,22): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/admin.enterprise.controller.ts(113,41): error TS2339: Property 'members' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; name: string; status: WorkspaceStatus; ownerId: string; }'.
+src/controllers/admin.enterprise.controller.ts(113,53): error TS7006: Parameter 'm' implicitly has an 'any' type.
+src/controllers/admin.enterprise.controller.ts(122,34): error TS2339: Property 'organizations' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; name: string; status: WorkspaceStatus; ownerId: string; }'.
+src/controllers/admin.enterprise.controller.ts(122,52): error TS7006: Parameter 'wo' implicitly has an 'any' type.
+src/controllers/admin.enterprise.controller.ts(136,40): error TS2339: Property '_count' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; name: string; status: WorkspaceStatus; ownerId: string; }'.
+src/controllers/admin.enterprise.controller.ts(138,32): error TS2339: Property 'members' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; name: string; status: WorkspaceStatus; ownerId: string; }'.
+src/controllers/admin.enterprise.controller.ts(138,44): error TS7006: Parameter 'm' implicitly has an 'any' type.
+src/controllers/admin.enterprise.controller.ts(145,35): error TS2339: Property 'organizations' does not exist on type '{ id: string; createdAt: Date; updatedAt: Date; name: string; status: WorkspaceStatus; ownerId: string; }'.
+src/controllers/admin.enterprise.controller.ts(145,53): error TS7006: Parameter 'lo' implicitly has an 'any' type.
+src/controllers/admin.enterprise.controller.ts(167,72): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/admin.enterprise.controller.ts(173,43): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/admin.enterprise.controller.ts(190,72): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/admin.enterprise.controller.ts(197,44): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/admin.enterprise.controller.ts(203,28): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/admin.enterprise.controller.ts(223,72): error TS2322: Type 'string | string[]' is not assignable to type 'string | undefined'.
+  Type 'string[]' is not assignable to type 'string'.
+src/controllers/admin.enterprise.controller.ts(229,52): error TS2345: Argument of type 'string | string[]' is not assignable to parameter of type 'string'.
+  Type 'string[]' is not assignable to type 'string'.

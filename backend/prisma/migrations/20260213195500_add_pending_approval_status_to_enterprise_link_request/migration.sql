@@ -1,0 +1,2 @@
+ALTER TYPE "EnterpriseOrgLinkRequestStatus"
+ADD VALUE IF NOT EXISTS 'PENDING_APPROVAL';

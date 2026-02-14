@@ -1,0 +1,950 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum VerificationStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  FLAGGED
+}
+
+// ... (existing enums/models)
+
+model Site {
+  id               String             @id @default(uuid())
+  name             String
+  url              String             @unique
+  status           VerificationStatus @default(PENDING)
+  countryId        String
+  country          Country            @relation(fields: [countryId], references: [id])
+  categoryId       String
+  category         Category           @relation(fields: [categoryId], references: [id])
+  stateId          String?
+  state            State?             @relation(fields: [stateId], references: [id])
+  verificationLogs VerificationLog[]
+  reports          Report[]
+  siteTags         SiteTag[]
+  analyticsEvents  OrgAnalyticsEvent[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  deletedAt        DateTime?
+  organizationId   String?
+  organization     Organization?      @relation(fields: [organizationId], references: [id])
+
+  @@index([countryId])
+  @@index([categoryId])
+  @@index([stateId])
+  @@index([organizationId])
+  @@index([status])
+}
+
+model VerificationLog {
+  id        String             @id @default(uuid())
+  siteId    String
+  site      Site               @relation(fields: [siteId], references: [id])
+  adminId   String?
+  admin     Admin?             @relation(fields: [adminId], references: [id])
+  status    VerificationStatus
+  notes     String?
+  checkedAt DateTime           @default(now())
+  createdAt DateTime           @default(now())
+  updatedAt DateTime           @updatedAt
+
+  @@index([siteId])
+  @@index([adminId])
+}
+
+model Report {
+  id        String   @id @default(uuid())
+  siteId    String
+  site      Site     @relation(fields: [siteId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  reason    String?
+  deletedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([siteId])
+  @@index([userId])
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  VERIFIER
+  MODERATOR
+}
+
+model Admin {
+  id               String            @id @default(uuid())
+  email            String            @unique
+  password         String
+  firstName        String            @default("Admin")
+  lastName         String            @default("User")
+  role             AdminRole         @default(MODERATOR)
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  verificationLogs VerificationLog[]
+  adminLogs        AdminLog[]
+}
+
+model User {
+  id                 String  @id @default(uuid())
+  name               String
+  firstName          String  @default("")
+  lastName           String  @default("")
+  email              String  @unique
+  password           String
+  country            String?
+  dailyRequestLimit  Int?    @default(10) // Legacy field, kept for backward compatibility
+  requestLimit       Int?    @default(3) // Max requests allowed in the window
+  requestLimitWindow Int     @default(1) // Window size in days (1, 7, 15, 30)
+
+  isRestricted   Boolean         @default(false)
+  reports        Report[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  organization   Organization?   @relation(fields: [organizationId], references: [id])
+  organizationId String?
+  changeRequests ChangeRequest[]
+
+  mustChangePassword Boolean @default(false)
+  tokenVersion       Int     @default(0)
+
+  @@index([organizationId])
+}
+
+model Country {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  code          String         @unique
+  flagImage     String?
+  flagImageUrl  String?
+  isEnabled     Boolean        @default(true)
+  sites         Site[]
+  states        State[]
+  deletedAt     DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  organizations Organization[]
+
+  @@index([code])
+}
+
+model State {
+  id            String         @id @default(uuid())
+  name          String
+  code          String?
+  countryId     String
+  country       Country        @relation(fields: [countryId], references: [id])
+  sites         Site[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  organizations Organization[]
+
+  @@index([countryId])
+}
+
+model Category {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  slug          String         @unique
+  description   String?
+  iconKey       String?
+  isActive      Boolean        @default(true)
+  sortOrder     Int            @default(0) @map("priority")
+  parentId      String?
+  parent        Category?      @relation("CategoryParent", fields: [parentId], references: [id])
+  children      Category[]     @relation("CategoryParent")
+  categoryTags  CategoryTag[]
+  sites         Site[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  organizations Organization[]
+
+  @@index([slug])
+  @@index([parentId])
+}
+
+model Tag {
+  id               String             @id @default(uuid())
+  name             String             @unique
+  slug             String             @unique
+  isActive         Boolean            @default(true)
+  categoryTags     CategoryTag[]
+  siteTags         SiteTag[]
+  organizationTags OrganizationTag[]
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([slug])
+}
+
+model CategoryTag {
+  categoryId String
+  tagId      String
+  category   Category @relation(fields: [categoryId], references: [id])
+  tag        Tag      @relation(fields: [tagId], references: [id])
+
+  @@id([categoryId, tagId])
+  @@index([tagId])
+}
+
+model SiteTag {
+  siteId String
+  tagId  String
+  site   Site @relation(fields: [siteId], references: [id])
+  tag    Tag  @relation(fields: [tagId], references: [id])
+
+  @@id([siteId, tagId])
+  @@index([tagId])
+}
+
+model OrganizationTag {
+  organizationId String
+  tagId          String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  tag            Tag          @relation(fields: [tagId], references: [id])
+
+  @@id([organizationId, tagId])
+  @@index([tagId])
+}
+
+enum OrgStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum OrgType {
+  PUBLIC
+  PRIVATE
+  NON_PROFIT
+}
+
+enum OrgPriority {
+  HIGH
+  MEDIUM
+  NORMAL
+  LOW
+}
+
+enum PlanType {
+  FREE
+  BASIC
+  PRO
+  BUSINESS
+  ENTERPRISE
+}
+
+enum PlanStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum SupportTier {
+  NONE
+  EMAIL
+  CHAT
+  INSTANT
+  DEDICATED
+}
+
+enum BillingGateway {
+  NONE
+  MOCK
+  STRIPE
+  SSLCOMMERZ
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+  TRIALING
+}
+
+enum InvoiceStatus {
+  DRAFT
+  OPEN
+  PAID
+  VOID
+  REFUNDED
+}
+
+enum PaymentAttemptStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  CANCELED
+  REFUNDED
+}
+
+enum TrialStatus {
+  ACTIVE
+  EXPIRED
+  CANCELED
+  CONVERTED
+}
+
+model Organization {
+  id                String      @id @default(uuid())
+  name              String
+  slug              String?     @unique
+  email             String      @unique
+  website           String
+  phone             String
+  address           String
+  status            OrgStatus   @default(PENDING)
+  type              OrgType     @default(PUBLIC)
+  priority          OrgPriority @default(NORMAL)
+  priorityExpiresAt DateTime?
+  about             String?
+  logo              String?
+  isRestricted      Boolean     @default(false)
+  planType          PlanType    @default(FREE)
+  planStatus        PlanStatus  @default(ACTIVE)
+  planStartAt       DateTime    @default(now())
+  planEndAt         DateTime?
+  supportTier       SupportTier @default(NONE)
+  priorityOverride  Int?
+  enterpriseMaxWorkspaces Int?
+  enterpriseMaxLinkedOrgs Int?
+  enterpriseMaxApiKeys Int?
+  enterpriseMaxMembers Int?
+  deletedAt         DateTime?
+  deletedBy         String?
+  deleteReason      String?
+
+  countryId  String
+  country    Country   @relation(fields: [countryId], references: [id])
+  stateId    String?
+  state      State?    @relation(fields: [stateId], references: [id])
+  categoryId String
+  category   Category  @relation(fields: [categoryId], references: [id])
+  organizationTags OrganizationTag[]
+
+  users          User[]
+  sites          Site[]
+  analytics      OrgAnalytics[]
+  analyticsEvents OrgAnalyticsEvent[] @relation("OrgAnalyticsEvents")
+  changeRequests ChangeRequest[]
+  billingAccount BillingAccount?
+  enterpriseLinkRequestsAsEnterprise EnterpriseOrgLinkRequest[] @relation("EnterpriseLinkRequestEnterprise")
+  enterpriseLinkRequestsAsTarget     EnterpriseOrgLinkRequest[] @relation("EnterpriseLinkRequestTarget")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([countryId])
+  @@index([stateId])
+  @@index([categoryId])
+  @@index([status])
+  @@index([priority])
+  @@index([priorityExpiresAt])
+}
+
+model BillingAccount {
+  id               String            @id @default(uuid())
+  organizationId   String            @unique
+  organization     Organization      @relation(fields: [organizationId], references: [id])
+  gateway          BillingGateway    @default(NONE)
+  gatewayCustomerId String?
+  billingEmail     String?
+  billingName      String?
+  taxId            String?
+  metadata         Json?
+  subscriptions    Subscription[]
+  invoices         Invoice[]
+  paymentAttempts  PaymentAttempt[]
+  trials           TrialSession[]
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([gateway])
+}
+
+model Subscription {
+  id                String             @id @default(uuid())
+  billingAccountId  String
+  billingAccount    BillingAccount     @relation(fields: [billingAccountId], references: [id])
+  planType          PlanType
+  status            SubscriptionStatus @default(ACTIVE)
+  amountCents       Int?
+  currency          String?            @default("USD")
+  startedAt         DateTime           @default(now())
+  currentPeriodStart DateTime?
+  currentPeriodEnd  DateTime?
+  trialEndsAt       DateTime?
+  cancelAt          DateTime?
+  canceledAt        DateTime?
+  externalId        String?
+  metadata          Json?
+  invoices          Invoice[]
+  paymentAttempts   PaymentAttempt[]
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  @@index([billingAccountId])
+  @@index([status])
+  @@index([planType])
+}
+
+model Invoice {
+  id               String        @id @default(uuid())
+  billingAccountId String
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id])
+  subscriptionId   String?
+  subscription     Subscription? @relation(fields: [subscriptionId], references: [id])
+  invoiceNumber    String?
+  status           InvoiceStatus @default(DRAFT)
+  amountCents      Int
+  currency         String        @default("USD")
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  dueAt            DateTime?
+  paidAt           DateTime?
+  externalId       String?
+  integrityHash    String?
+  pdfUrl           String?
+  metadata         Json?
+  paymentAttempts  PaymentAttempt[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  @@index([billingAccountId])
+  @@index([subscriptionId])
+  @@index([status])
+}
+
+model PaymentAttempt {
+  id               String               @id @default(uuid())
+  billingAccountId String
+  billingAccount   BillingAccount       @relation(fields: [billingAccountId], references: [id])
+  subscriptionId   String?
+  subscription     Subscription?        @relation(fields: [subscriptionId], references: [id])
+  invoiceId        String?
+  invoice          Invoice?             @relation(fields: [invoiceId], references: [id])
+  status           PaymentAttemptStatus @default(PENDING)
+  amountCents      Int
+  currency         String               @default("USD")
+  gateway          BillingGateway       @default(NONE)
+  gatewayPaymentId String?
+  idempotencyKey   String?
+  requestHash      String?
+  errorMessage     String?
+  processedAt      DateTime?
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  @@index([billingAccountId])
+  @@index([subscriptionId])
+  @@index([invoiceId])
+  @@index([status])
+  @@index([gateway])
+  @@index([idempotencyKey])
+}
+
+model TrialSession {
+  id               String       @id @default(uuid())
+  billingAccountId String
+  billingAccount   BillingAccount @relation(fields: [billingAccountId], references: [id])
+  planType         PlanType
+  status           TrialStatus  @default(ACTIVE)
+  startedAt        DateTime     @default(now())
+  endsAt           DateTime
+  durationDays     Int?
+  convertedAt      DateTime?
+  metadata         Json?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@index([billingAccountId])
+  @@index([status])
+  @@index([planType])
+}
+
+model OrgAnalytics {
+  id             String       @id @default(uuid())
+  date           DateTime     @default(now()) @db.Date // Store just the date part if supported, or handle in app
+  views          Int          @default(0)
+  clicks         Int          @default(0)
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  deletedAt      DateTime?
+
+  @@unique([organizationId, date]) // Ensure one record per day per org
+  @@index([organizationId])
+}
+
+// Event-level analytics for hourly aggregation and category performance
+model OrgAnalyticsEvent {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation("OrgAnalyticsEvents", fields: [organizationId], references: [id])
+  siteId         String?
+  site           Site?        @relation(fields: [siteId], references: [id])
+  eventType      String       // 'view' or 'click'
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@index([siteId])
+  @@index([createdAt])
+  @@index([organizationId, createdAt])
+}
+
+enum RequestType {
+  ORG_EDIT
+  USER_UPDATE
+  SITE_ADD
+  ORG_WEBSITE_UPDATE
+}
+
+enum RequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ChangeRequest {
+  id      String        @id @default(uuid())
+  type    RequestType
+  status  RequestStatus @default(PENDING)
+  payload Json // Stores the changes or new data
+
+  requesterId String
+  requester   User   @relation(fields: [requesterId], references: [id])
+
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+
+  adminNotes String? // Reason for rejection etc.
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([requesterId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([type])
+}
+
+enum AuditActionType {
+  CREATE
+  UPDATE
+  DELETE
+  APPROVE
+  REJECT
+  LOGIN
+  SUSPEND
+  OTHER
+}
+
+enum SessionActorType {
+  ADMIN
+  ORG
+}
+
+enum SecurityEventType {
+  SUSPICIOUS_LOGIN
+  FAILED_LOGIN
+  FAILED_LOGIN_BURST
+  NEW_DEVICE
+  NEW_IP
+  MULTI_SESSION
+}
+
+enum SecurityEventSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum ComplianceIncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ComplianceIncidentStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  CLOSED
+  ARCHIVED
+}
+
+enum ComplianceExportType {
+  AUDIT_LOGS
+  INCIDENTS
+  ORG_HISTORY
+  USER_ACTIONS
+  DELETION_RECORDS
+}
+
+enum ComplianceExportFormat {
+  CSV
+  JSON
+}
+
+enum RetentionEntityType {
+  AUDIT_LOG
+  REQUEST
+  REPORT
+  ANALYTICS
+  EXPORT
+  ORGANIZATION
+  USER
+}
+
+model ComplianceIncident {
+  id             String                     @id @default(uuid())
+  type           String
+  severity       ComplianceIncidentSeverity @default(LOW)
+  status         ComplianceIncidentStatus   @default(OPEN)
+  relatedEntity  String?
+  relatedId      String?
+  reportedBy     String?
+  assignedTo     String?
+  timeline       Json?
+  resolution     String?
+  evidenceLinks  Json?
+  auditLogIds    String[]                   @default([])
+  createdAt      DateTime                   @default(now())
+  updatedAt      DateTime                   @updatedAt
+
+  @@index([status])
+  @@index([severity])
+  @@index([relatedEntity])
+}
+
+model ComplianceExport {
+  id            String                 @id @default(uuid())
+  type          ComplianceExportType
+  format        ComplianceExportFormat
+  requestedBy   String
+  requestedByRole AdminRole?
+  filters       Json?
+  checksum      String?
+  recordCount   Int                    @default(0)
+  status        String                 @default("COMPLETED")
+  notes         String?
+  createdAt     DateTime               @default(now())
+
+  @@index([type])
+  @@index([requestedBy])
+  @@index([createdAt])
+}
+
+model RetentionPolicy {
+  id                  String              @id @default(uuid())
+  entityType          RetentionEntityType @unique
+  retentionDays       Int                 @default(365)
+  autoPurge           Boolean             @default(false)
+  archiveBeforeDelete Boolean             @default(false)
+  legalHold           Boolean             @default(false)
+  updatedBy           String?
+  updatedAt           DateTime            @updatedAt
+  createdAt           DateTime            @default(now())
+}
+
+model AdminLog {
+  id           String          @id @default(uuid())
+  adminId      String
+  admin        Admin           @relation(fields: [adminId], references: [id])
+  actorRole    AdminRole?
+  targetId     String? // ID of the entity being acted upon
+  entity       String? // Table name e.g., "Site", "User"
+  action       AuditActionType @default(OTHER)
+  details      String? // Human readable summary
+  
+  // Security & Audit
+  snapshot     Json?   // Before/After state
+  ipAddress    String?
+  userAgent    String?
+  immutable    Boolean @default(true)
+  retentionUntil DateTime?
+  hashTimestamp DateTime?
+  
+  // Tamper Proofing
+  previousHash String?
+  currentHash  String? // SHA-256(previousHash + id + action + timestamp + ...)
+  
+  createdAt    DateTime @default(now())
+
+  @@index([adminId])
+  @@index([targetId])
+  @@index([createdAt])
+}
+
+model AuthSession {
+  id             String           @id @default(uuid())
+  jti            String           @unique
+  actorType      SessionActorType
+  actorId        String
+  role           AdminRole?
+  organizationId String?
+  issuedAt       DateTime         @default(now())
+  expiresAt      DateTime
+  lastSeenAt     DateTime?
+  ipAddress      String?
+  userAgent      String?
+  revokedAt      DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([actorType])
+  @@index([actorId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+model SecurityEvent {
+  id         String               @id @default(uuid())
+  actorType  SessionActorType
+  actorId    String
+  eventType  SecurityEventType
+  severity   SecurityEventSeverity @default(LOW)
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime             @default(now())
+
+  @@index([actorType])
+  @@index([actorId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+enum AlertSeverity {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model Alert {
+  id        String        @id @default(uuid())
+  severity  AlertSeverity @default(LOW)
+  title     String
+  message   String
+  adminId   String?
+  isRead    Boolean       @default(false)
+  createdAt DateTime      @default(now())
+
+  @@index([createdAt])
+  @@index([severity])
+  @@index([isRead])
+}
+
+enum ImportStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model BulkImportJob {
+  id            String       @id @default(uuid())
+  status        ImportStatus @default(PENDING)
+  totalRows     Int          @default(0)
+  processedRows Int          @default(0)
+  insertedCount Int          @default(0)
+  skippedCount  Int          @default(0)
+  failedCount   Int          @default(0)
+  errors        Json?
+  fileName      String?
+  fileSize      Int?
+  adminId       String
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+}
+
+model SearchLog {
+  id           String   @id @default(uuid())
+  query        String
+  filters      Json?
+  resultsCount Int      @default(0)
+  ipHash       String?  // Anonymized user IP for unique visitor counting
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+// ============================================
+// ENTERPRISE PLAN MODELS
+// ============================================
+
+enum WorkspaceStatus {
+  ACTIVE
+  SUSPENDED
+  ARCHIVED
+}
+
+enum WorkspaceMemberRole {
+  OWNER
+  ADMIN
+  ANALYST
+  EDITOR
+  VIEWER
+}
+
+enum InviteStatus {
+  PENDING
+  ACCEPTED
+  REVOKED
+  EXPIRED
+}
+
+enum EnterpriseOrgLinkRequestStatus {
+  PENDING
+  PENDING_APPROVAL
+  APPROVED
+  DENIED
+  CANCELED
+}
+
+enum EnterpriseOrgLinkIntentType {
+  LINK_EXISTING
+  CREATE_UNDER_ENTERPRISE
+}
+
+model Workspace {
+  id                    String              @id @default(uuid())
+  name                  String
+  status                WorkspaceStatus     @default(ACTIVE)
+  ownerId               String              // User ID who created/owns
+  customApiRateLimitRpm Int?                // Override for API rate limit (requests per minute), null = use plan default
+  customApiDailyQuota   Int?                // Override for API daily quota, null = use plan default
+  members               WorkspaceMember[]
+  invites               Invite[]
+  organizations         WorkspaceOrganization[]
+  linkRequests          EnterpriseOrgLinkRequest[]
+  apiKeys               ApiKey[]
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  @@index([ownerId])
+  @@index([status])
+}
+
+model Invite {
+  id            String              @id @default(uuid())
+  workspaceId   String
+  workspace     Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  invitedEmail  String?
+  invitedUserId String?
+  role          WorkspaceMemberRole @default(VIEWER)
+  tokenHash     String              @unique
+  status        InviteStatus        @default(PENDING)
+  expiresAt     DateTime
+  createdBy     String
+  acceptedAt    DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  @@index([workspaceId])
+  @@index([invitedEmail])
+  @@index([invitedUserId])
+  @@index([status])
+  @@index([expiresAt])
+}
+
+model WorkspaceMember {
+  id          String              @id @default(uuid())
+  workspaceId String
+  workspace   Workspace           @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  role        WorkspaceMemberRole @default(VIEWER)
+  invitedBy   String?
+  joinedAt    DateTime            @default(now())
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+model WorkspaceOrganization {
+  id             String    @id @default(uuid())
+  workspaceId    String
+  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  organizationId String
+  linkedBy       String?   // User ID who linked
+  createdAt      DateTime  @default(now())
+
+  @@unique([workspaceId, organizationId])
+  @@index([organizationId])
+}
+
+model EnterpriseOrgLinkRequest {
+  id                  String                         @id @default(uuid())
+  enterpriseId        String
+  enterprise          Organization                   @relation("EnterpriseLinkRequestEnterprise", fields: [enterpriseId], references: [id], onDelete: Cascade)
+  workspaceId         String?
+  workspace           Workspace?                     @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  organizationId      String
+  organization        Organization                   @relation("EnterpriseLinkRequestTarget", fields: [organizationId], references: [id], onDelete: Cascade)
+  requestedByUserId   String?
+  requestIdentifier   String?
+  message             String?
+  intentType          EnterpriseOrgLinkIntentType    @default(LINK_EXISTING)
+  status              EnterpriseOrgLinkRequestStatus @default(PENDING)
+  decidedAt           DateTime?
+  decisionByOrgUserId String?
+  canceledAt          DateTime?
+  createdAt           DateTime                       @default(now())
+  updatedAt           DateTime                       @updatedAt
+
+  @@index([enterpriseId])
+  @@index([organizationId])
+  @@index([workspaceId])
+  @@index([status])
+  @@index([enterpriseId, status])
+  @@index([organizationId, status])
+}
+
+model ApiKey {
+  id          String        @id @default(uuid())
+  workspaceId String
+  workspace   Workspace     @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  name        String
+  prefix      String        // First 8 chars for identification (e.g., "vlnk_xxx")
+  keyHash     String        // SHA-256 hash of the full key
+  scopes      String[]      // ["read:verify", "read:directory", ...]
+  rateLimitRpm Int?         // Optional per-key req/min override
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+  expiresAt   DateTime?     // Optional expiry, null = permanent
+  createdById String
+  usageLogs   ApiUsageLog[]
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([prefix])
+  @@index([keyHash])
+  @@index([workspaceId])
+}
+
+model ApiUsageLog {
+  id         String   @id @default(uuid())
+  apiKeyId   String
+  apiKey     ApiKey   @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  endpoint   String
+  method     String
+  statusCode Int
+  ip         String?
+  userAgent  String?
+  latencyMs  Int?
+  createdAt  DateTime @default(now())
+
+  @@index([apiKeyId])
+  @@index([createdAt])
+}

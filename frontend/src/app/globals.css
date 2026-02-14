@@ -1,0 +1,136 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Light Mode Tokens */
+  --background: #ffffff;
+  --foreground: #101627;
+
+  --app-bg: #ffffff;
+  --app-bg-secondary: #F4F4F4;
+  --app-surface: rgba(255, 255, 255, 0.90);
+  --app-border: rgba(0, 0, 0, 0.10);
+  --app-text-primary: #101627;
+  --app-text-secondary: rgba(16, 22, 39, 0.70);
+
+  --btn-primary: #187DE9;
+  --btn-secondary-bg: transparent;
+  --btn-secondary-border: rgba(0, 0, 0, 0.10);
+  --btn-secondary-text: rgba(16, 22, 39, 0.70);
+}
+
+.dark {
+  /* Dark Mode Tokens */
+  --background: #101627;
+  --foreground: #f8fafc;
+
+  --app-bg: #101627;
+  --app-bg-secondary: #0f172a;
+  /* slate-900 */
+  --app-surface: rgba(16, 22, 39, 0.70);
+  --app-border: rgba(255, 255, 255, 0.10);
+  --app-text-primary: #f8fafc;
+  --app-text-secondary: rgba(234, 240, 255, 0.70);
+
+  --btn-secondary-bg: transparent;
+  --btn-secondary-border: rgba(255, 255, 255, 0.10);
+  --btn-secondary-text: rgba(234, 240, 255, 0.90);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+
+@theme {
+  --color-app: var(--app-bg);
+  --color-primary-blue: #187DE9;
+  --color-secondary-blue: #1E90FF;
+}
+
+/* New Design System Utilities */
+.bg-app {
+  background-color: var(--app-bg);
+  color: var(--app-text-primary);
+  transition: background-color 0.3s, color 0.3s;
+}
+
+.bg-glow {
+  background-color: var(--app-bg);
+  background-image:
+    radial-gradient(circle at 50% 30%, rgba(24, 125, 233, 0.05), transparent 55%),
+    radial-gradient(circle at 70% 60%, rgba(30, 144, 255, 0.03), transparent 60%);
+  background-attachment: fixed;
+  color: var(--app-text-primary);
+}
+
+.dark .bg-glow {
+  background-image:
+    radial-gradient(circle at 50% 30%, rgba(24, 125, 233, 0.22), transparent 55%),
+    radial-gradient(circle at 70% 60%, rgba(30, 144, 255, 0.14), transparent 60%);
+}
+
+.bg-app-secondary {
+  background-color: var(--app-bg-secondary);
+  color: var(--app-text-primary);
+}
+
+.surface-card {
+  background-color: var(--app-surface);
+  border: 1px solid var(--app-border);
+  backdrop-filter: blur(12px);
+  color: var(--app-text-primary);
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+/* Button System */
+.btn-primary {
+  background-color: #187DE9;
+  color: white;
+  transition: all 0.2s;
+}
+
+.btn-primary:hover {
+  background-color: #1E90FF;
+  filter: brightness(1.05);
+  box-shadow: 0 0 15px rgba(24, 125, 233, 0.4);
+}
+
+.btn-secondary {
+  background-color: transparent;
+  border: 1px solid var(--app-border);
+  color: var(--app-text-primary);
+  transition: all 0.2s;
+}
+
+.btn-secondary:hover {
+  border-color: #187DE9;
+  color: #187DE9;
+  background-color: rgba(24, 125, 233, 0.05);
+}
+
+.active .btn-secondary,
+.btn-secondary.active {
+  border-color: #187DE9;
+  color: #187DE9;
+  background-color: rgba(24, 125, 233, 0.1);
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}

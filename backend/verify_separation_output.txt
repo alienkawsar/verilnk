@@ -1,0 +1,4 @@
+--- Verifying Endpoint Existence ---
+FAIL: /auth/admin/me - Status: 
+FAIL: /auth/user/me - Status: 
+FAIL: /auth/org/me - Status: 

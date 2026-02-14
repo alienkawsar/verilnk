@@ -1,0 +1,39 @@
+--- Starting Proxy Auth Verification ---
+
+[1] Testing Proxy Login (/api/auth/admin/login)...
+Status: 200
+Headers: Object [AxiosHeaders] {
+  'x-frame-options': 'DENY',
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'origin-when-cross-origin',
+  'cross-origin-opener-policy': 'same-origin',
+  'cross-origin-embedder-policy': 'require-corp',
+  'permissions-policy': 'camera=(), geolocation=(), microphone=(self), payment=(), usb=()',
+  'content-security-policy-report-only': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https: https://www.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https:; img-src 'self' https: data: blob:; font-src 'self' https: data:; connect-src 'self' https: http://localhost:* ws: wss: https://www.google.com https://www.recaptcha.net; media-src 'self' blob:; worker-src 'self' blob:; frame-ancestors 'none'",
+  vary: 'rsc, next-router-state-tree, next-router-prefetch, next-router-segment-prefetch',
+  'content-type': 'application/json',
+  'set-cookie': [
+    'admin_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjA4YTdmZmU1LTJlZGItNDVlNy1iZWJlLTExOWEzZWEwYzZmZiIsImVtYWlsIjoiYWRtaW5AdmVyaWxuay5jb20iLCJyb2xlIjoiU1VQRVJfQURNSU4iLCJmaXJzdE5hbWUiOiJBZG1pbiIsImxhc3ROYW1lIjoiVXNlciIsImp0aSI6IjZhMDU0OTFmLThiYjgtNDhhNy05NjQxLWEzZmRjMWVjYzZhMCIsImlhdCI6MTc3MDAyNzcyMCwiZXhwIjoxNzcwMDU2NTIwfQ.6Om4ZKL7ckpjzJbeBOnT9CIeluVwUHEByfJnW51KoCs; Path=/; Expires=Tue, 03 Feb 2026 10:22:01 GMT; Max-Age=86400; HttpOnly; SameSite=lax'
+  ],
+  date: 'Mon, 02 Feb 2026 10:22:01 GMT',
+  connection: 'close',
+  'transfer-encoding': 'chunked'
+}
+Body: { ok: true }
+PASS: admin_token cookie set: admin_token
+Cookie Path: /
+Cookie HttpOnly: true
+
+[2] Testing Admin Dashboard Access (/admin/dashboard)...
+Status: 200
+PASS: Dashboard returned 200 OK (No Redirect Loop)
+
+[3] Testing Logout (/api/auth/admin/logout)...
+Status: 200
+PASS: admin_token cleared.
+
+[4] Re-testing Dashboard (Should Redirect)...
+Status: 307
+PASS: correctly redirected (Status: 307)
+
+--- Verification Complete ---

@@ -1,0 +1,5 @@
+--- Verifying Routes on http://localhost:3000 ---
+1. GET /api/test
+   Success: 200 { message: 'Test Route Works' }
+2. POST /api/auth/admin/login
+   Success: 200 { ok: true, debug: 'SIMPLE_RESPONSE' }
