@@ -86,12 +86,24 @@ export interface LinkableOrganization {
 
 export interface WorkspaceInvite {
     id: string;
+    workspaceId: string;
     invitedEmail: string | null;
     invitedUserId: string | null;
     role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
-    status: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
+    status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED' | 'CANCELED' | 'EXPIRED';
     expiresAt: string;
     acceptedAt: string | null;
+    declinedAt?: string | null;
+    createdBy?: string;
+    createdByUser?: {
+        id: string;
+        name: string | null;
+        email: string;
+    } | null;
+    workspace?: {
+        id: string;
+        name: string;
+    };
     createdAt: string;
 }
 
@@ -365,12 +377,15 @@ export async function getWorkspaceInvites(workspaceId: string): Promise<{ invite
 
 export async function createWorkspaceInvite(
     workspaceId: string,
-    email: string,
-    role: 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER'
+    payload: {
+        invitedEmail?: string;
+        invitedUserId?: string;
+        role: 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+    }
 ): Promise<{ invite: WorkspaceInvite; inviteLink: string | null }> {
     return apiRequest(`/enterprise/workspaces/${workspaceId}/invites`, {
         method: 'POST',
-        body: JSON.stringify({ email, role }),
+        body: JSON.stringify(payload),
     });
 }
 
@@ -380,10 +395,32 @@ export async function revokeWorkspaceInvite(workspaceId: string, inviteId: strin
     });
 }
 
+export async function cancelWorkspaceInvite(workspaceId: string, inviteId: string): Promise<{ success: boolean }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/invites/${inviteId}`, {
+        method: 'DELETE',
+    });
+}
+
 export async function acceptWorkspaceInvite(token: string): Promise<{ success: boolean; member: WorkspaceMember }> {
     return apiRequest('/enterprise/invites/accept', {
         method: 'POST',
         body: JSON.stringify({ token }),
+    });
+}
+
+export async function getMyWorkspaceInvites(): Promise<{ invites: WorkspaceInvite[] }> {
+    return apiRequest('/enterprise/invites');
+}
+
+export async function acceptWorkspaceInviteById(inviteId: string): Promise<{ success: boolean; member: WorkspaceMember }> {
+    return apiRequest(`/enterprise/invites/${inviteId}/accept`, {
+        method: 'POST'
+    });
+}
+
+export async function declineWorkspaceInviteById(inviteId: string): Promise<{ success: boolean }> {
+    return apiRequest(`/enterprise/invites/${inviteId}/decline`, {
+        method: 'POST'
     });
 }
 

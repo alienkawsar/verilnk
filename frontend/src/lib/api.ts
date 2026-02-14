@@ -81,6 +81,58 @@ export const denyOrgLinkRequest = async (requestId: string) => {
     return response.data;
 };
 
+export const fetchMyEnterpriseInvites = async () => {
+    const response = await api.get('/enterprise/invites');
+    return response.data as {
+        invites: Array<{
+            id: string;
+            workspaceId: string;
+            invitedEmail: string | null;
+            invitedUserId: string | null;
+            role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+            status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED' | 'CANCELED' | 'EXPIRED';
+            expiresAt: string;
+            createdAt: string;
+            workspace?: { id: string; name: string };
+            createdBy?: string;
+            createdByUser?: { id: string; name: string | null; email: string } | null;
+        }>;
+    };
+};
+
+export const acceptMyEnterpriseInvite = async (inviteId: string) => {
+    const response = await api.post(`/enterprise/invites/${inviteId}/accept`);
+    return response.data as {
+        success: boolean;
+        member: {
+            workspaceId: string;
+            userId: string;
+            role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+        };
+    };
+};
+
+export const declineMyEnterpriseInvite = async (inviteId: string) => {
+    const response = await api.post(`/enterprise/invites/${inviteId}/decline`);
+    return response.data as { success: boolean };
+};
+
+export const fetchMyEnterpriseWorkspaces = async () => {
+    const response = await api.get('/enterprise/workspaces');
+    return response.data as {
+        workspaces: Array<{
+            id: string;
+            name: string;
+            status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED';
+            memberCount: number;
+            orgCount: number;
+            apiKeyCount: number;
+            role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+            createdAt: string;
+        }>;
+    };
+};
+
 export const fetchCountries = async (params?: { includeDisabled?: boolean }) => {
     return deduplicatedGet('/countries', { params });
 };

@@ -12,6 +12,7 @@ import {
     WorkspaceOrganization,
     WorkspaceMemberRole,
     WorkspaceStatus,
+    InviteStatus,
     PlanType,
     OrgStatus
 } from '@prisma/client';
@@ -56,30 +57,30 @@ export interface WorkspaceSummary {
 
 export interface WorkspaceInviteRecord {
     id: string;
-    invitedEmail: string | null;
-    invitedUserId: string | null;
-    role: WorkspaceMemberRole;
-    status: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
-    expiresAt: Date;
-    acceptedAt: Date | null;
-    createdAt: Date;
-}
-
-type InviteStatusValue = 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'EXPIRED';
-
-type InviteRow = {
-    id: string;
     workspaceId: string;
     invitedEmail: string | null;
     invitedUserId: string | null;
     role: WorkspaceMemberRole;
-    tokenHash: string;
-    status: InviteStatusValue;
+    status: InviteStatus;
     expiresAt: Date;
-    createdBy: string;
     acceptedAt: Date | null;
+    createdBy: string;
+    workspace?: {
+        id: string;
+        name: string;
+    };
+    createdByUser?: {
+        id: string;
+        name: string | null;
+        email: string;
+    } | null;
     createdAt: Date;
-};
+}
+
+export interface WorkspaceInviteTargetInput {
+    invitedEmail?: string;
+    invitedUserId?: string;
+}
 
 // ============================================
 // Workspace CRUD
@@ -390,37 +391,114 @@ const generateInviteToken = (): string => {
     return `inv_${crypto.randomBytes(32).toString('hex')}`;
 };
 
+const normalizeInviteRecord = (
+    invite: {
+        id: string;
+        workspaceId: string;
+        invitedEmail: string | null;
+        invitedUserId: string | null;
+        role: WorkspaceMemberRole;
+        status: InviteStatus;
+        expiresAt: Date;
+        acceptedAt: Date | null;
+        createdBy: string;
+        createdAt: Date;
+        workspace?: {
+            id: string;
+            name: string;
+        } | null;
+    },
+    createdByUser?: {
+        id: string;
+        name: string | null;
+        email: string;
+    } | null
+): WorkspaceInviteRecord => ({
+    id: invite.id,
+    workspaceId: invite.workspaceId,
+    invitedEmail: invite.invitedEmail,
+    invitedUserId: invite.invitedUserId,
+    role: invite.role,
+    status: invite.status,
+    expiresAt: invite.expiresAt,
+    acceptedAt: invite.acceptedAt,
+    createdBy: invite.createdBy,
+    createdAt: invite.createdAt,
+    ...(invite.workspace ? { workspace: invite.workspace } : {}),
+    createdByUser: createdByUser || null
+});
+
 export const createWorkspaceInvite = async (
     workspaceId: string,
-    invitedEmail: string,
+    target: WorkspaceInviteTargetInput,
     role: WorkspaceMemberRole,
     createdBy: string,
     expiresInDays: number = 7
 ): Promise<{ invite: WorkspaceInviteRecord; token: string }> => {
-    const normalizedEmail = invitedEmail.trim().toLowerCase();
-    if (!normalizedEmail.includes('@')) {
-        throw new Error('Valid email is required');
+    const hasEmail = typeof target.invitedEmail === 'string' && target.invitedEmail.trim().length > 0;
+    const hasUserId = typeof target.invitedUserId === 'string' && target.invitedUserId.trim().length > 0;
+
+    if ((hasEmail && hasUserId) || (!hasEmail && !hasUserId)) {
+        throw new Error('Provide exactly one invite target: invitedEmail or invitedUserId');
     }
 
-    // Resolve invite target to existing user if available.
-    const user = await prisma.user.findFirst({
-        where: { email: normalizedEmail },
+    let normalizedEmail: string | null = null;
+    let invitedUser: { id: string; email: string } | null = null;
+
+    if (hasEmail) {
+        normalizedEmail = target.invitedEmail!.trim().toLowerCase();
+        if (!normalizedEmail.includes('@')) {
+            throw new Error('Valid email is required');
+        }
+
+        invitedUser = await prisma.user.findFirst({
+            where: { email: normalizedEmail },
+            select: { id: true, email: true }
+        });
+
+        if (!invitedUser) {
+            throw new Error('User not found');
+        }
+    } else {
+        invitedUser = await prisma.user.findUnique({
+            where: { id: target.invitedUserId! },
+            select: { id: true, email: true }
+        });
+
+        if (!invitedUser) {
+            throw new Error('User not found');
+        }
+        normalizedEmail = invitedUser.email.trim().toLowerCase();
+    }
+
+    const existingMember = await prisma.workspaceMember.findUnique({
+        where: {
+            workspaceId_userId: {
+                workspaceId,
+                userId: invitedUser.id
+            }
+        },
         select: { id: true }
     });
 
-    if (user?.id) {
-        const existingMember = await prisma.workspaceMember.findUnique({
-            where: {
-                workspaceId_userId: {
-                    workspaceId,
-                    userId: user.id
-                }
-            },
-            select: { id: true }
-        });
-        if (existingMember) {
-            throw new Error('User is already a workspace member');
-        }
+    if (existingMember) {
+        throw new Error('User already a member');
+    }
+
+    const existingPendingInvite = await prisma.invite.findFirst({
+        where: {
+            workspaceId,
+            status: InviteStatus.PENDING,
+            OR: [
+                { invitedUserId: invitedUser.id },
+                ...(normalizedEmail ? [{ invitedEmail: normalizedEmail }] : [])
+            ]
+        },
+        select: { id: true }
+    });
+
+    if (existingPendingInvite) {
+        throw new Error('Invite already pending');
     }
 
     const inviteQuota = await assertEnterpriseQuotaByWorkspaceId(workspaceId, 'MEMBERS');
@@ -431,45 +509,52 @@ export const createWorkspaceInvite = async (
     const token = generateInviteToken();
     const tokenHash = hashInviteToken(token);
     const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000);
-    const inviteId = crypto.randomUUID();
 
-    const createdRows = await prisma.$queryRaw<InviteRow[]>`
-        INSERT INTO "Invite"
-            ("id", "workspaceId", "invitedEmail", "invitedUserId", "role", "tokenHash", "status", "expiresAt", "createdBy", "createdAt", "updatedAt")
-        VALUES
-            (${inviteId}, ${workspaceId}, ${normalizedEmail}, ${user?.id || null}, ${role}, ${tokenHash}, ${'PENDING'}, ${expiresAt}, ${createdBy}, NOW(), NOW())
-        RETURNING
-            "id",
-            "workspaceId",
-            "invitedEmail",
-            "invitedUserId",
-            "role",
-            "tokenHash",
-            "status",
-            "expiresAt",
-            "createdBy",
-            "acceptedAt",
-            "createdAt"
-    `;
-
-    const invite = createdRows[0];
-    if (!invite) {
-        throw new Error('Failed to create invite');
-    }
+    const invite = await prisma.invite.create({
+        data: {
+            workspaceId,
+            invitedEmail: normalizedEmail,
+            invitedUserId: invitedUser.id,
+            role,
+            tokenHash,
+            status: InviteStatus.PENDING,
+            expiresAt,
+            createdBy
+        },
+        select: {
+            id: true,
+            workspaceId: true,
+            invitedEmail: true,
+            invitedUserId: true,
+            role: true,
+            status: true,
+            expiresAt: true,
+            acceptedAt: true,
+            createdBy: true,
+            createdAt: true
+        }
+    });
 
     return {
-        invite: {
-            id: invite.id,
-            invitedEmail: invite.invitedEmail,
-            invitedUserId: invite.invitedUserId,
-            role: invite.role,
-            status: invite.status,
-            expiresAt: invite.expiresAt,
-            acceptedAt: invite.acceptedAt,
-            createdAt: invite.createdAt
-        },
+        invite: normalizeInviteRecord(invite),
         token
     };
+};
+
+const assertInviteRecipient = (
+    invite: {
+        invitedUserId: string | null;
+        invitedEmail: string | null;
+    },
+    user: { id: string; email: string }
+) => {
+    const normalizedUserEmail = user.email.trim().toLowerCase();
+    if (invite.invitedUserId && invite.invitedUserId !== user.id) {
+        throw new Error('Invite does not belong to this user');
+    }
+    if (invite.invitedEmail && invite.invitedEmail.trim().toLowerCase() !== normalizedUserEmail) {
+        throw new Error('Invite does not belong to this user');
+    }
 };
 
 export const acceptWorkspaceInvite = async (
@@ -483,39 +568,35 @@ export const acceptWorkspaceInvite = async (
     const tokenHash = hashInviteToken(token);
 
     return prisma.$transaction(async (tx) => {
-        const inviteRows = await tx.$queryRaw<InviteRow[]>`
-            SELECT
-                "id",
-                "workspaceId",
-                "invitedEmail",
-                "invitedUserId",
-                "role",
-                "tokenHash",
-                "status",
-                "expiresAt",
-                "createdBy",
-                "acceptedAt",
-                "createdAt"
-            FROM "Invite"
-            WHERE "tokenHash" = ${tokenHash}
-            LIMIT 1
-        `;
-        const invite = inviteRows[0];
+        const invite = await tx.invite.findUnique({
+            where: { tokenHash },
+            select: {
+                id: true,
+                workspaceId: true,
+                invitedEmail: true,
+                invitedUserId: true,
+                role: true,
+                status: true,
+                expiresAt: true,
+                createdBy: true
+            }
+        });
 
         if (!invite) {
             throw new Error('Invalid invite token');
         }
 
-        if (invite.status !== 'PENDING') {
+        if (invite.status !== InviteStatus.PENDING) {
             throw new Error('Invite is no longer active');
         }
 
         if (invite.expiresAt.getTime() < Date.now()) {
-            await tx.$executeRaw`
-                UPDATE "Invite"
-                SET "status" = ${'EXPIRED'}, "updatedAt" = NOW()
-                WHERE "id" = ${invite.id}
-            `;
+            await tx.invite.update({
+                where: { id: invite.id },
+                data: {
+                    status: InviteStatus.EXPIRED
+                }
+            });
             throw new Error('Invite has expired');
         }
 
@@ -528,13 +609,7 @@ export const acceptWorkspaceInvite = async (
             throw new Error('User not found');
         }
 
-        const normalizedUserEmail = user.email.trim().toLowerCase();
-        if (invite.invitedUserId && invite.invitedUserId !== user.id) {
-            throw new Error('This invite is for a different user');
-        }
-        if (invite.invitedEmail && invite.invitedEmail.trim().toLowerCase() !== normalizedUserEmail) {
-            throw new Error('This invite is for a different email address');
-        }
+        assertInviteRecipient(invite, user);
 
         const existingMember = await tx.workspaceMember.findUnique({
             where: {
@@ -542,6 +617,16 @@ export const acceptWorkspaceInvite = async (
                     workspaceId: invite.workspaceId,
                     userId: user.id
                 }
+            },
+            select: {
+                id: true,
+                workspaceId: true,
+                userId: true,
+                role: true,
+                invitedBy: true,
+                joinedAt: true,
+                createdAt: true,
+                updatedAt: true
             }
         });
 
@@ -554,75 +639,306 @@ export const acceptWorkspaceInvite = async (
             }
         });
 
-        await tx.$executeRaw`
-            UPDATE "Invite"
-            SET "status" = ${'ACCEPTED'}, "acceptedAt" = NOW(), "updatedAt" = NOW()
-            WHERE "id" = ${invite.id}
-        `;
+        await tx.invite.update({
+            where: { id: invite.id },
+            data: {
+                status: InviteStatus.ACCEPTED,
+                acceptedAt: new Date()
+            }
+        });
 
         return member;
     });
 };
 
-export const getWorkspaceInvites = async (workspaceId: string): Promise<WorkspaceInviteRecord[]> => {
-    const invites = await prisma.$queryRaw<InviteRow[]>`
-        SELECT
-            "id",
-            "workspaceId",
-            "invitedEmail",
-            "invitedUserId",
-            "role",
-            "tokenHash",
-            "status",
-            "expiresAt",
-            "createdBy",
-            "acceptedAt",
-            "createdAt"
-        FROM "Invite"
-        WHERE "workspaceId" = ${workspaceId}
-        ORDER BY "createdAt" DESC
-    `;
+export const getWorkspaceInvites = async (
+    workspaceId: string,
+    status?: InviteStatus
+): Promise<WorkspaceInviteRecord[]> => {
+    await prisma.invite.updateMany({
+        where: {
+            workspaceId,
+            status: InviteStatus.PENDING,
+            expiresAt: { lt: new Date() }
+        },
+        data: {
+            status: InviteStatus.EXPIRED
+        }
+    });
 
-    return invites.map((invite) => ({
-        id: invite.id,
-        invitedEmail: invite.invitedEmail,
-        invitedUserId: invite.invitedUserId,
-        role: invite.role,
-        status: invite.status,
-        expiresAt: invite.expiresAt,
-        acceptedAt: invite.acceptedAt,
-        createdAt: invite.createdAt
-    }));
+    const invites = await prisma.invite.findMany({
+        where: {
+            workspaceId,
+            ...(status ? { status } : {})
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+            id: true,
+            workspaceId: true,
+            invitedEmail: true,
+            invitedUserId: true,
+            role: true,
+            status: true,
+            expiresAt: true,
+            acceptedAt: true,
+            createdBy: true,
+            createdAt: true
+        }
+    });
+
+    const createdByIds = Array.from(new Set(invites.map((invite) => invite.createdBy)));
+    const users = createdByIds.length
+        ? await prisma.user.findMany({
+            where: { id: { in: createdByIds } },
+            select: { id: true, name: true, email: true }
+        })
+        : [];
+    const createdByMap = new Map(users.map((user) => [user.id, user]));
+
+    return invites.map((invite) => normalizeInviteRecord(invite, createdByMap.get(invite.createdBy) || null));
+};
+
+const updateWorkspaceInviteStatus = async (
+    workspaceId: string,
+    inviteId: string,
+    status: 'REVOKED'
+): Promise<void> => {
+    const invite = await prisma.invite.findUnique({
+        where: { id: inviteId },
+        select: { id: true, workspaceId: true, status: true }
+    });
+
+    if (!invite || invite.workspaceId !== workspaceId) {
+        throw new Error('Invite not found');
+    }
+
+    if (invite.status !== InviteStatus.PENDING) {
+        throw new Error('Only pending invites can be canceled');
+    }
+
+    await prisma.invite.update({
+        where: { id: inviteId },
+        data: { status }
+    });
 };
 
 export const revokeWorkspaceInvite = async (
     workspaceId: string,
     inviteId: string
 ): Promise<void> => {
-    const inviteRows = await prisma.$queryRaw<InviteRow[]>`
-        SELECT
-            "id",
-            "workspaceId",
-            "status"
-        FROM "Invite"
-        WHERE "id" = ${inviteId}
-        LIMIT 1
-    `;
-    const invite = inviteRows[0];
+    await updateWorkspaceInviteStatus(workspaceId, inviteId, InviteStatus.REVOKED);
+};
 
-    if (!invite || invite.workspaceId !== workspaceId) {
-        throw new Error('Invite not found');
+export const cancelWorkspaceInvite = async (
+    workspaceId: string,
+    inviteId: string
+): Promise<void> => {
+    await updateWorkspaceInviteStatus(workspaceId, inviteId, InviteStatus.REVOKED);
+};
+
+export const listMyWorkspaceInvites = async (userId: string): Promise<WorkspaceInviteRecord[]> => {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, email: true }
+    });
+
+    if (!user) {
+        throw new Error('User not found');
     }
 
-    if (invite.status !== 'PENDING') {
-        throw new Error('Only pending invites can be revoked');
-    }
+    const normalizedEmail = user.email.trim().toLowerCase();
 
-    await prisma.$executeRaw`
-        UPDATE "Invite"
-        SET "status" = ${'REVOKED'}, "updatedAt" = NOW()
-        WHERE "id" = ${inviteId}
-    `;
+    await prisma.invite.updateMany({
+        where: {
+            status: InviteStatus.PENDING,
+            expiresAt: { lt: new Date() },
+            OR: [
+                { invitedUserId: user.id },
+                { invitedEmail: normalizedEmail }
+            ]
+        },
+        data: {
+            status: InviteStatus.EXPIRED
+        }
+    });
+
+    const invites = await prisma.invite.findMany({
+        where: {
+            status: InviteStatus.PENDING,
+            OR: [
+                { invitedUserId: user.id },
+                { invitedEmail: normalizedEmail }
+            ]
+        },
+        orderBy: { createdAt: 'desc' },
+        select: {
+            id: true,
+            workspaceId: true,
+            invitedEmail: true,
+            invitedUserId: true,
+            role: true,
+            status: true,
+            expiresAt: true,
+            acceptedAt: true,
+            createdBy: true,
+            createdAt: true,
+            workspace: {
+                select: {
+                    id: true,
+                    name: true
+                }
+            }
+        }
+    });
+
+    const createdByIds = Array.from(new Set(invites.map((invite) => invite.createdBy)));
+    const users = createdByIds.length
+        ? await prisma.user.findMany({
+            where: { id: { in: createdByIds } },
+            select: { id: true, name: true, email: true }
+        })
+        : [];
+    const createdByMap = new Map(users.map((creator) => [creator.id, creator]));
+
+    return invites.map((invite) => normalizeInviteRecord(invite, createdByMap.get(invite.createdBy) || null));
+};
+
+export const acceptWorkspaceInviteById = async (
+    inviteId: string,
+    userId: string
+): Promise<WorkspaceMember> => {
+    return prisma.$transaction(async (tx) => {
+        const user = await tx.user.findUnique({
+            where: { id: userId },
+            select: { id: true, email: true }
+        });
+
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        const invite = await tx.invite.findUnique({
+            where: { id: inviteId },
+            select: {
+                id: true,
+                workspaceId: true,
+                invitedEmail: true,
+                invitedUserId: true,
+                role: true,
+                status: true,
+                expiresAt: true,
+                createdBy: true
+            }
+        });
+
+        if (!invite) {
+            throw new Error('Invite not found');
+        }
+
+        assertInviteRecipient(invite, user);
+
+        if (invite.status !== InviteStatus.PENDING) {
+            throw new Error('Invite has already been processed');
+        }
+
+        if (invite.expiresAt.getTime() < Date.now()) {
+            await tx.invite.update({
+                where: { id: invite.id },
+                data: { status: InviteStatus.EXPIRED }
+            });
+            throw new Error('Invite has expired');
+        }
+
+        const existingMember = await tx.workspaceMember.findUnique({
+            where: {
+                workspaceId_userId: {
+                    workspaceId: invite.workspaceId,
+                    userId: user.id
+                }
+            },
+            select: {
+                id: true,
+                workspaceId: true,
+                userId: true,
+                role: true,
+                invitedBy: true,
+                joinedAt: true,
+                createdAt: true,
+                updatedAt: true
+            }
+        });
+
+        const member = existingMember || await tx.workspaceMember.create({
+            data: {
+                workspaceId: invite.workspaceId,
+                userId: user.id,
+                role: invite.role,
+                invitedBy: invite.createdBy
+            }
+        });
+
+        await tx.invite.update({
+            where: { id: invite.id },
+            data: {
+                status: InviteStatus.ACCEPTED,
+                acceptedAt: new Date()
+            }
+        });
+
+        return member;
+    });
+};
+
+export const declineWorkspaceInviteById = async (
+    inviteId: string,
+    userId: string
+): Promise<void> => {
+    await prisma.$transaction(async (tx) => {
+        const user = await tx.user.findUnique({
+            where: { id: userId },
+            select: { id: true, email: true }
+        });
+
+        if (!user) {
+            throw new Error('User not found');
+        }
+
+        const invite = await tx.invite.findUnique({
+            where: { id: inviteId },
+            select: {
+                id: true,
+                invitedEmail: true,
+                invitedUserId: true,
+                status: true,
+                expiresAt: true
+            }
+        });
+
+        if (!invite) {
+            throw new Error('Invite not found');
+        }
+
+        assertInviteRecipient(invite, user);
+
+        if (invite.status !== InviteStatus.PENDING) {
+            throw new Error('Invite has already been processed');
+        }
+
+        if (invite.expiresAt.getTime() < Date.now()) {
+            await tx.invite.update({
+                where: { id: invite.id },
+                data: { status: InviteStatus.EXPIRED }
+            });
+            throw new Error('Invite has expired');
+        }
+
+        await tx.invite.update({
+            where: { id: invite.id },
+            data: {
+                status: InviteStatus.REVOKED
+            }
+        });
+    });
 };
 
 export const searchOrganizationsForWorkspaceLink = async (

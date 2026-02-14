@@ -27,8 +27,12 @@ import {
     getWorkspaceMembers,
     createWorkspaceInvite,
     acceptWorkspaceInvite,
+    acceptWorkspaceInviteById,
+    declineWorkspaceInviteById,
     getWorkspaceInvites,
     revokeWorkspaceInvite,
+    cancelWorkspaceInvite,
+    listMyWorkspaceInvites,
     unlinkOrganization,
     getLinkedOrganizations
 } from '../services/workspace.service';
@@ -49,6 +53,7 @@ import {
 } from '../services/apikey.service';
 import {
     AuditActionType,
+    InviteStatus,
     OrgType,
     WorkspaceMemberRole
 } from '@prisma/client';
@@ -165,6 +170,27 @@ const createLinkRequestSchema = z.union([
         message: z.string().max(500).optional()
     })
 ]);
+
+const inviteRoleSchema = z.enum(['ADMIN', 'ANALYST', 'EDITOR', 'VIEWER']);
+const inviteStatusSchema = z.enum(['PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED']);
+
+const createWorkspaceInviteSchema = z.object({
+    email: z.string().email().optional(),
+    invitedEmail: z.string().email().optional(),
+    invitedUserId: z.string().uuid().optional(),
+    role: inviteRoleSchema.optional()
+}).superRefine((data, ctx) => {
+    const resolvedEmail = data.invitedEmail ?? data.email;
+    const hasEmail = Boolean(resolvedEmail);
+    const hasUserId = Boolean(data.invitedUserId);
+
+    if ((hasEmail && hasUserId) || (!hasEmail && !hasUserId)) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Provide exactly one invite target: invitedEmail or invitedUserId'
+        });
+    }
+});
 
 const resolveEnterpriseProfileContext = async (userId: string) => {
     const access = await getUserEnterpriseAccess(userId);
@@ -432,13 +458,20 @@ router.post('/workspaces/:id/members', async (req: AuthRequest, res: Response) =
 router.get('/workspaces/:id/invites', async (req: AuthRequest, res: Response) => {
     try {
         const id = req.params.id as string;
+        const parsedQuery = z.object({ status: inviteStatusSchema.optional() }).safeParse(req.query);
+        if (!parsedQuery.success) {
+            return res.status(400).json({ message: 'Invalid invite status filter' });
+        }
 
         const role = await resolveWorkspaceRole(id, req.user.id as string);
-        if (!role) {
+        if (!role || !canPerformWorkspaceAction(role, 'manage_members')) {
             return res.status(403).json({ message: 'Access denied' });
         }
 
-        const invites = await getWorkspaceInvites(id);
+        const invites = await getWorkspaceInvites(
+            id,
+            parsedQuery.data.status ? parsedQuery.data.status as InviteStatus : undefined
+        );
         res.json({ invites });
     } catch (error: any) {
         console.error('[Enterprise] List invites error:', error);
@@ -449,18 +482,17 @@ router.get('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =>
 router.post('/workspaces/:id/invites', async (req: AuthRequest, res: Response) => {
     try {
         const id = req.params.id as string;
-        const { email, role: inviteRole } = req.body as {
-            email?: string;
-            role?: WorkspaceMemberRole;
-        };
+        const parsedBody = createWorkspaceInviteSchema.safeParse(req.body);
+        if (!parsedBody.success) {
+            return res.status(400).json({
+                message: parsedBody.error.issues[0]?.message || 'Invalid invite payload'
+            });
+        }
+        const { invitedEmail, invitedUserId, email, role: inviteRole } = parsedBody.data;
 
         const currentRole = await resolveWorkspaceRole(id, req.user.id as string);
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
             return res.status(403).json({ message: 'Access denied' });
-        }
-
-        if (!email || typeof email !== 'string' || !email.includes('@')) {
-            return res.status(400).json({ message: 'Valid email address is required' });
         }
 
         const validRoles: WorkspaceMemberRole[] = ['ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'];
@@ -468,9 +500,13 @@ router.post('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =
             ? inviteRole as WorkspaceMemberRole
             : 'VIEWER';
 
+        const resolvedEmail = invitedEmail || email;
         const { invite, token } = await createWorkspaceInvite(
             id,
-            email,
+            {
+                invitedEmail: resolvedEmail,
+                invitedUserId
+            },
             safeRole,
             req.user.id as string
         );
@@ -480,18 +516,21 @@ router.post('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =
             req,
             AuditActionType.CREATE,
             'WorkspaceInvite',
-            `Created workspace invite for ${invite.invitedEmail || invite.invitedUserId || 'unknown user'}`,
+            `WORKSPACE_INVITE_CREATED workspaceId=${id} role=${invite.role} target=${invite.invitedEmail || invite.invitedUserId || 'unknown'}`,
             invite.id
         );
         res.status(201).json({
             invite: {
                 id: invite.id,
+                workspaceId: invite.workspaceId,
                 invitedEmail: invite.invitedEmail,
                 invitedUserId: invite.invitedUserId,
                 role: invite.role,
                 status: invite.status,
                 expiresAt: invite.expiresAt,
                 acceptedAt: invite.acceptedAt,
+                createdBy: invite.createdBy,
+                createdByUser: invite.createdByUser || null,
                 createdAt: invite.createdAt
             },
             inviteLink: process.env.NODE_ENV === 'production' ? null : inviteLink
@@ -499,7 +538,44 @@ router.post('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =
     } catch (error: any) {
         console.error('[Enterprise] Create invite error:', error);
         if (handleEnterpriseLimitError(res, error)) return;
+        if (error?.message === 'User not found') {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        if (error?.message === 'Invite already pending' || error?.message === 'User already a member') {
+            return res.status(409).json({ message: error.message });
+        }
         res.status(400).json({ message: error.message || 'Failed to create invite' });
+    }
+});
+
+router.delete('/workspaces/:id/invites/:inviteId', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const inviteId = req.params.inviteId as string;
+
+        const currentRole = await resolveWorkspaceRole(id, req.user.id as string);
+        if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
+        await cancelWorkspaceInvite(id, inviteId);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'WorkspaceInvite',
+            `WORKSPACE_INVITE_CANCELED workspaceId=${id} inviteId=${inviteId}`,
+            inviteId
+        );
+        res.json({ success: true });
+    } catch (error: any) {
+        console.error('[Enterprise] Cancel invite error:', error);
+        if (error?.message === 'Invite not found') {
+            return res.status(404).json({ message: 'Invite not found' });
+        }
+        if (error?.message === 'Only pending invites can be canceled') {
+            return res.status(409).json({ message: error.message });
+        }
+        res.status(400).json({ message: error.message || 'Failed to cancel invite' });
     }
 });
 
@@ -518,13 +594,37 @@ router.post('/workspaces/:id/invites/:inviteId/revoke', async (req: AuthRequest,
             req,
             AuditActionType.UPDATE,
             'WorkspaceInvite',
-            `Revoked workspace invite ${inviteId}`,
+            `WORKSPACE_INVITE_CANCELED workspaceId=${id} inviteId=${inviteId} mode=legacy_revoke`,
             inviteId
         );
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Revoke invite error:', error);
+        if (error?.message === 'Invite not found') {
+            return res.status(404).json({ message: 'Invite not found' });
+        }
+        if (error?.message === 'Only pending invites can be canceled') {
+            return res.status(409).json({ message: error.message });
+        }
         res.status(400).json({ message: error.message || 'Failed to revoke invite' });
+    }
+});
+
+router.get('/invites', async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id as string | undefined;
+        if (!userId) {
+            return res.status(401).json({ message: 'Authentication required' });
+        }
+
+        const invites = await listMyWorkspaceInvites(userId);
+        res.json({ invites });
+    } catch (error: any) {
+        console.error('[Enterprise] List my invites error:', error);
+        if (error?.message === 'User not found') {
+            return res.status(404).json({ message: 'User not found' });
+        }
+        res.status(400).json({ message: error.message || 'Failed to list invites' });
     }
 });
 
@@ -540,13 +640,83 @@ router.post('/invites/accept', async (req: AuthRequest, res: Response) => {
             req,
             AuditActionType.UPDATE,
             'WorkspaceInvite',
-            `Accepted workspace invite for workspace ${member.workspaceId}`,
+            `WORKSPACE_INVITE_ACCEPTED workspaceId=${member.workspaceId} via=token`,
             member.id
         );
         res.json({ success: true, member });
     } catch (error: any) {
         console.error('[Enterprise] Accept invite error:', error);
         res.status(400).json({ message: error.message || 'Failed to accept invite' });
+    }
+});
+
+router.post('/invites/:inviteId/accept', async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id as string | undefined;
+        if (!userId) {
+            return res.status(401).json({ message: 'Authentication required' });
+        }
+
+        const inviteId = req.params.inviteId as string;
+        const member = await acceptWorkspaceInviteById(inviteId, userId);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.APPROVE,
+            'WorkspaceInvite',
+            `WORKSPACE_INVITE_ACCEPTED workspaceId=${member.workspaceId} inviteId=${inviteId} via=in_app`,
+            inviteId
+        );
+        res.json({ success: true, member });
+    } catch (error: any) {
+        console.error('[Enterprise] Accept invite by id error:', error);
+        if (error?.message === 'Invite not found') {
+            return res.status(404).json({ message: error.message });
+        }
+        if (error?.message === 'Invite does not belong to this user') {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        if (error.message === 'Invite has already been processed') {
+            return res.status(409).json({ message: error.message });
+        }
+        if (error.message === 'Invite has expired') {
+            return res.status(409).json({ message: error.message });
+        }
+        res.status(400).json({ message: error.message || 'Failed to accept invite' });
+    }
+});
+
+router.post('/invites/:inviteId/decline', async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id as string | undefined;
+        if (!userId) {
+            return res.status(401).json({ message: 'Authentication required' });
+        }
+
+        const inviteId = req.params.inviteId as string;
+        await declineWorkspaceInviteById(inviteId, userId);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.REJECT,
+            'WorkspaceInvite',
+            `WORKSPACE_INVITE_DECLINED inviteId=${inviteId}`,
+            inviteId
+        );
+        res.json({ success: true });
+    } catch (error: any) {
+        console.error('[Enterprise] Decline invite error:', error);
+        if (error?.message === 'Invite not found') {
+            return res.status(404).json({ message: error.message });
+        }
+        if (error?.message === 'Invite does not belong to this user') {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+        if (error.message === 'Invite has already been processed') {
+            return res.status(409).json({ message: error.message });
+        }
+        if (error.message === 'Invite has expired') {
+            return res.status(409).json({ message: error.message });
+        }
+        res.status(400).json({ message: error.message || 'Failed to decline invite' });
     }
 });
 

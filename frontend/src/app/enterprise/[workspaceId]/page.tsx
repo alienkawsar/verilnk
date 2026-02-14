@@ -49,7 +49,7 @@ import {
     unlinkOrganization,
     removeMember,
     createWorkspaceInvite,
-    revokeWorkspaceInvite,
+    cancelWorkspaceInvite,
     exportEnterpriseAnalytics,
     getEnterpriseAnalytics,
     getEnterpriseAnalyticsDaily,
@@ -79,6 +79,7 @@ import { useToast } from '@/components/ui/Toast';
 
 type Tab = 'organizations' | 'members' | 'api-keys' | 'usage' | 'analytics';
 type LinkRequestMethod = 'EMAIL' | 'DOMAIN' | 'SLUG' | 'ORG_ID';
+type InviteMethod = 'EMAIL' | 'USER_ID';
 
 const ORG_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -215,7 +216,8 @@ export default function WorkspacePage() {
 
     // Invite modal
     const [showInviteModal, setShowInviteModal] = useState(false);
-    const [inviteEmail, setInviteEmail] = useState('');
+    const [inviteMethod, setInviteMethod] = useState<InviteMethod>('EMAIL');
+    const [inviteIdentifier, setInviteIdentifier] = useState('');
     const [inviteRole, setInviteRole] = useState<'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER'>('VIEWER');
     const [creatingInvite, setCreatingInvite] = useState(false);
     const [inviteError, setInviteError] = useState<string | null>(null);
@@ -685,18 +687,34 @@ export default function WorkspacePage() {
     };
 
     const handleCreateInvite = async () => {
-        if (!inviteEmail.trim()) return;
+        const targetValue = inviteIdentifier.trim();
+        if (!targetValue) return;
         if (memberLimitReached) {
             showQuotaLimitToast('Members', quotaUsage?.members, quotaLimits?.maxMembers);
+            return;
+        }
+
+        if (inviteMethod === 'EMAIL' && !targetValue.includes('@')) {
+            setInviteError('Please enter a valid email address');
+            return;
+        }
+
+        if (inviteMethod === 'USER_ID' && !ORG_ID_REGEX.test(targetValue)) {
+            setInviteError('Please enter a valid user ID (UUID)');
             return;
         }
 
         try {
             setCreatingInvite(true);
             setInviteError(null);
-            const result = await createWorkspaceInvite(workspaceId, inviteEmail.trim(), inviteRole);
+            const result = await createWorkspaceInvite(workspaceId, {
+                invitedEmail: inviteMethod === 'EMAIL' ? targetValue : undefined,
+                invitedUserId: inviteMethod === 'USER_ID' ? targetValue : undefined,
+                role: inviteRole
+            });
             setLatestInviteLink(result.inviteLink);
-            setInviteEmail('');
+            showToast('Invite sent', 'success');
+            setInviteIdentifier('');
             await loadTabData('members');
             await refreshEnterpriseAccess();
         } catch (err: any) {
@@ -707,15 +725,15 @@ export default function WorkspacePage() {
         }
     };
 
-    const handleRevokeInvite = async (inviteId: string) => {
-        if (!confirm('Revoke this invite?')) return;
+    const handleCancelInvite = async (inviteId: string) => {
+        if (!confirm('Cancel this invite?')) return;
 
         try {
-            await revokeWorkspaceInvite(workspaceId, inviteId);
+            await cancelWorkspaceInvite(workspaceId, inviteId);
             await loadTabData('members');
             await refreshEnterpriseAccess();
         } catch (err: any) {
-            setError(err.message || 'Failed to revoke invite');
+            setError(err.message || 'Failed to cancel invite');
         }
     };
 
@@ -1076,7 +1094,11 @@ export default function WorkspacePage() {
                                             <button
                                                 onClick={() => {
                                                     setShowInviteModal(true);
+                                                    setInviteMethod('EMAIL');
+                                                    setInviteIdentifier('');
+                                                    setInviteRole('VIEWER');
                                                     setInviteError(null);
+                                                    setLatestInviteLink(null);
                                                 }}
                                                 disabled={memberLimitReached}
                                                 className="inline-flex items-center gap-2 px-4 py-2 btn-primary text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
@@ -1152,27 +1174,62 @@ export default function WorkspacePage() {
                                         {invites.length === 0 ? (
                                             <p className="text-sm text-slate-500 dark:text-slate-400">No invites yet.</p>
                                         ) : (
-                                            <div className="space-y-2">
-                                                {invites.map((invite) => (
-                                                    <div key={invite.id} className="surface-card rounded-lg p-3 flex items-center justify-between">
-                                                        <div>
-                                                            <p className="text-sm font-medium text-slate-900 dark:text-white">
-                                                                {invite.invitedEmail || invite.invitedUserId}
-                                                            </p>
-                                                            <p className="text-xs text-slate-500 dark:text-slate-400">
-                                                                {invite.role} • {invite.status} • Expires {new Date(invite.expiresAt).toLocaleDateString()}
-                                                            </p>
-                                                        </div>
-                                                        {canManage && invite.status === 'PENDING' && (
-                                                            <button
-                                                                onClick={() => handleRevokeInvite(invite.id)}
-                                                                className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                                                            >
-                                                                <Trash2 className="w-4 h-4" />
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                ))}
+                                            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                                                <table className="min-w-full text-sm">
+                                                    <thead className="bg-slate-50 dark:bg-slate-900/60 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                        <tr>
+                                                            <th className="px-3 py-2 text-left font-medium">Target</th>
+                                                            <th className="px-3 py-2 text-left font-medium">Role</th>
+                                                            <th className="px-3 py-2 text-left font-medium">Invited By</th>
+                                                            <th className="px-3 py-2 text-left font-medium">Created</th>
+                                                            <th className="px-3 py-2 text-left font-medium">Expires</th>
+                                                            <th className="px-3 py-2 text-left font-medium">Status</th>
+                                                            {canManage && <th className="px-3 py-2 text-right font-medium">Action</th>}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                                        {invites.map((invite) => (
+                                                            <tr key={invite.id} className="bg-white dark:bg-slate-950/20">
+                                                                <td className="px-3 py-2 text-slate-900 dark:text-white">
+                                                                    {invite.invitedEmail || invite.invitedUserId || 'Unknown'}
+                                                                </td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{invite.role}</td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                    {invite.createdByUser?.name || invite.createdByUser?.email || invite.createdBy || '-'}
+                                                                </td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                    {new Date(invite.createdAt).toLocaleDateString()}
+                                                                </td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                    {new Date(invite.expiresAt).toLocaleDateString()}
+                                                                </td>
+                                                                <td className="px-3 py-2">
+                                                                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${invite.status === 'PENDING'
+                                                                        ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                                                                        : invite.status === 'ACCEPTED'
+                                                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                                                            : 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                                                        }`}>
+                                                                        {invite.status}
+                                                                    </span>
+                                                                </td>
+                                                                {canManage && (
+                                                                    <td className="px-3 py-2 text-right">
+                                                                        {invite.status === 'PENDING' && (
+                                                                            <button
+                                                                                onClick={() => handleCancelInvite(invite.id)}
+                                                                                className="inline-flex items-center p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
+                                                                                title="Cancel invite"
+                                                                            >
+                                                                                <Trash2 className="w-4 h-4" />
+                                                                            </button>
+                                                                        )}
+                                                                    </td>
+                                                                )}
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
                                             </div>
                                         )}
                                     </div>
@@ -1684,16 +1741,52 @@ export default function WorkspacePage() {
                         )}
                         <div className="space-y-4 mb-6">
                             <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 mb-2">
+                                    Invite by
+                                </p>
+                                <div className="grid grid-cols-2 gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setInviteMethod('EMAIL')}
+                                        className={`px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                                            inviteMethod === 'EMAIL'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-400'
+                                                : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                        }`}
+                                    >
+                                        Email
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setInviteMethod('USER_ID')}
+                                        className={`px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                                            inviteMethod === 'USER_ID'
+                                                ? 'border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-400'
+                                                : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800'
+                                        }`}
+                                    >
+                                        User ID
+                                    </button>
+                                </div>
+                            </div>
+                            <div>
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                                    Email Address
+                                    {inviteMethod === 'EMAIL' ? 'Email Address' : 'User ID'}
                                 </label>
                                 <input
-                                    type="email"
-                                    value={inviteEmail}
-                                    onChange={(e) => setInviteEmail(e.target.value)}
-                                    placeholder="teammate@example.com"
+                                    type={inviteMethod === 'EMAIL' ? 'email' : 'text'}
+                                    value={inviteIdentifier}
+                                    onChange={(e) => setInviteIdentifier(e.target.value)}
+                                    placeholder={inviteMethod === 'EMAIL'
+                                        ? 'teammate@example.com'
+                                        : 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'}
                                     className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                                 />
+                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    {inviteMethod === 'EMAIL'
+                                        ? 'Email must belong to an existing VeriLnk user.'
+                                        : 'Use the exact user UUID.'}
+                                </p>
                             </div>
                             <div>
                                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -1715,7 +1808,8 @@ export default function WorkspacePage() {
                             <button
                                 onClick={() => {
                                     setShowInviteModal(false);
-                                    setInviteEmail('');
+                                    setInviteMethod('EMAIL');
+                                    setInviteIdentifier('');
                                     setInviteRole('VIEWER');
                                     setInviteError(null);
                                     setLatestInviteLink(null);
@@ -1726,7 +1820,7 @@ export default function WorkspacePage() {
                             </button>
                             <button
                                 onClick={handleCreateInvite}
-                                disabled={memberLimitReached || creatingInvite || !inviteEmail.trim()}
+                                disabled={memberLimitReached || creatingInvite || !inviteIdentifier.trim()}
                                 className="flex-1 px-4 py-2.5 btn-primary font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                             >
                                 {creatingInvite ? (

@@ -851,8 +851,11 @@ model Invite {
   updatedAt     DateTime            @updatedAt
 
   @@index([workspaceId])
+  @@index([workspaceId, status])
   @@index([invitedEmail])
+  @@index([invitedEmail, status])
   @@index([invitedUserId])
+  @@index([invitedUserId, status])
   @@index([status])
   @@index([expiresAt])
 }
