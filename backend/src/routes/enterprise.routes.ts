@@ -61,6 +61,7 @@ import {
     AuditActionType,
     InviteStatus,
     OrgType,
+    Prisma,
     SessionActorType,
     WorkspaceMemberRole
 } from '@prisma/client';
@@ -2394,6 +2395,144 @@ router.patch('/profile', async (req: AuthRequest, res: Response) => {
 // ============================================
 // Enterprise Access Check
 // ============================================
+
+router.get('/usage/summary', async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id as string | undefined;
+        if (!userId) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const context = await resolveEnterpriseProfileContext(userId);
+        if (!context) {
+            return res.status(403).json({ message: 'Enterprise access required' });
+        }
+
+        const range = normalizeRange(req.query.range, '30');
+        const rangeDays = Number.parseInt(range, 10) || 30;
+        const since = new Date();
+        since.setDate(since.getDate() - rangeDays);
+        since.setHours(0, 0, 0, 0);
+
+        const memberships = await prisma.workspaceMember.findMany({
+            where: {
+                userId,
+                workspace: {
+                    organizations: {
+                        some: { organizationId: context.organization.id }
+                    }
+                }
+            },
+            select: {
+                workspaceId: true,
+                role: true
+            }
+        });
+
+        const readableWorkspaceIds = Array.from(
+            new Set(
+                memberships
+                    .filter((membership) => {
+                        const normalizedRole = normalizeWorkspaceRole(membership.role);
+                        if (!normalizedRole) return false;
+                        return canPerformWorkspaceAction(normalizedRole, 'view_usage_logs')
+                            || canPerformWorkspaceAction(normalizedRole, 'view_analytics');
+                    })
+                    .map((membership) => membership.workspaceId)
+            )
+        );
+
+        if (readableWorkspaceIds.length === 0) {
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
+        }
+
+        const linkedOrgRows = await prisma.workspaceOrganization.findMany({
+            where: { workspaceId: { in: readableWorkspaceIds } },
+            select: { organizationId: true }
+        });
+
+        const linkedOrganizationIds = new Set(linkedOrgRows.map((row) => row.organizationId));
+        linkedOrganizationIds.delete(context.organization.id);
+        const linkedOrganizationCount = linkedOrganizationIds.size;
+
+        const apiKeyCount = await prisma.apiKey.count({
+            where: {
+                workspaceId: { in: readableWorkspaceIds },
+                revokedAt: null
+            }
+        });
+
+        if (linkedOrganizationCount === 0 || apiKeyCount === 0) {
+            return res.json({
+                range: `${range}d`,
+                totals: {
+                    requests: 0,
+                    success: 0,
+                    errors: 0,
+                    rateLimited: 0
+                },
+                series: [],
+                meta: {
+                    workspaceCount: readableWorkspaceIds.length,
+                    linkedOrganizationCount,
+                    apiKeyCount,
+                    source: 'ApiUsageLog'
+                }
+            });
+        }
+
+        // Usage totals are sourced only from ApiUsageLog entries produced by enterprise workspace API keys.
+        // This avoids double counting with org analytics event tables.
+        const usageWhere: Prisma.ApiUsageLogWhereInput = {
+            createdAt: { gte: since },
+            apiKey: {
+                workspaceId: { in: readableWorkspaceIds }
+            }
+        };
+
+        const [requests, success, errors, rateLimited] = await prisma.$transaction([
+            prisma.apiUsageLog.count({ where: usageWhere }),
+            prisma.apiUsageLog.count({
+                where: {
+                    ...usageWhere,
+                    statusCode: { gte: 200, lt: 400 }
+                }
+            }),
+            prisma.apiUsageLog.count({
+                where: {
+                    ...usageWhere,
+                    statusCode: { gte: 400 }
+                }
+            }),
+            prisma.apiUsageLog.count({
+                where: {
+                    ...usageWhere,
+                    statusCode: 429
+                }
+            })
+        ]);
+
+        res.json({
+            range: `${range}d`,
+            totals: {
+                requests,
+                success,
+                errors,
+                rateLimited
+            },
+            series: [],
+            meta: {
+                workspaceCount: readableWorkspaceIds.length,
+                linkedOrganizationCount,
+                apiKeyCount,
+                source: 'ApiUsageLog'
+            }
+        });
+    } catch (error: any) {
+        console.error('[Enterprise] Usage summary error:', error);
+        res.status(500).json({ message: error.message || 'Failed to load enterprise usage summary' });
+    }
+});
 
 // Check if user has enterprise access
 router.get('/access', async (req: AuthRequest, res: Response) => {

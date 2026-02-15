@@ -83,7 +83,7 @@ function OrgProfileContent({ initialData }: OrgProfileContentProps) {
             {/* Background Effects (Absolute) */}
             <div className="absolute top-0 left-0 w-full h-[600px] overflow-hidden pointer-events-none">
                 <div className="absolute inset-0 bg-glow"></div>
-                <div className="absolute inset-0 opacity-[0.12] dark:opacity-10 bg-[radial-gradient(#cbd5e1_1px,transparent_1px)] dark:bg-[radial-gradient(#3b82f6_1px,transparent_1px)] [background-size:18px_18px]"></div>
+                <div className="absolute inset-0 bg-slate-200/20 dark:bg-blue-950/15"></div>
                 {/* Fade out at bottom of header area */}
                 <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-slate-50 dark:from-slate-950 to-transparent"></div>
             </div>
@@ -92,52 +92,56 @@ function OrgProfileContent({ initialData }: OrgProfileContentProps) {
             <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-24">
 
                 {/* Header Section */}
-                <div className="flex flex-col md:flex-row items-center md:items-start gap-6 text-center md:text-left mb-12">
-                    <div className="relative w-24 h-24 md:w-28 md:h-28 bg-white/80 dark:bg-slate-900/60 rounded-2xl p-4 shadow-lg border border-slate-100/70 dark:border-white/10 backdrop-blur-sm flex items-center justify-center shrink-0">
-                        {org.logo && !org.logo.includes('via.placeholder.com') ? (
-                            <Image
-                                key={org.logo} // Force re-render if URL changes
-                                src={toProxyImageUrl(org.logo)}
-                                alt={org.name}
-                                fill
-                                className="object-contain p-2"
-                                sizes="(max-width: 768px) 96px, 112px"
-                            />
-                        ) : (
-                            <Building2 className="w-12 h-12 text-slate-400 dark:text-slate-500" />
-                        )}
-                    </div>
-                    <div className="flex-1">
-                        <div className="flex flex-wrap items-center gap-3 justify-center md:justify-start">
-                            <h1 className="text-3xl md:text-5xl font-bold text-slate-900 dark:text-white">{org.name}</h1>
-                            {org.isVerified && <VerifiedBadge />}
-                        </div>
-                        <div className="mt-3 flex flex-wrap justify-center md:justify-start gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
-                            <span className="inline-flex items-center gap-1.5 bg-white/80 dark:bg-slate-900/60 px-3 py-1 rounded-full border border-slate-200/70 dark:border-slate-700/60">
-                                <MapPin className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                                {org.city ? `${org.city}, ` : ''}{org.country?.name || 'Country not provided'}
-                            </span>
-                            {org.category && (
-                                <span className="inline-flex items-center gap-1.5 bg-white/80 dark:bg-slate-900/60 px-3 py-1 rounded-full border border-slate-200/70 dark:border-slate-700/60">
-                                    <Tag className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                                    {org.category.name}
-                                </span>
-                            )}
-                            {org.type && (
-                                <span className="inline-flex items-center gap-1.5 bg-white/80 dark:bg-slate-900/60 px-3 py-1 rounded-full border border-slate-200/70 dark:border-slate-700/60">
-                                    <Building2 className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
-                                    {org.type}
-                                </span>
-                            )}
+                <div className="mb-12 rounded-2xl border border-slate-200/60 dark:border-slate-700/60 bg-white/80 dark:bg-[#101627]/70 backdrop-blur-xl shadow-lg shadow-slate-200/40 dark:shadow-black/25 p-4 sm:p-6">
+                    <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+                        <div className="min-w-0 flex-1">
+                            <div className="flex items-start gap-4 sm:gap-5">
+                                <div className="relative w-20 h-20 sm:w-24 sm:h-24 bg-white/85 dark:bg-[#212121]/65 rounded-xl p-3 border border-slate-100/80 dark:border-white/10 backdrop-blur-sm flex items-center justify-center shrink-0">
+                                    {org.logo && !org.logo.includes('via.placeholder.com') ? (
+                                        <Image
+                                            key={org.logo} // Force re-render if URL changes
+                                            src={toProxyImageUrl(org.logo)}
+                                            alt={org.name}
+                                            fill
+                                            className="object-contain p-2"
+                                            sizes="(max-width: 768px) 80px, 96px"
+                                        />
+                                    ) : (
+                                        <Building2 className="w-10 h-10 text-slate-400 dark:text-slate-500" />
+                                    )}
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="flex flex-wrap items-center gap-2.5">
+                                        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white truncate">{org.name}</h1>
+                                        {org.isVerified && <VerifiedBadge />}
+                                    </div>
+                                    <div className="mt-3 flex flex-wrap gap-2 text-xs font-medium text-slate-600 dark:text-slate-300">
+                                        <span className="inline-flex items-center gap-1.5 bg-white/80 dark:bg-[#212121]/65 px-3 py-1 rounded-full border border-slate-200/70 dark:border-slate-700/60">
+                                            <MapPin className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                            {org.country?.name || 'Country'}
+                                        </span>
+                                        <span className="inline-flex items-center gap-1.5 bg-white/80 dark:bg-[#212121]/65 px-3 py-1 rounded-full border border-slate-200/70 dark:border-slate-700/60">
+                                            <Tag className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                            {org.category?.name || 'Uncategorized'}
+                                        </span>
+                                        <span className="inline-flex items-center gap-1.5 bg-white/80 dark:bg-[#212121]/65 px-3 py-1 rounded-full border border-slate-200/70 dark:border-slate-700/60">
+                                            <ShieldCheck className="w-3.5 h-3.5 text-slate-400 dark:text-slate-500" />
+                                            PRIVATE
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         {org.website && (
-                            <button
-                                onClick={handleWebsiteClick}
-                                className="mt-6 inline-flex items-center gap-2 btn-primary px-6 py-3 rounded-full font-semibold transition-all shadow-md shadow-blue-600/20 hover:shadow-blue-600/30"
-                            >
-                                Visit Official Website
-                                <ExternalLink className="w-4 h-4" />
-                            </button>
+                            <div className="w-full md:w-auto md:shrink-0">
+                                <button
+                                    onClick={handleWebsiteClick}
+                                    className="inline-flex w-full md:w-auto items-center justify-center gap-1.5 rounded-xl bg-[#187DE9] px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#1E90FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-[#101627]"
+                                >
+                                    Official Website
+                                    <ExternalLink className="w-4 h-4" />
+                                </button>
+                            </div>
                         )}
                     </div>
                 </div>

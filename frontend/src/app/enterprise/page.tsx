@@ -37,12 +37,14 @@ import {
     createWorkspace,
     downloadEnterpriseInvoice,
     formatLimitReachedMessage,
+    getEnterpriseUsageSummary,
     getEnterpriseProfile,
     getWorkspaces,
     isLimitReachedError,
     updateEnterpriseProfile,
     type EnterpriseAccess,
     type EnterpriseProfile,
+    type EnterpriseUsageSummary,
     type Workspace,
 } from '@/lib/enterprise-api';
 import {
@@ -148,6 +150,10 @@ export default function EnterprisePage() {
     const [hasAccess, setHasAccess] = useState(false);
     const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
     const [error, setError] = useState<string | null>(null);
+    const [usageRange, setUsageRange] = useState<'7d' | '30d' | '90d'>('30d');
+    const [usageSummary, setUsageSummary] = useState<EnterpriseUsageSummary | null>(null);
+    const [usageLoading, setUsageLoading] = useState(false);
+    const [usageError, setUsageError] = useState<string | null>(null);
 
     const [access, setAccess] = useState<EnterpriseAccess | null>(null);
     const [profile, setProfile] = useState<EnterpriseProfile | null>(null);
@@ -268,6 +274,37 @@ export default function EnterprisePage() {
         window.addEventListener('popstate', syncFromUrl);
         return () => window.removeEventListener('popstate', syncFromUrl);
     }, []);
+
+    useEffect(() => {
+        if (!hasAccess) {
+            setUsageSummary(null);
+            setUsageError(null);
+            setUsageLoading(false);
+            return;
+        }
+
+        let isMounted = true;
+        const loadUsageSummary = async () => {
+            try {
+                setUsageLoading(true);
+                setUsageError(null);
+                const summary = await getEnterpriseUsageSummary(usageRange);
+                if (!isMounted) return;
+                setUsageSummary(summary);
+            } catch (err: any) {
+                if (!isMounted) return;
+                setUsageSummary(null);
+                setUsageError(err?.message || 'Failed to load API usage summary');
+            } finally {
+                if (isMounted) setUsageLoading(false);
+            }
+        };
+
+        void loadUsageSummary();
+        return () => {
+            isMounted = false;
+        };
+    }, [hasAccess, usageRange]);
 
     useEffect(() => {
         if (!formData.countryId) {
@@ -726,12 +763,77 @@ export default function EnterprisePage() {
                                         </div>
 
                                         <div className="surface-card rounded-xl p-5 border border-[var(--app-border)]">
-                                            <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-3">
-                                                Recent API Usage
-                                            </h3>
-                                            <p className="text-sm text-slate-500 dark:text-slate-400">
-                                                No API usage yet. Usage activity appears here after requests are made.
-                                            </p>
+                                            <div className="flex items-center justify-between gap-3 mb-3">
+                                                <h3 className="text-sm font-semibold text-slate-900 dark:text-white">
+                                                    Recent API Usage
+                                                </h3>
+                                                <div className="inline-flex rounded-lg border border-[var(--app-border)] overflow-hidden">
+                                                    {(['7d', '30d', '90d'] as const).map((range) => (
+                                                        <button
+                                                            key={range}
+                                                            type="button"
+                                                            onClick={() => setUsageRange(range)}
+                                                            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                                                                usageRange === range
+                                                                    ? 'bg-[#187DE9] text-white'
+                                                                    : 'text-slate-600 dark:text-slate-400 hover:bg-[var(--app-surface-hover)]'
+                                                            }`}
+                                                        >
+                                                            {range}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {usageLoading ? (
+                                                <div className="space-y-2 animate-pulse">
+                                                    <div className="h-7 w-32 rounded bg-[var(--app-surface-hover)]" />
+                                                    <div className="h-4 w-48 rounded bg-[var(--app-surface-hover)]" />
+                                                </div>
+                                            ) : usageError ? (
+                                                <p className="text-sm text-red-600 dark:text-red-400">
+                                                    {usageError}
+                                                </p>
+                                            ) : usageSummary?.meta.linkedOrganizationCount === 0 ? (
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                    No linked organizations yet.
+                                                </p>
+                                            ) : (usageSummary?.totals.requests || 0) === 0 ? (
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                    No API usage recorded for this period.
+                                                </p>
+                                            ) : (
+                                                <div className="space-y-3">
+                                                    <div>
+                                                        <p className="text-xs text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                                                            Total Requests
+                                                        </p>
+                                                        <p className="text-2xl font-semibold text-slate-900 dark:text-white">
+                                                            {(usageSummary?.totals.requests || 0).toLocaleString()}
+                                                        </p>
+                                                    </div>
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        <div className="rounded-lg border border-[var(--app-border)] px-2.5 py-2">
+                                                            <p className="text-[11px] text-slate-500 dark:text-slate-400">Success</p>
+                                                            <p className="text-sm font-medium text-emerald-600 dark:text-emerald-400">
+                                                                {(usageSummary?.totals.success || 0).toLocaleString()}
+                                                            </p>
+                                                        </div>
+                                                        <div className="rounded-lg border border-[var(--app-border)] px-2.5 py-2">
+                                                            <p className="text-[11px] text-slate-500 dark:text-slate-400">Errors</p>
+                                                            <p className="text-sm font-medium text-red-600 dark:text-red-400">
+                                                                {(usageSummary?.totals.errors || 0).toLocaleString()}
+                                                            </p>
+                                                        </div>
+                                                        <div className="rounded-lg border border-[var(--app-border)] px-2.5 py-2">
+                                                            <p className="text-[11px] text-slate-500 dark:text-slate-400">Rate Limited</p>
+                                                            <p className="text-sm font-medium text-amber-600 dark:text-amber-400">
+                                                                {(usageSummary?.totals.rateLimited || 0).toLocaleString()}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </section>

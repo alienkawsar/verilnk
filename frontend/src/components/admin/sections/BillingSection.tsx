@@ -110,6 +110,9 @@ const getStatusBadgeClassName = (status: AdminBillingInvoice['status']) => {
     return 'bg-slate-500/10 text-slate-600 dark:text-slate-400 border-slate-500/20';
 };
 
+const billingFilterSelectClass = 'w-full px-3 py-2.5 bg-[var(--app-surface)] border border-[var(--app-border)] rounded-lg text-sm text-[var(--app-text-primary)] focus:outline-none focus:ring-2 focus:ring-[#187DE9]/40 transition-colors [color-scheme:light] dark:[color-scheme:dark]';
+const billingFilterOptionClass = 'bg-[var(--app-surface)] text-[var(--app-text-primary)]';
+
 export default function BillingSection() {
     const { showToast } = useToast();
     const [activeTab, setActiveTab] = useState<BillingTab>('ORGANIZATION');
@@ -308,10 +311,10 @@ export default function BillingSection() {
                                 setStatusFilter((event.target.value || undefined) as AdminBillingInvoiceListParams['status']);
                                 setPage(1);
                             }}
-                            className="w-full px-3 py-2.5 bg-[var(--app-surface-hover)] border border-[var(--app-border)] rounded-lg text-sm text-[var(--app-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                            className={billingFilterSelectClass}
                         >
                             {STATUS_OPTIONS.map((option) => (
-                                <option key={option.label} value={option.value || ''}>
+                                <option key={option.label} value={option.value || ''} className={billingFilterOptionClass}>
                                     {option.label}
                                 </option>
                             ))}
@@ -322,10 +325,10 @@ export default function BillingSection() {
                                 setPlanTypeFilter((event.target.value || undefined) as AdminBillingInvoiceListParams['planType']);
                                 setPage(1);
                             }}
-                            className="w-full px-3 py-2.5 bg-[var(--app-surface-hover)] border border-[var(--app-border)] rounded-lg text-sm text-[var(--app-text-primary)] focus:outline-none focus:ring-2 focus:ring-blue-500/40"
+                            className={billingFilterSelectClass}
                         >
                             {planOptions.map((option) => (
-                                <option key={option.label} value={option.value || ''}>
+                                <option key={option.label} value={option.value || ''} className={billingFilterOptionClass}>
                                     {option.label}
                                 </option>
                             ))}

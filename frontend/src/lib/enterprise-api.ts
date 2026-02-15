@@ -226,6 +226,23 @@ export interface UsageStats {
     requestsByEndpoint: Array<{ endpoint: string; count: number }>;
 }
 
+export interface EnterpriseUsageSummary {
+    range: string;
+    totals: {
+        requests: number;
+        success: number;
+        errors: number;
+        rateLimited: number;
+    };
+    series: Array<{ date: string; count: number }>;
+    meta: {
+        workspaceCount: number;
+        linkedOrganizationCount: number;
+        apiKeyCount: number;
+        source: 'ApiUsageLog';
+    };
+}
+
 export interface EnterpriseAccess {
     hasAccess: boolean;
     organizationId?: string;
@@ -659,6 +676,13 @@ export async function getUsageStats(
     requestOptions: RequestInit = {}
 ): Promise<UsageStats> {
     return apiRequest(`/enterprise/workspaces/${workspaceId}/usage-stats?days=${days}`, requestOptions);
+}
+
+export async function getEnterpriseUsageSummary(
+    range: '7d' | '30d' | '90d' = '30d',
+    requestOptions: RequestInit = {}
+): Promise<EnterpriseUsageSummary> {
+    return apiRequest(`/enterprise/usage/summary?range=${range}`, requestOptions);
 }
 
 // ============================================

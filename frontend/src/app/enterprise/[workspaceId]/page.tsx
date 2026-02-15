@@ -1254,6 +1254,14 @@ export default function WorkspacePage() {
     const canExportUsage = permissions.exportUsage;
     const canExportAuditLogs = permissions.exportAuditLogs;
 
+    const createOrgModalLabelClass = 'text-xs font-medium text-[var(--app-text-secondary)]';
+    const createOrgModalInputClass = 'mt-1 w-full px-4 py-2.5 rounded-lg border border-[var(--app-border)] bg-transparent text-[var(--app-text-primary)] placeholder-[var(--app-text-muted)] focus:outline-none focus:ring-2 focus:ring-[#187DE9]/40';
+    const createOrgModalSelectClass = `${createOrgModalInputClass} [color-scheme:light] dark:[color-scheme:dark]`;
+    const createOrgModalTextareaClass = `${createOrgModalInputClass} h-24`;
+    const createOrgModalErrorClass = 'text-xs text-red-600 dark:text-red-400 mt-1';
+    const createOrgModalHintClass = 'text-xs text-[var(--app-text-secondary)]';
+    const createOrgModalSecondaryButtonClass = 'flex-1 px-4 py-2.5 border border-[var(--app-border)] text-[var(--app-text-secondary)] font-medium rounded-lg hover:bg-[var(--app-surface-hover)] transition-colors';
+	
     if (loading) {
         return (
             <main className="min-h-screen bg-app pb-16">
@@ -2821,14 +2829,14 @@ export default function WorkspacePage() {
             {/* Create Organization Modal */}
             {showCreateOrgModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-slate-900 rounded-xl p-6 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-                        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">
+                    <div className="surface-card rounded-xl border border-[var(--app-border)] p-6 max-w-2xl w-full mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+                        <h2 className="text-xl font-bold text-[var(--app-text-primary)] mb-4">
                             Create Organization
                         </h2>
                         <div className="space-y-4">
                             <div className="flex justify-center">
                                 <div className="relative group">
-                                    <div className="w-24 h-24 rounded-full bg-slate-100 dark:bg-slate-800 border-2 border-dashed border-slate-300 dark:border-slate-600 flex items-center justify-center overflow-hidden">
+                                    <div className="w-24 h-24 rounded-full bg-[var(--app-surface-hover)] border-2 border-dashed border-[var(--app-border)] flex items-center justify-center overflow-hidden">
                                         {orgLogoPreviewUrl || orgUploadedLogoUrl || orgCreateForm.logo ? (
                                             <Image
                                                 src={orgLogoPreviewUrl || orgUploadedLogoUrl || orgCreateForm.logo}
@@ -2864,7 +2872,7 @@ export default function WorkspacePage() {
                                         <button
                                             type="button"
                                             onClick={handleRemoveOrgLogo}
-                                            className="absolute -top-2 -right-2 bg-slate-900/80 text-white p-1.5 rounded-full shadow hover:bg-slate-900 transition-colors"
+                                            className="absolute -top-2 -right-2 bg-[var(--app-surface)] text-[var(--app-text-primary)] border border-[var(--app-border)] p-1.5 rounded-full shadow hover:bg-[var(--app-surface-hover)] transition-colors"
                                             aria-label="Remove logo"
                                         >
                                             <XCircle className="w-3 h-3" />
@@ -2873,29 +2881,29 @@ export default function WorkspacePage() {
                                 </div>
                             </div>
                             {orgCreateErrors.logo && (
-                                <p className="text-xs text-red-500 text-center">{orgCreateErrors.logo}</p>
+                                <p className="text-xs text-red-600 dark:text-red-400 text-center">{orgCreateErrors.logo}</p>
                             )}
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                    <label className={createOrgModalLabelClass}>
                                         Org Type
                                     </label>
                                     <select
                                         value={orgCreateForm.type}
                                         onChange={(e) => handleOrgCreateFieldChange('type', e.target.value)}
-                                        className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        className={createOrgModalSelectClass}
                                     >
                                         <option value="PUBLIC">Public</option>
                                         <option value="PRIVATE">Private</option>
                                         <option value="NON_PROFIT">Non-profit</option>
                                     </select>
                                     {orgCreateErrors.type && (
-                                        <p className="text-xs text-red-500 mt-1">{orgCreateErrors.type}</p>
+                                        <p className={createOrgModalErrorClass}>{orgCreateErrors.type}</p>
                                     )}
                                 </div>
                                 <div>
-                                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                    <label className={createOrgModalLabelClass}>
                                         Organization Name
                                     </label>
                                     <input
@@ -2903,16 +2911,16 @@ export default function WorkspacePage() {
                                         value={orgCreateForm.orgName}
                                         onChange={(e) => handleOrgCreateFieldChange('orgName', e.target.value)}
                                         placeholder="Acme Inc."
-                                        className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        className={createOrgModalInputClass}
                                     />
                                     {orgCreateErrors.orgName && (
-                                        <p className="text-xs text-red-500 mt-1">{orgCreateErrors.orgName}</p>
+                                        <p className={createOrgModalErrorClass}>{orgCreateErrors.orgName}</p>
                                     )}
                                 </div>
                             </div>
 
                             <div>
-                                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                <label className={createOrgModalLabelClass}>
                                     Organization Email
                                 </label>
                                 <input
@@ -2920,16 +2928,16 @@ export default function WorkspacePage() {
                                     value={orgCreateForm.email}
                                     onChange={(e) => handleOrgCreateFieldChange('email', e.target.value)}
                                     placeholder="contact@acme.com"
-                                    className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    className={createOrgModalInputClass}
                                 />
                                 {orgCreateErrors.email && (
-                                    <p className="text-xs text-red-500 mt-1">{orgCreateErrors.email}</p>
+                                    <p className={createOrgModalErrorClass}>{orgCreateErrors.email}</p>
                                 )}
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                    <label className={createOrgModalLabelClass}>
                                         Website URL
                                     </label>
                                     <input
@@ -2937,14 +2945,14 @@ export default function WorkspacePage() {
                                         value={orgCreateForm.website}
                                         onChange={(e) => handleOrgCreateFieldChange('website', e.target.value)}
                                         placeholder="https://acme.com"
-                                        className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        className={createOrgModalInputClass}
                                     />
                                     {orgCreateErrors.website && (
-                                        <p className="text-xs text-red-500 mt-1">{orgCreateErrors.website}</p>
+                                        <p className={createOrgModalErrorClass}>{orgCreateErrors.website}</p>
                                     )}
                                 </div>
                                 <div>
-                                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                    <label className={createOrgModalLabelClass}>
                                         Phone
                                     </label>
                                     <input
@@ -2952,16 +2960,16 @@ export default function WorkspacePage() {
                                         value={orgCreateForm.phone}
                                         onChange={(e) => handleOrgCreateFieldChange('phone', e.target.value)}
                                         placeholder="+1 234..."
-                                        className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        className={createOrgModalInputClass}
                                     />
                                     {orgCreateErrors.phone && (
-                                        <p className="text-xs text-red-500 mt-1">{orgCreateErrors.phone}</p>
+                                        <p className={createOrgModalErrorClass}>{orgCreateErrors.phone}</p>
                                     )}
                                 </div>
                             </div>
 
                             <div>
-                                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                <label className={createOrgModalLabelClass}>
                                     Country
                                 </label>
                                 <select
@@ -2970,7 +2978,7 @@ export default function WorkspacePage() {
                                         handleOrgCreateFieldChange('countryId', e.target.value);
                                         handleOrgCreateFieldChange('stateId', '');
                                     }}
-                                    className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    className={createOrgModalSelectClass}
                                 >
                                     <option value="">Select Country</option>
                                     {orgCountries.map((country) => (
@@ -2980,20 +2988,20 @@ export default function WorkspacePage() {
                                     ))}
                                 </select>
                                 {orgCreateErrors.countryId && (
-                                    <p className="text-xs text-red-500 mt-1">{orgCreateErrors.countryId}</p>
+                                    <p className={createOrgModalErrorClass}>{orgCreateErrors.countryId}</p>
                                 )}
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 <div>
-                                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                    <label className={createOrgModalLabelClass}>
                                         State (Optional)
                                     </label>
                                     <select
                                         value={orgCreateForm.stateId}
                                         onChange={(e) => handleOrgCreateFieldChange('stateId', e.target.value)}
                                         disabled={!orgCreateForm.countryId || fetchingOrgStates}
-                                        className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white disabled:opacity-50"
+                                        className={`${createOrgModalSelectClass} disabled:opacity-50 disabled:cursor-not-allowed`}
                                     >
                                         <option value="">Select State</option>
                                         {orgStates.map((state) => (
@@ -3004,13 +3012,13 @@ export default function WorkspacePage() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                    <label className={createOrgModalLabelClass}>
                                         Category
                                     </label>
                                     <select
                                         value={orgCreateForm.categoryId}
                                         onChange={(e) => handleOrgCreateFieldChange('categoryId', e.target.value)}
-                                        className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        className={createOrgModalSelectClass}
                                     >
                                         <option value="">Select Category</option>
                                         {orgCategories.map((category) => (
@@ -3020,25 +3028,25 @@ export default function WorkspacePage() {
                                         ))}
                                     </select>
                                     {orgCreateErrors.categoryId && (
-                                        <p className="text-xs text-red-500 mt-1">{orgCreateErrors.categoryId}</p>
+                                        <p className={createOrgModalErrorClass}>{orgCreateErrors.categoryId}</p>
                                     )}
                                 </div>
                             </div>
 
                             <div>
-                                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                <label className={createOrgModalLabelClass}>
                                     About Organization
                                 </label>
                                 <textarea
                                     value={orgCreateForm.about}
                                     onChange={(e) => handleOrgCreateFieldChange('about', e.target.value)}
                                     placeholder="Brief description..."
-                                    className="mt-1 w-full px-4 py-2.5 h-24 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    className={createOrgModalTextareaClass}
                                 />
                             </div>
 
                             <div>
-                                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                <label className={createOrgModalLabelClass}>
                                     Office Address
                                 </label>
                                 <input
@@ -3046,15 +3054,15 @@ export default function WorkspacePage() {
                                     value={orgCreateForm.address}
                                     onChange={(e) => handleOrgCreateFieldChange('address', e.target.value)}
                                     placeholder="123 Main St..."
-                                    className="mt-1 w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                    className={createOrgModalInputClass}
                                 />
                                 {orgCreateErrors.address && (
-                                    <p className="text-xs text-red-500 mt-1">{orgCreateErrors.address}</p>
+                                    <p className={createOrgModalErrorClass}>{orgCreateErrors.address}</p>
                                 )}
                             </div>
 
                             <div>
-                                <label className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                                <label className={createOrgModalLabelClass}>
                                     Password
                                 </label>
                                 <div className="mt-1 relative">
@@ -3063,25 +3071,25 @@ export default function WorkspacePage() {
                                         value={orgCreateForm.password}
                                         onChange={(e) => handleOrgCreateFieldChange('password', e.target.value)}
                                         placeholder="Strong password"
-                                        className="w-full px-4 py-2.5 pr-11 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        className={`${createOrgModalInputClass} pr-11`}
                                     />
                                     <button
                                         type="button"
                                         onClick={() => setShowOrgPassword((prev) => !prev)}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--app-text-secondary)] hover:text-[var(--app-text-primary)] focus:outline-none"
                                     >
                                         {showOrgPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                                     </button>
                                 </div>
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                                <p className="text-[11px] text-[var(--app-text-secondary)] mt-1">
                                     Min 8 chars with uppercase, lowercase, number, and special character.
                                 </p>
                                 {orgCreateErrors.password && (
-                                    <p className="text-xs text-red-500 mt-1">{orgCreateErrors.password}</p>
+                                    <p className={createOrgModalErrorClass}>{orgCreateErrors.password}</p>
                                 )}
                             </div>
 
-                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                            <p className={createOrgModalHintClass}>
                                 Organization will be created as pending and sent to Super Admin approval.
                             </p>
                         </div>
@@ -3091,7 +3099,7 @@ export default function WorkspacePage() {
                                     setShowCreateOrgModal(false);
                                     resetCreateOrgForm();
                                 }}
-                                className="flex-1 px-4 py-2.5 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800"
+                                className={createOrgModalSecondaryButtonClass}
                             >
                                 Cancel
                             </button>
