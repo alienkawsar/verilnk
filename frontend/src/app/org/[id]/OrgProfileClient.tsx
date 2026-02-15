@@ -8,6 +8,7 @@ import Image from 'next/image';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { toProxyImageUrl } from '@/lib/imageProxy';
+import NotFoundThemeImage from '@/components/shared/NotFoundThemeImage';
 
 interface OrgProfileContentProps {
     initialData?: any;
@@ -68,7 +69,10 @@ function OrgProfileContent({ initialData }: OrgProfileContentProps) {
     if (!org) {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center p-4">
-                <Building2 className="w-16 h-16 mb-4 text-slate-300 dark:text-slate-700" />
+                <NotFoundThemeImage
+                    alt="Organization not found"
+                    className="h-28 w-28 sm:h-32 sm:w-32 object-contain mb-4"
+                />
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Organization Not Found</h1>
                 <p className="text-slate-500 dark:text-slate-400 mt-2">The organization you are looking for does not exist or is not verified.</p>
                 <Link href="/" className="mt-8 text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-2 font-medium">

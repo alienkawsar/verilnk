@@ -1,4 +1,9 @@
 import axios from 'axios';
+import {
+    endConnectivityRequest,
+    startConnectivityRequest,
+    shouldTrackConnectivityRequest
+} from './connectivity-tracker';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -10,6 +15,49 @@ export const api = axios.create({
     timeout: 10000,
     withCredentials: true
 });
+
+api.interceptors.request.use((config) => {
+    const trackConnectivity = shouldTrackConnectivityRequest((config as any).trackConnectivity);
+    if (!trackConnectivity) {
+        (config as any).__connectivityRequestId = null;
+        return config;
+    }
+
+    const method = String(config.method || 'get').toUpperCase();
+    const retryAction = method === 'GET' || method === 'HEAD'
+        ? () => {
+            const { signal, ...restConfig } = config as any;
+            const retryConfig: any = {
+                ...restConfig,
+                headers: { ...(config.headers || {}) },
+                trackConnectivity: true
+            };
+            delete retryConfig.__connectivityRequestId;
+            return api.request(retryConfig);
+        }
+        : null;
+
+    (config as any).__connectivityRequestId = startConnectivityRequest({
+        track: true,
+        retryAction
+    });
+
+    return config;
+});
+
+api.interceptors.response.use(
+    (response) => {
+        endConnectivityRequest((response.config as any).__connectivityRequestId ?? null);
+        return response;
+    },
+    (error) => {
+        const isCanceled = axios.isCancel(error) || error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError';
+        endConnectivityRequest((error?.config as any)?.__connectivityRequestId ?? null, {
+            networkError: !error?.response && !isCanceled
+        });
+        return Promise.reject(error);
+    }
+);
 
 const pendingRequests = new Map<string, Promise<any>>();
 const searchCache = new Map<string, { ts: number; promise: Promise<any> }>();

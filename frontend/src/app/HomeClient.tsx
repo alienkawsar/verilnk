@@ -8,9 +8,10 @@ import { useCountry } from '@/context/CountryContext';
 import SearchBar from '@/components/home/SearchBar';
 import ModernDropdown from '@/components/ui/ModernDropdown';
 import SiteCard from '@/components/shared/SiteCard';
+import NotFoundThemeImage from '@/components/shared/NotFoundThemeImage';
 import Pagination from '@/components/common/Pagination';
 import { fetchSitesPaginated, fetchStates } from '@/lib/api';
-import { Loader2, Globe, Hash, MapPin, ShieldCheck } from 'lucide-react';
+import { Loader2, Hash, MapPin, ShieldCheck } from 'lucide-react';
 import { getFlagEmoji, getImageUrl } from '@/lib/utils';
 
 interface HomeClientProps {
@@ -33,6 +34,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
     const [sites, setSites] = useState<any[]>([]);
     const [loadingSites, setLoadingSites] = useState(false);
     const [totalSites, setTotalSites] = useState(0);
+    const [sitesFetchState, setSitesFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
 
     const resetPageParam = () => {
         const params = new URLSearchParams(searchParams.toString());
@@ -53,10 +55,14 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                 if (currentCountryId) setSites([]);
                 setTotalSites(0);
                 setLoadingSites(true);
+                setSitesFetchState('loading');
             }
 
             if (!currentCountryId && countryCode !== 'Global') {
-                if (isMounted) setLoadingSites(false);
+                if (isMounted) {
+                    setLoadingSites(false);
+                    setSitesFetchState('idle');
+                }
                 return;
             }
 
@@ -78,6 +84,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                     }
                     setSites(data.items || []);
                     setTotalSites(data.total ?? 0);
+                    setSitesFetchState('success');
                 }
             } catch (error) {
                 if (isMounted) {
@@ -85,6 +92,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                         console.log('[HomeClient] Fetch aborted.');
                     } else {
                         console.error("[HomeClient] Failed to load sites:", error);
+                        setSitesFetchState('error');
                     }
                 }
             } finally {
@@ -183,6 +191,9 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
         }
     };
 
+    const showNoResults = !loadingSites && sites.length === 0 && sitesFetchState === 'success';
+    const showLoadError = !loadingSites && sites.length === 0 && sitesFetchState === 'error';
+
     return (
         <div className="min-h-screen pb-20 bg-app">
             {/* Hero Section - New Dark Glass & Glow */}
@@ -273,9 +284,29 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                             </div>
                             <Pagination total={totalSites} limit={PAGE_LIMIT} />
                         </>
-                    ) : (
+                    ) : showLoadError ? (
                         <div className="text-center py-20 text-slate-500 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
-                            <Globe className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+                            <div className="flex justify-center mb-4">
+                                <NotFoundThemeImage
+                                    alt="Unable to load sites"
+                                    className="h-24 w-24 sm:h-28 sm:w-28 object-contain"
+                                />
+                            </div>
+                            <h3 className="text-lg font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                Unable to load sites
+                            </h3>
+                            <p className="max-w-md mx-auto">
+                                Please check your connection and try again.
+                            </p>
+                        </div>
+                    ) : showNoResults ? (
+                        <div className="text-center py-20 text-slate-500 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700">
+                            <div className="flex justify-center mb-4">
+                                <NotFoundThemeImage
+                                    alt="No sites found"
+                                    className="h-24 w-24 sm:h-28 sm:w-28 object-contain"
+                                />
+                            </div>
                             <h3 className="text-lg font-medium text-slate-700 dark:text-slate-300 mb-2">
                                 No sites found
                             </h3>
@@ -284,7 +315,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                                 Try selecting a different country or category.
                             </p>
                         </div>
-                    )}
+                    ) : null}
                 </div>
             </div>
 

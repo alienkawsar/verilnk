@@ -133,8 +133,8 @@ export default function SearchComponent() {
         <div ref={wrapperRef} className="relative w-full max-w-2xl mx-auto">
             <form onSubmit={handleSearch} className="relative z-50">
                 <div className="relative group">
-                    <div className={`absolute -inset-1 bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 rounded-xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 ${showResults ? 'opacity-50' : ''}`}></div>
-                    <div className="relative flex items-center bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden">
+                    <div className={`absolute -inset-1 bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 ${showResults ? 'opacity-50' : ''}`}></div>
+                    <div className="relative flex items-center bg-white dark:bg-slate-900 rounded-full border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden">
                         <div className="pl-4 text-slate-400">
                             <Search className={`w-5 h-5 ${loading ? 'animate-pulse text-blue-500' : ''}`} />
                         </div>

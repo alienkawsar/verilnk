@@ -1,4 +1,4 @@
-import type { NextConfig } from "next";
+import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   images: {
@@ -13,7 +13,19 @@ const nextConfig: NextConfig = {
         pathname: '/VERILNK_*.png',
       },
       {
+        pathname: '/NOT_FOUND_DARK.png',
+      },
+      {
+        pathname: '/NOT_FOUND_LIGHT.png',
+      },
+      {
         pathname: '/favicon.ico',
+      },
+      {
+        pathname: '/CONNECTION_LOST_DARK.png',
+      },
+      {
+        pathname: '/CONNECTION_LOST_LIGHT.png',
       },
     ],
     remotePatterns: [
@@ -44,7 +56,7 @@ const nextConfig: NextConfig = {
       {
         protocol: 'https',
         hostname: '**', // Allow external URLs for admin-pasted logos
-      }
+      },
     ],
   },
   async headers() {
@@ -64,8 +76,8 @@ const nextConfig: NextConfig = {
       "connect-src 'self' https: http://localhost:* ws: wss:",
       "media-src 'self' blob:",
       "worker-src 'self' blob:",
-      "frame-src https://www.google.com https://www.gstatic.com https://www.recaptcha.net",
-      "frame-ancestors 'none'"
+      'frame-src https://www.google.com https://www.gstatic.com https://www.recaptcha.net',
+      "frame-ancestors 'none'",
     ].join('; ');
 
     const securityHeaders = [
@@ -73,22 +85,26 @@ const nextConfig: NextConfig = {
       { key: 'X-Content-Type-Options', value: 'nosniff' },
       { key: 'Referrer-Policy', value: 'origin-when-cross-origin' },
       { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
-      { key: 'Permissions-Policy', value: 'camera=(), geolocation=(), microphone=(self), payment=(), usb=()' },
+      {
+        key: 'Permissions-Policy',
+        value:
+          'camera=(), geolocation=(), microphone=(self), payment=(), usb=()',
+      },
       {
         key: 'Content-Security-Policy-Report-Only',
-        value: cspDirectives
-      }
+        value: cspDirectives,
+      },
     ];
 
     // Only add COEP in production (it blocks cross-origin resources in dev)
     if (isProd) {
       securityHeaders.push({
         key: 'Cross-Origin-Embedder-Policy',
-        value: 'require-corp'
+        value: 'require-corp',
       });
       securityHeaders.push({
         key: 'Strict-Transport-Security',
-        value: 'max-age=15552000; includeSubDomains; preload'
+        value: 'max-age=15552000; includeSubDomains; preload',
       });
     }
 
@@ -102,4 +118,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-

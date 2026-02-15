@@ -45,6 +45,7 @@ export default function UrlsSection({ user }: UrlsSectionProps) {
     const abortRef = useRef<AbortController | null>(null);
 
     const [loading, setLoading] = useState(false);
+    const [loadError, setLoadError] = useState<string | null>(null);
     const [isMetaLoading, setIsMetaLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingSite, setEditingSite] = useState<Site | null>(null);
@@ -108,6 +109,7 @@ export default function UrlsSection({ user }: UrlsSectionProps) {
         const requestId = ++requestIdRef.current;
 
         setLoading(true);
+        setLoadError(null);
 
         try {
             const data = await fetchSites({
@@ -123,6 +125,7 @@ export default function UrlsSection({ user }: UrlsSectionProps) {
             }
         } catch (error: any) {
             if (error?.name !== 'CanceledError') {
+                setLoadError('Failed to load sites');
                 handleAdminRequestError(error, 'sites', 'Failed to load sites');
             }
         } finally {
@@ -382,6 +385,17 @@ export default function UrlsSection({ user }: UrlsSectionProps) {
             {
                 loading ? (
                     <TableSkeleton cols={4} rows={5} />
+                ) : loadError ? (
+                    <div className="text-center text-red-600 dark:text-red-400 py-12 border border-red-200 dark:border-red-800 rounded-xl bg-red-50 dark:bg-red-900/20">
+                        <p className="font-medium">Unable to load sites right now.</p>
+                        <button
+                            type="button"
+                            onClick={loadSites}
+                            className="mt-3 inline-flex items-center px-3 py-1.5 rounded-lg text-sm border border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/40 transition-colors"
+                        >
+                            Retry
+                        </button>
+                    </div>
                 ) : sites.length > 0 ? (
                     <div className="surface-card rounded-xl overflow-hidden shadow-sm">
                         <table className="w-full text-left">

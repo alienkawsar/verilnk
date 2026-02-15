@@ -3,6 +3,11 @@
  * 
  * Frontend API functions for enterprise dashboard features.
  */
+import {
+    endConnectivityRequest,
+    startConnectivityRequest,
+    shouldTrackConnectivityRequest
+} from './connectivity-tracker';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
@@ -325,20 +330,47 @@ export interface EnterpriseProfileUpdateInput {
 // Helper Functions
 // ============================================
 
+type ApiRequestOptions = RequestInit & {
+    trackConnectivity?: boolean;
+    retryAction?: (() => Promise<unknown> | unknown) | null;
+};
+
 async function apiRequest<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: ApiRequestOptions = {}
 ): Promise<T> {
+    const {
+        trackConnectivity,
+        retryAction,
+        ...requestOptions
+    } = options;
     const url = `${API_BASE}${endpoint}`;
-
-    const response = await fetch(url, {
-        ...options,
-        credentials: 'include',
-        headers: {
-            'Content-Type': 'application/json',
-            ...options.headers,
-        },
+    const method = String(requestOptions.method || 'GET').toUpperCase();
+    const { signal, ...retryRequestOptions } = requestOptions;
+    const requestId = startConnectivityRequest({
+        track: shouldTrackConnectivityRequest(trackConnectivity),
+        retryAction: retryAction ?? ((method === 'GET' || method === 'HEAD')
+            ? () => apiRequest(endpoint, { ...retryRequestOptions, trackConnectivity: true })
+            : null)
     });
+
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            ...requestOptions,
+            credentials: 'include',
+            headers: {
+                'Content-Type': 'application/json',
+                ...requestOptions.headers,
+            },
+        });
+    } catch (error: any) {
+        const isAbort = error?.name === 'AbortError';
+        endConnectivityRequest(requestId, { networkError: !isAbort });
+        throw error;
+    }
+
+    endConnectivityRequest(requestId);
 
     if (!response.ok) {
         const errorPayload = await response.json().catch(() => null) as Record<string, any> | null;

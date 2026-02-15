@@ -90,6 +90,7 @@ import { ToastProvider } from "@/components/ui/Toast";
 import { ThemeProvider } from "@/context/ThemeContext";
 import MainLayoutWrapper from "@/components/layout/MainLayoutWrapper";
 import SessionMonitor from "@/components/auth/SessionMonitor";
+import ConnectivityProvider from "@/components/system/ConnectivityProvider";
 
 export default function RootLayout({
   children,
@@ -108,10 +109,12 @@ export default function RootLayout({
               <CountryProvider>
                 <ToastProvider>
                   <ThemeProvider>
-                    <MainLayoutWrapper>
-                      {children}
-                    </MainLayoutWrapper>
-                    <SessionMonitor />
+                    <ConnectivityProvider>
+                      <MainLayoutWrapper>
+                        {children}
+                      </MainLayoutWrapper>
+                      <SessionMonitor />
+                    </ConnectivityProvider>
                   </ThemeProvider>
                 </ToastProvider>
               </CountryProvider>

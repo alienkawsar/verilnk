@@ -1,16 +1,17 @@
 import Link from 'next/link';
-import { Compass, Home, Globe, LayoutGrid } from 'lucide-react';
+import { Home, Globe, LayoutGrid } from 'lucide-react';
 import SearchComponent from '@/components/common/SearchComponent';
+import NotFoundThemeImage from '@/components/shared/NotFoundThemeImage';
 
 export default function NotFound() {
     return (
         <div className="min-h-[80vh] flex flex-col items-center justify-center p-4 text-center">
             {/* Animated Graphic */}
-            <div className="relative mb-8 group">
-                <div className="absolute inset-0 bg-blue-500/20 blur-3xl rounded-full group-hover:bg-blue-500/30 transition-all duration-700"></div>
-                <div className="relative p-6 bg-white dark:bg-slate-900 rounded-3xl shadow-xl ring-1 ring-slate-100 dark:ring-slate-800 animate-float">
-                    <Compass className="w-24 h-24 text-blue-600 dark:text-blue-500 stroke-[1.5]" />
-                </div>
+            <div className="mb-8 flex justify-center">
+                <NotFoundThemeImage
+                    alt="Page not found"
+                    className="h-32 w-32 sm:h-40 sm:w-40 md:h-44 md:w-44 object-contain animate-float motion-reduce:animate-none"
+                />
             </div>
 
             {/* Typography */}
