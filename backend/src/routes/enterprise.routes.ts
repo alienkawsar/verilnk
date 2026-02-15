@@ -9,10 +9,15 @@ import { Router, Response } from 'express';
 import { authenticateUser, AuthRequest } from '../middleware/auth.middleware';
 import {
     getUserEnterpriseAccess,
+    getWorkspaceEntitlements,
     getUserWorkspaceRole,
     canPerformWorkspaceAction,
     API_SCOPES,
-    validateScopes
+    normalizeWorkspaceRole,
+    normalizeWorkspaceRoleForStorage,
+    validateScopes,
+    type WorkspaceRoleCanonical,
+    type WorkspaceRoleInput
 } from '../services/enterprise.entitlement';
 import {
     createWorkspace,
@@ -22,6 +27,7 @@ import {
     deleteWorkspace,
     addWorkspaceMember,
     updateMemberRole,
+    updateMemberRoleById,
     removeMember,
     transferOwnership,
     getWorkspaceMembers,
@@ -55,6 +61,7 @@ import {
     AuditActionType,
     InviteStatus,
     OrgType,
+    SessionActorType,
     WorkspaceMemberRole
 } from '@prisma/client';
 import { prisma } from '../db/client';
@@ -75,6 +82,10 @@ import {
     isEnterpriseLimitReachedError,
     toEnterpriseLimitResponse
 } from '../services/enterprise-quota.service';
+import {
+    listActiveSessionsForActorIds,
+    revokeSessionForActorIds
+} from '../services/session.service';
 
 const router = Router();
 
@@ -89,12 +100,93 @@ const normalizeRange = (value: unknown, fallback: '7' | '30' | '90' = '30'): '7'
     return fallback;
 };
 
+const WORKSPACE_AUDIT_ROLE_VALUES = new Set(['OWNER', 'ADMIN', 'DEVELOPER', 'ANALYST', 'AUDITOR', 'EDITOR', 'VIEWER', 'FORMER_MEMBER']);
+
+type WorkspaceAuditActorType = 'USER' | 'ADMIN';
+
+type ParsedAuditActorMetadata = {
+    actorType: WorkspaceAuditActorType | null;
+    actorUserId: string | null;
+    actorWorkspaceRole: string | null;
+};
+
+const extractWorkspaceIdFromDetails = (details: string | null | undefined): string | null => {
+    if (!details) return null;
+    const workspaceIdMatch = details.match(/(?:^|\s)workspaceId=([a-zA-Z0-9-]+)/);
+    if (workspaceIdMatch?.[1]) return workspaceIdMatch[1];
+    const workspaceMatch = details.match(/(?:^|\s)workspace=([a-zA-Z0-9-]+)/);
+    if (workspaceMatch?.[1]) return workspaceMatch[1];
+    const actorWorkspaceMatch = details.match(/(?:^|\s)actorWorkspaceId=([a-zA-Z0-9-]+)/);
+    if (actorWorkspaceMatch?.[1]) return actorWorkspaceMatch[1];
+    return null;
+};
+
+const parseAuditActorMetadata = (
+    details: string | null | undefined,
+    snapshot: unknown
+): ParsedAuditActorMetadata => {
+    const snapshotRecord = snapshot && typeof snapshot === 'object'
+        ? snapshot as Record<string, unknown>
+        : null;
+
+    const snapshotActorType = typeof snapshotRecord?.actorType === 'string'
+        ? snapshotRecord.actorType.toUpperCase()
+        : null;
+    const snapshotActorUserId = typeof snapshotRecord?.actorUserId === 'string'
+        ? snapshotRecord.actorUserId
+        : null;
+    const snapshotActorWorkspaceRole = typeof snapshotRecord?.actorWorkspaceRole === 'string'
+        ? snapshotRecord.actorWorkspaceRole.toUpperCase()
+        : null;
+
+    if (snapshotActorType || snapshotActorUserId || snapshotActorWorkspaceRole) {
+        return {
+            actorType: snapshotActorType === 'ADMIN' ? 'ADMIN' : snapshotActorType === 'USER' ? 'USER' : null,
+            actorUserId: snapshotActorUserId,
+            actorWorkspaceRole: snapshotActorWorkspaceRole && WORKSPACE_AUDIT_ROLE_VALUES.has(snapshotActorWorkspaceRole)
+                ? snapshotActorWorkspaceRole
+                : null
+        };
+    }
+
+    if (!details) {
+        return {
+            actorType: null,
+            actorUserId: null,
+            actorWorkspaceRole: null
+        };
+    }
+
+    const actorTypeMatch = details.match(/(?:^|\s)actorType=(USER|ADMIN)(?:\s|$)/);
+    const actorUserIdMatch = details.match(/(?:^|\s)actorUserId=([a-zA-Z0-9-]+)(?:\s|$)/);
+    const actorWorkspaceRoleMatch = details.match(/(?:^|\s)actorWorkspaceRole=([A-Z_]+)(?:\s|$)/);
+    const roleValue = actorWorkspaceRoleMatch?.[1] || null;
+
+    return {
+        actorType: (actorTypeMatch?.[1] as WorkspaceAuditActorType | undefined) || null,
+        actorUserId: actorUserIdMatch?.[1] || null,
+        actorWorkspaceRole: roleValue && WORKSPACE_AUDIT_ROLE_VALUES.has(roleValue) ? roleValue : null
+    };
+};
+
+const normalizeWorkspaceRoleForResponse = (role: WorkspaceRoleInput | WorkspaceMemberRole | null | undefined) =>
+    normalizeWorkspaceRole(role) || role || null;
+
+const resolveWorkspaceEnterpriseOrganizationId = async (workspaceId: string): Promise<string | null> => {
+    const entitlements = await getWorkspaceEntitlements(workspaceId);
+    if (!entitlements.hasAccess || entitlements.enterpriseOrgIds.length === 0) {
+        return null;
+    }
+    return entitlements.enterpriseOrgIds[0];
+};
+
 const resolveWorkspaceRole = async (
     workspaceId: string,
     userId: string
-): Promise<'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER' | null> => {
-    return getUserWorkspaceRole(workspaceId, userId);
-};
+): Promise<WorkspaceRoleInput | null> => getUserWorkspaceRole(workspaceId, userId);
+
+const respondWorkspaceForbidden = (res: Response, message: string = "You don't have permission to do that.") =>
+    res.status(403).json({ message, code: 'WORKSPACE_FORBIDDEN' });
 
 const getAppBaseUrl = (): string => {
     return process.env.FRONTEND_URL
@@ -112,14 +204,14 @@ const handleEnterpriseLimitError = (res: Response, error: unknown): boolean => {
     return true;
 };
 
-type EnterpriseWorkspaceRole = 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+type EnterpriseWorkspaceRole = WorkspaceRoleCanonical;
 
 const WORKSPACE_ROLE_PRIORITY: Record<EnterpriseWorkspaceRole, number> = {
     OWNER: 0,
     ADMIN: 1,
-    EDITOR: 2,
+    DEVELOPER: 2,
     ANALYST: 3,
-    VIEWER: 4
+    AUDITOR: 4
 };
 
 const PROFILE_EDIT_ROLES: EnterpriseWorkspaceRole[] = ['OWNER', 'ADMIN'];
@@ -171,7 +263,7 @@ const createLinkRequestSchema = z.union([
     })
 ]);
 
-const inviteRoleSchema = z.enum(['ADMIN', 'ANALYST', 'EDITOR', 'VIEWER']);
+const inviteRoleSchema = z.enum(['ADMIN', 'DEVELOPER', 'ANALYST', 'AUDITOR', 'EDITOR', 'VIEWER']);
 const inviteStatusSchema = z.enum(['PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED']);
 
 const createWorkspaceInviteSchema = z.object({
@@ -190,6 +282,18 @@ const createWorkspaceInviteSchema = z.object({
             message: 'Provide exactly one invite target: invitedEmail or invitedUserId'
         });
     }
+});
+
+const updateWorkspaceMemberRoleSchema = z.object({
+    role: inviteRoleSchema
+});
+
+const workspaceAuditLogQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional(),
+    action: z.nativeEnum(AuditActionType).optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional()
 });
 
 const resolveEnterpriseProfileContext = async (userId: string) => {
@@ -223,10 +327,8 @@ const resolveEnterpriseProfileContext = async (userId: string) => {
     });
 
     const sortedRoles = workspaceMemberships
-        .map((membership) => membership.role as EnterpriseWorkspaceRole)
-        .filter((role): role is EnterpriseWorkspaceRole =>
-            ['OWNER', 'ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'].includes(role)
-        )
+        .map((membership) => normalizeWorkspaceRole(membership.role))
+        .filter((role): role is EnterpriseWorkspaceRole => Boolean(role))
         .sort((a, b) => WORKSPACE_ROLE_PRIORITY[a] - WORKSPACE_ROLE_PRIORITY[b]);
 
     const role = sortedRoles[0] || null;
@@ -279,15 +381,39 @@ const logEnterpriseAdminActionIfApplicable = async (
 
     if (!admin) return;
 
-    const actorDetails = admin.id === userId ? details : `${details} | actorUserId=${userId}`;
+    const workspaceId = extractWorkspaceIdFromDetails(details);
+    let actorWorkspaceRole: string | null = null;
+
+    if (workspaceId) {
+        const membership = await prisma.workspaceMember.findUnique({
+            where: {
+                workspaceId_userId: {
+                    workspaceId,
+                    userId
+                }
+            },
+            select: { role: true }
+        });
+        actorWorkspaceRole = membership
+            ? normalizeWorkspaceRole(membership.role)
+            : 'FORMER_MEMBER';
+    }
+
+    const actorSnapshot = {
+        actorType: 'USER',
+        actorUserId: userId,
+        actorWorkspaceId: workspaceId || null,
+        actorWorkspaceRole: actorWorkspaceRole || null
+    };
 
     await auditService.logAction({
         adminId: admin.id,
-        actorRole: admin.role,
+        actorRole: undefined,
         action,
         entity,
         targetId,
-        details: actorDetails,
+        details,
+        snapshot: actorSnapshot,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent']
     });
@@ -301,7 +427,12 @@ const logEnterpriseAdminActionIfApplicable = async (
 router.get('/workspaces', async (req: AuthRequest, res: Response) => {
     try {
         const workspaces = await getUserWorkspaces(req.user.id as string);
-        res.json({ workspaces });
+        res.json({
+            workspaces: workspaces.map((workspace: any) => ({
+                ...workspace,
+                role: normalizeWorkspaceRoleForResponse(workspace.role) || workspace.role
+            }))
+        });
     } catch (error: any) {
         console.error('[Enterprise] List workspaces error:', error);
         res.status(500).json({ message: error.message || 'Failed to list workspaces' });
@@ -321,6 +452,14 @@ router.post('/workspaces', async (req: AuthRequest, res: Response) => {
             ownerId: req.user.id as string
         });
 
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.CREATE,
+            'Workspace',
+            `WORKSPACE_CREATED workspaceId=${workspace.id} name="${workspace.name}"`,
+            workspace.id
+        );
+
         res.status(201).json({ workspace });
     } catch (error: any) {
         console.error('[Enterprise] Create workspace error:', error);
@@ -336,7 +475,7 @@ router.get('/workspaces/:id', async (req: AuthRequest, res: Response) => {
         const role = await getUserWorkspaceRole(id, req.user.id as string);
 
         if (!role) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         const workspace = await getWorkspaceById(id);
@@ -344,7 +483,7 @@ router.get('/workspaces/:id', async (req: AuthRequest, res: Response) => {
             return res.status(404).json({ message: 'Workspace not found' });
         }
 
-        res.json({ workspace, role });
+        res.json({ workspace, role: normalizeWorkspaceRoleForResponse(role) });
     } catch (error: any) {
         console.error('[Enterprise] Get workspace error:', error);
         res.status(500).json({ message: error.message || 'Failed to get workspace' });
@@ -358,11 +497,18 @@ router.patch('/workspaces/:id', async (req: AuthRequest, res: Response) => {
         const { name } = req.body;
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'update_workspace')) {
+            return respondWorkspaceForbidden(res);
         }
 
         const workspace = await updateWorkspace(id, { name });
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'Workspace',
+            `WORKSPACE_UPDATED workspaceId=${id}${typeof name === 'string' ? ` name="${name}"` : ''}`,
+            id
+        );
         res.json({ workspace });
     } catch (error: any) {
         console.error('[Enterprise] Update workspace error:', error);
@@ -377,9 +523,16 @@ router.delete('/workspaces/:id', async (req: AuthRequest, res: Response) => {
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'delete_workspace')) {
-            return res.status(403).json({ message: 'Only the owner can delete a workspace' });
+            return respondWorkspaceForbidden(res, 'Only the owner can delete a workspace');
         }
 
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.DELETE,
+            'Workspace',
+            `WORKSPACE_DELETED workspaceId=${id}`,
+            id
+        );
         await deleteWorkspace(id);
         res.json({ success: true });
     } catch (error: any) {
@@ -398,12 +551,17 @@ router.get('/workspaces/:id/members', async (req: AuthRequest, res: Response) =>
         const id = req.params.id as string;
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
-        if (!role) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'view_members')) {
+            return respondWorkspaceForbidden(res);
         }
 
         const members = await getWorkspaceMembers(id);
-        res.json({ members });
+        res.json({
+            members: members.map((member) => ({
+                ...member,
+                role: normalizeWorkspaceRoleForResponse(member.role) || member.role
+            }))
+        });
     } catch (error: any) {
         console.error('[Enterprise] List members error:', error);
         res.status(500).json({ message: error.message || 'Failed to list members' });
@@ -422,14 +580,14 @@ router.post('/workspaces/:id/members', async (req: AuthRequest, res: Response) =
 
         const currentRole = await getUserWorkspaceRole(id, req.user.id as string);
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
-        // Validate role
-        const validRoles: WorkspaceMemberRole[] = ['ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'];
-        if (!validRoles.includes(memberRole)) {
-            return res.status(400).json({ message: 'Invalid role. Must be one of: ADMIN, ANALYST, EDITOR, VIEWER' });
+        const normalizedRole = normalizeWorkspaceRole(String(memberRole || '').toUpperCase() as WorkspaceRoleInput);
+        if (!normalizedRole || normalizedRole === 'OWNER') {
+            return res.status(400).json({ message: 'Invalid role. Must be one of: ADMIN, DEVELOPER, ANALYST, AUDITOR' });
         }
+        const safeRole = normalizeWorkspaceRoleForStorage(normalizedRole);
 
         // Lookup user by email
         const { prisma } = await import('../db/client');
@@ -442,8 +600,20 @@ router.post('/workspaces/:id/members', async (req: AuthRequest, res: Response) =
             return res.status(404).json({ message: 'No user found with that email. They must register on VeriLnk first.' });
         }
 
-        const member = await addWorkspaceMember(id, targetUser.id, memberRole, req.user.id as string);
-        res.status(201).json({ member });
+        const member = await addWorkspaceMember(id, targetUser.id, safeRole, req.user.id as string);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.CREATE,
+            'WorkspaceMember',
+            `WORKSPACE_MEMBER_ADDED workspaceId=${id} userId=${targetUser.id} role=${normalizedRole}`,
+            member.id
+        );
+        res.status(201).json({
+            member: {
+                ...member,
+                role: normalizeWorkspaceRoleForResponse(member.role) || member.role
+            }
+        });
     } catch (error: any) {
         console.error('[Enterprise] Add member error:', error);
         if (handleEnterpriseLimitError(res, error)) return;
@@ -465,14 +635,19 @@ router.get('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =>
 
         const role = await resolveWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         const invites = await getWorkspaceInvites(
             id,
             parsedQuery.data.status ? parsedQuery.data.status as InviteStatus : undefined
         );
-        res.json({ invites });
+        res.json({
+            invites: invites.map((invite) => ({
+                ...invite,
+                role: normalizeWorkspaceRoleForResponse(invite.role) || invite.role
+            }))
+        });
     } catch (error: any) {
         console.error('[Enterprise] List invites error:', error);
         res.status(500).json({ message: error.message || 'Failed to list invites' });
@@ -492,13 +667,16 @@ router.post('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =
 
         const currentRole = await resolveWorkspaceRole(id, req.user.id as string);
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
-        const validRoles: WorkspaceMemberRole[] = ['ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'];
-        const safeRole: WorkspaceMemberRole = validRoles.includes(inviteRole as WorkspaceMemberRole)
-            ? inviteRole as WorkspaceMemberRole
-            : 'VIEWER';
+        const normalizedInviteRole = normalizeWorkspaceRole(
+            String(inviteRole || 'AUDITOR').toUpperCase() as WorkspaceRoleInput
+        );
+        const safeRole: WorkspaceMemberRole =
+            normalizedInviteRole && normalizedInviteRole !== 'OWNER'
+                ? normalizeWorkspaceRoleForStorage(normalizedInviteRole)
+                : WorkspaceMemberRole.VIEWER;
 
         const resolvedEmail = invitedEmail || email;
         const { invite, token } = await createWorkspaceInvite(
@@ -516,7 +694,7 @@ router.post('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =
             req,
             AuditActionType.CREATE,
             'WorkspaceInvite',
-            `WORKSPACE_INVITE_CREATED workspaceId=${id} role=${invite.role} target=${invite.invitedEmail || invite.invitedUserId || 'unknown'}`,
+            `WORKSPACE_INVITE_CREATED workspaceId=${id} role=${normalizeWorkspaceRole(invite.role) || invite.role} target=${invite.invitedEmail || invite.invitedUserId || 'unknown'}`,
             invite.id
         );
         res.status(201).json({
@@ -525,7 +703,7 @@ router.post('/workspaces/:id/invites', async (req: AuthRequest, res: Response) =
                 workspaceId: invite.workspaceId,
                 invitedEmail: invite.invitedEmail,
                 invitedUserId: invite.invitedUserId,
-                role: invite.role,
+                role: normalizeWorkspaceRoleForResponse(invite.role) || invite.role,
                 status: invite.status,
                 expiresAt: invite.expiresAt,
                 acceptedAt: invite.acceptedAt,
@@ -555,7 +733,7 @@ router.delete('/workspaces/:id/invites/:inviteId', async (req: AuthRequest, res:
 
         const currentRole = await resolveWorkspaceRole(id, req.user.id as string);
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         await cancelWorkspaceInvite(id, inviteId);
@@ -586,7 +764,7 @@ router.post('/workspaces/:id/invites/:inviteId/revoke', async (req: AuthRequest,
 
         const currentRole = await resolveWorkspaceRole(id, req.user.id as string);
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         await revokeWorkspaceInvite(id, inviteId);
@@ -673,7 +851,7 @@ router.post('/invites/:inviteId/accept', async (req: AuthRequest, res: Response)
             return res.status(404).json({ message: error.message });
         }
         if (error?.message === 'Invite does not belong to this user') {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
         if (error.message === 'Invite has already been processed') {
             return res.status(409).json({ message: error.message });
@@ -708,7 +886,7 @@ router.post('/invites/:inviteId/decline', async (req: AuthRequest, res: Response
             return res.status(404).json({ message: error.message });
         }
         if (error?.message === 'Invite does not belong to this user') {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
         if (error.message === 'Invite has already been processed') {
             return res.status(409).json({ message: error.message });
@@ -721,6 +899,56 @@ router.post('/invites/:inviteId/decline', async (req: AuthRequest, res: Response
 });
 
 // Update member role
+router.patch('/workspaces/:workspaceId/members/:memberId/role', async (req: AuthRequest, res: Response) => {
+    try {
+        const workspaceId = req.params.workspaceId as string;
+        const memberId = req.params.memberId as string;
+        const parsedBody = updateWorkspaceMemberRoleSchema.safeParse(req.body);
+
+        if (!parsedBody.success) {
+            return res.status(400).json({
+                message: parsedBody.error.issues[0]?.message || 'Invalid role payload'
+            });
+        }
+
+        const currentRole = await getUserWorkspaceRole(workspaceId, req.user.id as string);
+        if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        const normalizedRole = normalizeWorkspaceRole(parsedBody.data.role as WorkspaceRoleInput);
+        if (!normalizedRole || normalizedRole === 'OWNER') {
+            return res.status(400).json({ message: 'Invalid role. Must be one of: ADMIN, DEVELOPER, ANALYST, AUDITOR' });
+        }
+
+        const actorRole = normalizeWorkspaceRole(currentRole) || currentRole;
+        const { member, oldRole } = await updateMemberRoleById(
+            workspaceId,
+            memberId,
+            normalizeWorkspaceRoleForStorage(normalizedRole)
+        );
+
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'WorkspaceMember',
+            `WORKSPACE_MEMBER_ROLE_UPDATED workspaceId=${workspaceId} memberId=${memberId} userId=${member.userId} oldRole=${normalizeWorkspaceRole(oldRole) || oldRole} newRole=${normalizedRole} actorRole=${actorRole}`,
+            member.id
+        );
+
+        res.json({
+            member: {
+                ...member,
+                role: normalizeWorkspaceRoleForResponse(member.role) || member.role
+            }
+        });
+    } catch (error: any) {
+        console.error('[Enterprise] Update member role by id error:', error);
+        res.status(400).json({ message: error.message || 'Failed to update member role' });
+    }
+});
+
+// Legacy route: Update member role by userId
 router.patch('/workspaces/:id/members/:userId', async (req: AuthRequest, res: Response) => {
     try {
         const id = req.params.id as string;
@@ -729,11 +957,28 @@ router.patch('/workspaces/:id/members/:userId', async (req: AuthRequest, res: Re
 
         const currentRole = await getUserWorkspaceRole(id, req.user.id as string);
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
-        const member = await updateMemberRole(id, userId, newRole);
-        res.json({ member });
+        const normalizedRole = normalizeWorkspaceRole(String(newRole || '').toUpperCase() as WorkspaceRoleInput);
+        if (!normalizedRole || normalizedRole === 'OWNER') {
+            return res.status(400).json({ message: 'Invalid role. Must be one of: ADMIN, DEVELOPER, ANALYST, AUDITOR' });
+        }
+
+        const member = await updateMemberRole(id, userId, normalizeWorkspaceRoleForStorage(normalizedRole));
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'WorkspaceMember',
+            `WORKSPACE_MEMBER_ROLE_UPDATED workspaceId=${id} userId=${userId} role=${normalizedRole}`,
+            member.id
+        );
+        res.json({
+            member: {
+                ...member,
+                role: normalizeWorkspaceRoleForResponse(member.role) || member.role
+            }
+        });
     } catch (error: any) {
         console.error('[Enterprise] Update member error:', error);
         res.status(400).json({ message: error.message || 'Failed to update member' });
@@ -748,10 +993,17 @@ router.delete('/workspaces/:id/members/:userId', async (req: AuthRequest, res: R
 
         const currentRole = await getUserWorkspaceRole(id, req.user.id as string);
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         await removeMember(id, userId);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.DELETE,
+            'WorkspaceMember',
+            `WORKSPACE_MEMBER_REMOVED workspaceId=${id} userId=${userId}`,
+            userId
+        );
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Remove member error:', error);
@@ -767,10 +1019,17 @@ router.post('/workspaces/:id/transfer', async (req: AuthRequest, res: Response) 
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'transfer_ownership')) {
-            return res.status(403).json({ message: 'Only the owner can transfer ownership' });
+            return respondWorkspaceForbidden(res, 'Only the owner can transfer ownership');
         }
 
         await transferOwnership(id, req.user.id as string, newOwnerId);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'Workspace',
+            `WORKSPACE_OWNERSHIP_TRANSFERRED workspaceId=${id} fromUserId=${req.user.id as string} toUserId=${newOwnerId}`,
+            id
+        );
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Transfer ownership error:', error);
@@ -795,8 +1054,8 @@ router.get('/workspaces/:id/organizations', async (req: AuthRequest, res: Respon
         const id = req.params.id as string;
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
-        if (!role) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'view_organizations')) {
+            return respondWorkspaceForbidden(res);
         }
 
         const organizations = await getLinkedOrganizations(id);
@@ -812,19 +1071,19 @@ const createWorkspaceOrganizationHandler = async (req: AuthRequest, res: Respons
         const id = req.params.id as string;
 
         const role = await resolveWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'link_org')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'manage_organizations')) {
+            return respondWorkspaceForbidden(res);
         }
 
-        const enterpriseAccess = await getUserEnterpriseAccess(req.user.id as string);
-        if (!enterpriseAccess.hasAccess || !enterpriseAccess.organizationId) {
-            return res.status(403).json({ message: 'Enterprise access required' });
+        const enterpriseId = await resolveWorkspaceEnterpriseOrganizationId(id);
+        if (!enterpriseId) {
+            return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
         }
 
         const payload = createEnterpriseOrganizationSchema.parse(req.body);
         const result = await createEnterpriseOrganizationAndLink({
             workspaceId: id,
-            enterpriseId: enterpriseAccess.organizationId,
+            enterpriseId,
             createdByUserId: req.user.id as string,
             orgName: payload.orgName,
             email: payload.email,
@@ -844,7 +1103,7 @@ const createWorkspaceOrganizationHandler = async (req: AuthRequest, res: Respons
             req,
             AuditActionType.CREATE,
             'EnterpriseOrgLinkRequest',
-            `ENTERPRISE_ORG_CREATED enterprise=${enterpriseAccess.organizationId} workspace=${id} organization=${result.organization.id} request=${result.linkRequest.id} status=PENDING_APPROVAL`,
+            `ENTERPRISE_ORG_CREATED enterprise=${enterpriseId} workspace=${id} organization=${result.organization.id} request=${result.linkRequest.id} status=PENDING_APPROVAL`,
             result.organization.id
         );
 
@@ -873,16 +1132,16 @@ router.get('/workspaces/:id/link-requests', async (req: AuthRequest, res: Respon
         const id = req.params.id as string;
 
         const role = await resolveWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'link_org')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'view_organizations')) {
+            return respondWorkspaceForbidden(res);
         }
 
-        const enterpriseAccess = await getUserEnterpriseAccess(req.user.id as string);
-        if (!enterpriseAccess.hasAccess || !enterpriseAccess.organizationId) {
-            return res.status(403).json({ message: 'Enterprise access required' });
+        const enterpriseId = await resolveWorkspaceEnterpriseOrganizationId(id);
+        if (!enterpriseId) {
+            return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
         }
 
-        const requests = await listWorkspaceLinkRequests(id, enterpriseAccess.organizationId);
+        const requests = await listWorkspaceLinkRequests(id, enterpriseId);
         res.json({ requests });
     } catch (error: any) {
         console.error('[Enterprise] List link requests error:', error);
@@ -897,18 +1156,18 @@ router.post('/workspaces/:id/link-requests', async (req: AuthRequest, res: Respo
         const payload = createLinkRequestSchema.parse(req.body);
 
         const role = await resolveWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'link_org')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'manage_organizations')) {
+            return respondWorkspaceForbidden(res);
         }
 
-        const enterpriseAccess = await getUserEnterpriseAccess(req.user.id as string);
-        if (!enterpriseAccess.hasAccess || !enterpriseAccess.organizationId) {
-            return res.status(403).json({ message: 'Enterprise access required' });
+        const enterpriseId = await resolveWorkspaceEnterpriseOrganizationId(id);
+        if (!enterpriseId) {
+            return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
         }
 
         const request = await createWorkspaceLinkRequest({
             workspaceId: id,
-            enterpriseId: enterpriseAccess.organizationId,
+            enterpriseId,
             requestedByUserId: req.user.id as string,
             linkMethod: 'linkMethod' in payload ? payload.linkMethod : undefined,
             identifier: 'identifier' in payload ? payload.identifier : undefined,
@@ -920,7 +1179,7 @@ router.post('/workspaces/:id/link-requests', async (req: AuthRequest, res: Respo
             req,
             AuditActionType.CREATE,
             'EnterpriseOrgLinkRequest',
-            `ENTERPRISE_LINK_REQUEST_CREATED enterprise=${enterpriseAccess.organizationId} workspace=${id} organization=${request.organizationId}`,
+            `ENTERPRISE_LINK_REQUEST_CREATED enterprise=${enterpriseId} workspace=${id} organization=${request.organizationId}`,
             request.id
         );
         res.status(201).json({ request });
@@ -938,15 +1197,30 @@ router.post('/workspaces/:id/link-requests', async (req: AuthRequest, res: Respo
 router.post('/link-requests/:id/cancel', async (req: AuthRequest, res: Response) => {
     try {
         const requestId = req.params.id as string;
+        const linkRequestModel = (prisma as any).enterpriseOrgLinkRequest;
+        if (!linkRequestModel) {
+            return res.status(500).json({ message: 'Link request model unavailable' });
+        }
 
-        const enterpriseAccess = await getUserEnterpriseAccess(req.user.id as string);
-        if (!enterpriseAccess.hasAccess || !enterpriseAccess.organizationId) {
-            return res.status(403).json({ message: 'Enterprise access required' });
+        const existingRequest = await linkRequestModel.findUnique({
+            where: { id: requestId },
+            select: { id: true, workspaceId: true, enterpriseId: true }
+        });
+        if (!existingRequest) {
+            return res.status(404).json({ message: 'Pending link request not found' });
+        }
+        if (!existingRequest.workspaceId) {
+            return res.status(400).json({ message: 'Link request is not scoped to a workspace' });
+        }
+
+        const role = await resolveWorkspaceRole(existingRequest.workspaceId, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'manage_organizations')) {
+            return respondWorkspaceForbidden(res);
         }
 
         await cancelWorkspaceLinkRequest({
             requestId,
-            enterpriseId: enterpriseAccess.organizationId,
+            enterpriseId: existingRequest.enterpriseId,
             requestedByUserId: req.user.id as string
         });
 
@@ -954,7 +1228,7 @@ router.post('/link-requests/:id/cancel', async (req: AuthRequest, res: Response)
             req,
             AuditActionType.UPDATE,
             'EnterpriseOrgLinkRequest',
-            `ENTERPRISE_LINK_REQUEST_CANCELED enterprise=${enterpriseAccess.organizationId} request=${requestId}`,
+            `ENTERPRISE_LINK_REQUEST_CANCELED enterprise=${existingRequest.enterpriseId} workspace=${existingRequest.workspaceId} request=${requestId}`,
             requestId
         );
 
@@ -972,8 +1246,8 @@ router.delete('/workspaces/:id/organizations/:orgId', async (req: AuthRequest, r
         const orgId = req.params.orgId as string;
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'unlink_org')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'manage_organizations')) {
+            return respondWorkspaceForbidden(res);
         }
 
         await unlinkOrganization(id, orgId);
@@ -1002,8 +1276,8 @@ router.post('/workspaces/:id/organizations/unlink', async (req: AuthRequest, res
         }
 
         const role = await resolveWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'unlink_org')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'manage_organizations')) {
+            return respondWorkspaceForbidden(res);
         }
 
         await unlinkOrganization(id, organizationId);
@@ -1031,8 +1305,8 @@ router.get('/workspaces/:id/api-keys', async (req: AuthRequest, res: Response) =
         const id = req.params.id as string;
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
-        if (!role) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'view_api_keys')) {
+            return respondWorkspaceForbidden(res);
         }
 
         const apiKeys = await listApiKeys(id);
@@ -1051,7 +1325,7 @@ router.post('/workspaces/:id/api-keys', async (req: AuthRequest, res: Response) 
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'create_api_key')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         // Validate name
@@ -1084,6 +1358,13 @@ router.post('/workspaces/:id/api-keys', async (req: AuthRequest, res: Response) 
         });
 
         // IMPORTANT: plainTextKey is only returned once!
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.CREATE,
+            'ApiKey',
+            `WORKSPACE_API_KEY_CREATED workspaceId=${id} keyId=${result.apiKey.id} scopes=${result.apiKey.scopes.join('|')}`,
+            result.apiKey.id
+        );
         res.status(201).json({
             apiKey: result.apiKey,
             plainTextKey: result.plainTextKey,
@@ -1109,7 +1390,7 @@ router.delete('/workspaces/:id/api-keys/:keyId', async (req: AuthRequest, res: R
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'revoke_api_key')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         // Verify key belongs to workspace
@@ -1122,6 +1403,13 @@ router.delete('/workspaces/:id/api-keys/:keyId', async (req: AuthRequest, res: R
         }
 
         await revokeApiKey(keyId);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.DELETE,
+            'ApiKey',
+            `WORKSPACE_API_KEY_REVOKED workspaceId=${id} keyId=${keyId}`,
+            keyId
+        );
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Revoke API key error:', error);
@@ -1136,8 +1424,8 @@ router.post('/workspaces/:id/api-keys/:keyId/rotate', async (req: AuthRequest, r
         const keyId = req.params.keyId as string;
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'create_api_key')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'rotate_api_key')) {
+            return respondWorkspaceForbidden(res);
         }
 
         const apiKey = await getApiKeyById(keyId);
@@ -1149,6 +1437,13 @@ router.post('/workspaces/:id/api-keys/:keyId/rotate', async (req: AuthRequest, r
         }
 
         const result = await rotateApiKey(keyId, req.user.id as string);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'ApiKey',
+            `WORKSPACE_API_KEY_ROTATED workspaceId=${id} keyId=${keyId}`,
+            keyId
+        );
 
         res.status(201).json({
             apiKey: result.apiKey,
@@ -1158,6 +1453,42 @@ router.post('/workspaces/:id/api-keys/:keyId/rotate', async (req: AuthRequest, r
     } catch (error: any) {
         console.error('[Enterprise] Rotate API key error:', error);
         res.status(400).json({ message: error.message || 'Failed to rotate API key' });
+    }
+});
+
+router.post('/workspaces/:id/api-keys/:keyId/copy', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const keyId = req.params.keyId as string;
+
+        const role = await getUserWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'copy_api_key')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        const apiKey = await getApiKeyById(keyId);
+        if (!apiKey) {
+            return res.status(404).json({ message: 'API key not found' });
+        }
+        if (apiKey.workspaceId !== id) {
+            return res.status(400).json({ message: 'API key does not belong to this workspace' });
+        }
+        if (apiKey.isRevoked) {
+            return res.status(409).json({ message: 'Cannot copy a revoked key' });
+        }
+
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.OTHER,
+            'ApiKey',
+            `API_KEY_COPIED workspaceId=${id} keyId=${keyId}`,
+            keyId
+        );
+
+        res.json({ success: true });
+    } catch (error: any) {
+        console.error('[Enterprise] API key copy audit error:', error);
+        res.status(400).json({ message: error.message || 'Failed to audit key copy' });
     }
 });
 
@@ -1173,7 +1504,7 @@ router.get('/workspaces/:id/usage-logs', async (req: AuthRequest, res: Response)
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'view_usage_logs')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         const result = await getWorkspaceUsageLogs(id, {
@@ -1197,7 +1528,7 @@ router.get('/workspaces/:id/usage-stats', async (req: AuthRequest, res: Response
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'view_usage_logs')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res);
         }
 
         const stats = await getWorkspaceUsageStats(id, days ? parseInt(String(days), 10) : 30);
@@ -1205,6 +1536,393 @@ router.get('/workspaces/:id/usage-stats', async (req: AuthRequest, res: Response
     } catch (error: any) {
         console.error('[Enterprise] Get usage stats error:', error);
         res.status(500).json({ message: error.message || 'Failed to get usage stats' });
+    }
+});
+
+router.get('/workspaces/:id/exports/usage', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await getUserWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'export_usage')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        const range = normalizeRange(req.query.range, '30');
+        const rangeDays = Number(range);
+        const since = new Date(Date.now() - rangeDays * 24 * 60 * 60 * 1000);
+
+        const usageLogs = await prisma.apiUsageLog.findMany({
+            where: {
+                createdAt: { gte: since },
+                apiKey: { workspaceId: id }
+            },
+            include: {
+                apiKey: {
+                    select: { id: true, name: true, prefix: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10000
+        });
+
+        const csvLines = [
+            'Timestamp,Method,Endpoint,Status,API Key,Prefix,Latency(ms),IP'
+        ];
+        for (const log of usageLogs) {
+            const safe = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+            csvLines.push([
+                safe(log.createdAt.toISOString()),
+                safe(log.method),
+                safe(log.endpoint),
+                safe(log.statusCode),
+                safe(log.apiKey?.name || ''),
+                safe(log.apiKey?.prefix || ''),
+                safe(log.latencyMs ?? ''),
+                safe(log.ip || '')
+            ].join(','));
+        }
+
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.OTHER,
+            'ApiUsageExport',
+            `USAGE_EXPORTED workspaceId=${id} format=csv range=${range}`,
+            id
+        );
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="workspace-usage-${id}-${range}.csv"`);
+        res.send(csvLines.join('\n'));
+    } catch (error: any) {
+        console.error('[Enterprise] Export usage error:', error);
+        res.status(500).json({ message: error.message || 'Failed to export usage' });
+    }
+});
+
+// ============================================
+// Security & Compliance
+// ============================================
+
+router.get('/workspaces/:id/audit-logs', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await resolveWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'view_compliance_logs')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        const parsedQuery = workspaceAuditLogQuerySchema.safeParse(req.query);
+        if (!parsedQuery.success) {
+            return res.status(400).json({ message: 'Invalid audit log filters' });
+        }
+
+        const page = parsedQuery.data.page ?? 1;
+        const limit = parsedQuery.data.limit ?? 20;
+        const skip = (page - 1) * limit;
+
+        const where: any = {
+            OR: [
+                { details: { contains: `workspaceId=${id}` } },
+                { details: { contains: `workspace=${id}` } },
+                { entity: 'Workspace', targetId: id }
+            ]
+        };
+
+        if (parsedQuery.data.action) {
+            where.action = parsedQuery.data.action;
+        }
+
+        if (parsedQuery.data.startDate || parsedQuery.data.endDate) {
+            const createdAt: Record<string, Date> = {};
+            if (parsedQuery.data.startDate) {
+                const parsedStart = new Date(parsedQuery.data.startDate);
+                if (!Number.isNaN(parsedStart.getTime())) {
+                    createdAt.gte = parsedStart;
+                }
+            }
+            if (parsedQuery.data.endDate) {
+                const parsedEnd = new Date(parsedQuery.data.endDate);
+                if (!Number.isNaN(parsedEnd.getTime())) {
+                    createdAt.lte = parsedEnd;
+                }
+            }
+            if (Object.keys(createdAt).length > 0) {
+                where.createdAt = createdAt;
+            }
+        } else {
+            // Safe default: last 30 days
+            where.createdAt = {
+                gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+            };
+        }
+
+        const [logs, total] = await Promise.all([
+            prisma.adminLog.findMany({
+                where,
+                include: {
+                    admin: {
+                        select: { id: true, firstName: true, lastName: true, email: true, role: true }
+                    }
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.adminLog.count({ where })
+        ]);
+
+        const actorMetadataByLogId = new Map(
+            logs.map((log) => [log.id, parseAuditActorMetadata(log.details, log.snapshot)])
+        );
+        const actorUserIds = Array.from(
+            new Set(
+                Array.from(actorMetadataByLogId.values())
+                    .map((meta) => meta.actorUserId)
+                    .filter((value): value is string => Boolean(value))
+            )
+        );
+
+        const [actorUsers, memberships] = actorUserIds.length > 0
+            ? await Promise.all([
+                prisma.user.findMany({
+                    where: { id: { in: actorUserIds } },
+                    select: { id: true, name: true, firstName: true, lastName: true, email: true }
+                }),
+                prisma.workspaceMember.findMany({
+                    where: {
+                        workspaceId: id,
+                        userId: { in: actorUserIds }
+                    },
+                    select: { userId: true, role: true }
+                })
+            ])
+            : [[], []];
+
+        const actorUserById = new Map(actorUsers.map((user) => [user.id, user]));
+        const membershipByUserId = new Map(memberships.map((membership) => [membership.userId, membership]));
+
+        const logsWithActor = logs.map((log) => {
+            const parsedActor = actorMetadataByLogId.get(log.id);
+            const actorUserId = parsedActor?.actorUserId;
+
+            if (actorUserId) {
+                const actorUser = actorUserById.get(actorUserId);
+                const membership = membershipByUserId.get(actorUserId);
+                const snapshotRole = parsedActor?.actorWorkspaceRole && parsedActor.actorWorkspaceRole !== 'FORMER_MEMBER'
+                    ? normalizeWorkspaceRole(parsedActor.actorWorkspaceRole as WorkspaceRoleInput) || parsedActor.actorWorkspaceRole
+                    : null;
+                const currentRole = membership ? normalizeWorkspaceRole(membership.role) : null;
+                const actorWorkspaceRole = snapshotRole || currentRole;
+                const actorLabel = actorUser
+                    ? `${actorUser.firstName || ''} ${actorUser.lastName || ''}`.trim()
+                        || actorUser.name
+                        || actorUser.email
+                    : actorUserId;
+
+                return {
+                    ...log,
+                    actor: {
+                        type: 'USER' as const,
+                        label: actorLabel,
+                        actorUserId,
+                        workspaceRole: actorWorkspaceRole,
+                        isFormerMember: !actorWorkspaceRole
+                    }
+                };
+            }
+
+            const adminLabel = log.admin
+                ? `${log.admin.firstName || ''} ${log.admin.lastName || ''}`.trim() || log.admin.email || 'Super Admin'
+                : 'Super Admin';
+
+            return {
+                ...log,
+                actor: {
+                    type: 'ADMIN' as const,
+                    label: adminLabel,
+                    adminRole: log.admin?.role || 'SUPER_ADMIN'
+                }
+            };
+        });
+
+        res.json({
+            logs: logsWithActor,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.max(1, Math.ceil(total / limit))
+            }
+        });
+    } catch (error: any) {
+        console.error('[Enterprise] Workspace audit logs error:', error);
+        res.status(500).json({ message: error.message || 'Failed to load audit logs' });
+    }
+});
+
+router.get('/workspaces/:id/exports/audit-logs', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await resolveWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'export_audit_logs')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'csv';
+        const range = normalizeRange(req.query.range, '30');
+        const rangeDays = Number(range);
+        const since = new Date(Date.now() - rangeDays * 24 * 60 * 60 * 1000);
+
+        const where: any = {
+            OR: [
+                { details: { contains: `workspaceId=${id}` } },
+                { details: { contains: `workspace=${id}` } },
+                { entity: 'Workspace', targetId: id }
+            ],
+            createdAt: { gte: since }
+        };
+
+        const logs = await prisma.adminLog.findMany({
+            where,
+            include: {
+                admin: {
+                    select: { id: true, firstName: true, lastName: true, email: true, role: true }
+                }
+            },
+            orderBy: { createdAt: 'desc' },
+            take: 10000
+        });
+
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.OTHER,
+            'WorkspaceAuditExport',
+            `AUDIT_LOGS_EXPORTED workspaceId=${id} format=${format} range=${range}`,
+            id
+        );
+
+        if (format === 'log') {
+            const lines = logs.map((log) => {
+                const actorName = log.admin
+                    ? `${log.admin.firstName || ''} ${log.admin.lastName || ''}`.trim() || log.admin.email
+                    : 'system';
+                return `[${log.createdAt.toISOString()}] action=${log.action} entity=${log.entity || '-'} target=${log.targetId || '-'} actor="${actorName}" details="${(log.details || '').replace(/\s+/g, ' ').trim()}"`;
+            });
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="workspace-audit-${id}-${range}.log"`);
+            return res.send(lines.join('\n'));
+        }
+
+        const safe = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+        const csvLines = [
+            'Timestamp,Action,Entity,Target ID,Actor Name,Actor Email,Details,IP,User Agent'
+        ];
+        for (const log of logs) {
+            const actorName = log.admin
+                ? `${log.admin.firstName || ''} ${log.admin.lastName || ''}`.trim()
+                : '';
+            csvLines.push([
+                safe(log.createdAt.toISOString()),
+                safe(log.action),
+                safe(log.entity || ''),
+                safe(log.targetId || ''),
+                safe(actorName),
+                safe(log.admin?.email || ''),
+                safe(log.details || ''),
+                safe(log.ipAddress || ''),
+                safe(log.userAgent || '')
+            ].join(','));
+        }
+
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', `attachment; filename="workspace-audit-${id}-${range}.csv"`);
+        res.send(csvLines.join('\n'));
+    } catch (error: any) {
+        console.error('[Enterprise] Export audit logs error:', error);
+        res.status(500).json({ message: error.message || 'Failed to export audit logs' });
+    }
+});
+
+router.get('/workspaces/:id/sessions', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await resolveWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'view_compliance_logs')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        const members = await prisma.workspaceMember.findMany({
+            where: { workspaceId: id },
+            select: {
+                userId: true,
+                role: true
+            }
+        });
+
+        const memberUserIds = members.map((member) => member.userId);
+        const users = memberUserIds.length
+            ? await prisma.user.findMany({
+                where: { id: { in: memberUserIds } },
+                select: { id: true, email: true, firstName: true, lastName: true, name: true }
+            })
+            : [];
+        const userMap = new Map(users.map((user) => [user.id, user]));
+        const sessions = await listActiveSessionsForActorIds(SessionActorType.ORG, memberUserIds);
+        const memberMap = new Map(members.map((member) => [member.userId, member]));
+
+        res.json({
+            sessions: sessions.map((session) => {
+                const member = memberMap.get(session.actorId);
+                return {
+                    ...session,
+                    member: member
+                        ? {
+                            userId: member.userId,
+                            role: normalizeWorkspaceRoleForResponse(member.role) || member.role,
+                            user: userMap.get(member.userId) || null
+                        }
+                        : null
+                };
+            })
+        });
+    } catch (error: any) {
+        console.error('[Enterprise] Workspace sessions error:', error);
+        res.status(500).json({ message: error.message || 'Failed to load sessions' });
+    }
+});
+
+router.post('/workspaces/:id/sessions/:sessionId/revoke', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const sessionId = req.params.sessionId as string;
+
+        const role = await resolveWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'manage_members')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        const members = await prisma.workspaceMember.findMany({
+            where: { workspaceId: id },
+            select: { userId: true }
+        });
+        const memberUserIds = members.map((member) => member.userId);
+
+        await revokeSessionForActorIds(SessionActorType.ORG, memberUserIds, sessionId);
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'AuthSession',
+            `WORKSPACE_SESSION_REVOKED workspaceId=${id} sessionId=${sessionId}`,
+            sessionId
+        );
+
+        res.json({ success: true });
+    } catch (error: any) {
+        console.error('[Enterprise] Revoke workspace session error:', error);
+        if (error?.message === 'Session not found') {
+            return res.status(404).json({ message: 'Session not found' });
+        }
+        res.status(400).json({ message: error.message || 'Failed to revoke session' });
     }
 });
 
@@ -1219,8 +1937,8 @@ router.get('/workspaces/:id/analytics', async (req: AuthRequest, res: Response) 
         const { range } = req.query;
 
         const role = await getUserWorkspaceRole(id, req.user.id as string);
-        if (!role) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'view_analytics')) {
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
         }
 
         const analytics = await getEnterpriseAnalyticsOverview(
@@ -1239,7 +1957,7 @@ router.get('/workspaces/:id/analytics/daily', async (req: AuthRequest, res: Resp
         const id = req.params.id as string;
         const role = await resolveWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'view_analytics')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
         }
 
         const range = normalizeRange(req.query.range, '30');
@@ -1256,7 +1974,7 @@ router.get('/workspaces/:id/analytics/summary', async (req: AuthRequest, res: Re
         const id = req.params.id as string;
         const role = await resolveWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'view_analytics')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
         }
 
         const range = normalizeRange(req.query.range, '30');
@@ -1273,7 +1991,7 @@ router.get('/workspaces/:id/analytics/hourly', async (req: AuthRequest, res: Res
         const id = req.params.id as string;
         const role = await resolveWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'view_analytics')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
         }
 
         const range = normalizeRange(req.query.range, '30');
@@ -1290,7 +2008,7 @@ router.get('/workspaces/:id/analytics/heatmap', async (req: AuthRequest, res: Re
         const id = req.params.id as string;
         const role = await resolveWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'view_analytics')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
         }
 
         const range = normalizeRange(req.query.range, '30');
@@ -1307,7 +2025,7 @@ router.get('/workspaces/:id/analytics/categories', async (req: AuthRequest, res:
         const id = req.params.id as string;
         const role = await resolveWorkspaceRole(id, req.user.id as string);
         if (!role || !canPerformWorkspaceAction(role, 'view_analytics')) {
-            return res.status(403).json({ message: 'Access denied' });
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
         }
 
         const range = normalizeRange(req.query.range, '30');
@@ -1319,17 +2037,25 @@ router.get('/workspaces/:id/analytics/categories', async (req: AuthRequest, res:
     }
 });
 
-router.get('/workspaces/:id/analytics/export', async (req: AuthRequest, res: Response) => {
+const exportWorkspaceAnalyticsHandler = async (req: AuthRequest, res: Response) => {
     try {
         const id = req.params.id as string;
         const role = await resolveWorkspaceRole(id, req.user.id as string);
-        if (!role || !canPerformWorkspaceAction(role, 'view_analytics')) {
-            return res.status(403).json({ message: 'Access denied' });
+        if (!role || !canPerformWorkspaceAction(role, 'export_analytics')) {
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
         }
 
         const range = normalizeRange(req.query.range, '30');
         const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'csv';
         const data = await getEnterpriseAnalyticsExportData(id, range);
+
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.OTHER,
+            'WorkspaceAnalyticsExport',
+            `ANALYTICS_EXPORTED workspaceId=${id} format=${format} range=${range}`,
+            id
+        );
 
         if (format === 'pdf') {
             const PDFDocument = (await import('pdfkit')).default;
@@ -1387,7 +2113,10 @@ router.get('/workspaces/:id/analytics/export', async (req: AuthRequest, res: Res
         console.error('[Enterprise] Export analytics error:', error);
         res.status(500).json({ message: error.message || 'Failed to export analytics' });
     }
-});
+};
+
+router.get('/workspaces/:id/analytics/export', exportWorkspaceAnalyticsHandler);
+router.get('/workspaces/:id/exports/analytics', exportWorkspaceAnalyticsHandler);
 
 // ============================================
 // Enterprise Profile / Settings

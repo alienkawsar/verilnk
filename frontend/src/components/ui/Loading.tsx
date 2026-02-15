@@ -22,3 +22,25 @@ export function TableSkeleton({ cols = 4, rows = 5 }: { cols?: number; rows?: nu
         </div>
     );
 }
+
+export function CardSkeleton({ count = 3 }: { count?: number }) {
+    return (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {Array.from({ length: count }).map((_, idx) => (
+                <div key={idx} className="surface-card rounded-lg p-4 border border-[var(--app-border)]">
+                    <Skeleton className="h-3 w-24 mb-3" />
+                    <Skeleton className="h-7 w-28" />
+                </div>
+            ))}
+        </div>
+    );
+}
+
+export function ChartSkeleton() {
+    return (
+        <div className="surface-card rounded-xl p-5 border border-[var(--app-border)]">
+            <Skeleton className="h-4 w-40 mb-4" />
+            <Skeleton className="h-64 w-full rounded-lg" />
+        </div>
+    );
+}

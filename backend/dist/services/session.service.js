@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.countRecentFailedLogins = exports.logSecurityEvent = exports.listActiveAdminSessions = exports.revokeSessionByJti = exports.revokeSession = exports.updateSessionExpiry = exports.touchSession = exports.getSessionByJti = exports.createSession = void 0;
+exports.countRecentFailedLogins = exports.logSecurityEvent = exports.revokeSessionForActorIds = exports.listActiveSessionsForActorIds = exports.listActiveAdminSessions = exports.revokeSessionByJti = exports.revokeSession = exports.updateSessionExpiry = exports.touchSession = exports.getSessionByJti = exports.createSession = void 0;
 const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const createSession = async (data) => {
@@ -78,6 +78,38 @@ const listActiveAdminSessions = async () => {
     }));
 };
 exports.listActiveAdminSessions = listActiveAdminSessions;
+const listActiveSessionsForActorIds = async (actorType, actorIds) => {
+    if (actorIds.length === 0)
+        return [];
+    const now = new Date();
+    return client_1.prisma.authSession.findMany({
+        where: {
+            actorType,
+            actorId: { in: actorIds },
+            revokedAt: null,
+            expiresAt: { gt: now }
+        },
+        orderBy: [{ lastSeenAt: 'desc' }, { issuedAt: 'desc' }]
+    });
+};
+exports.listActiveSessionsForActorIds = listActiveSessionsForActorIds;
+const revokeSessionForActorIds = async (actorType, actorIds, sessionId) => {
+    const session = await client_1.prisma.authSession.findFirst({
+        where: {
+            id: sessionId,
+            actorType,
+            actorId: { in: actorIds }
+        }
+    });
+    if (!session) {
+        throw new Error('Session not found');
+    }
+    return client_1.prisma.authSession.update({
+        where: { id: sessionId },
+        data: { revokedAt: new Date() }
+    });
+};
+exports.revokeSessionForActorIds = revokeSessionForActorIds;
 const logSecurityEvent = async (data) => {
     return client_1.prisma.securityEvent.create({
         data: {

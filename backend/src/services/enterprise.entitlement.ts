@@ -5,7 +5,7 @@
  * Used to gate access to API keys, multi-org features, and advanced analytics.
  */
 
-import { PlanType, PlanStatus, OrgStatus } from '@prisma/client';
+import { PlanType, PlanStatus, OrgStatus, WorkspaceMemberRole } from '@prisma/client';
 import { prisma } from '../db/client';
 import {
     DEFAULT_ENTERPRISE_QUOTAS,
@@ -39,7 +39,7 @@ export interface EnterpriseEntitlements {
 export interface WorkspaceEntitlementContext {
     workspaceId: string;
     userId: string;
-    userRole: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+    userRole: WorkspaceRoleInput;
     linkedOrganizations: Array<{
         organizationId: string;
         planType: PlanType;
@@ -81,6 +81,67 @@ const NO_ENTERPRISE_ENTITLEMENTS: EnterpriseEntitlements = {
 // ============================================
 // Core Functions
 // ============================================
+
+export type WorkspaceRoleCanonical = 'OWNER' | 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR';
+export type WorkspaceRoleLegacy = 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+export type WorkspaceRoleInput = WorkspaceRoleCanonical | WorkspaceRoleLegacy;
+
+export type WorkspacePermissionAction =
+    | 'create_workspace'
+    | 'delete_workspace'
+    | 'transfer_ownership'
+    | 'update_workspace'
+    | 'view_members'
+    | 'manage_members'
+    | 'view_organizations'
+    | 'manage_organizations'
+    | 'link_org'
+    | 'unlink_org'
+    | 'view_api_keys'
+    | 'create_api_key'
+    | 'rotate_api_key'
+    | 'revoke_api_key'
+    | 'copy_api_key'
+    | 'view_usage_logs'
+    | 'view_analytics'
+    | 'view_compliance_logs'
+    | 'export_analytics'
+    | 'export_usage'
+    | 'export_audit_logs'
+    | 'view_billing'
+    | 'manage_billing';
+
+export const normalizeWorkspaceRole = (
+    role: WorkspaceRoleInput | WorkspaceMemberRole | null | undefined
+): WorkspaceRoleCanonical | null => {
+    if (!role) return null;
+    if (role === 'EDITOR') return 'DEVELOPER';
+    if (role === 'VIEWER') return 'AUDITOR';
+    if (role === 'OWNER' || role === 'ADMIN' || role === 'ANALYST' || role === 'DEVELOPER' || role === 'AUDITOR') {
+        return role;
+    }
+    return null;
+};
+
+export const normalizeWorkspaceRoleForStorage = (
+    role: WorkspaceRoleInput | WorkspaceMemberRole
+): WorkspaceMemberRole => {
+    const normalized = normalizeWorkspaceRole(role);
+    switch (normalized) {
+        case 'DEVELOPER':
+            return WorkspaceMemberRole.EDITOR;
+        case 'AUDITOR':
+            return WorkspaceMemberRole.VIEWER;
+        case 'OWNER':
+            return WorkspaceMemberRole.OWNER;
+        case 'ADMIN':
+            return WorkspaceMemberRole.ADMIN;
+        case 'ANALYST':
+            return WorkspaceMemberRole.ANALYST;
+        default:
+            return WorkspaceMemberRole.VIEWER;
+    }
+};
 
 /**
  * Resolve enterprise entitlements based on plan type and persisted organization quota overrides.
@@ -240,35 +301,45 @@ export const getWorkspaceEntitlements = async (workspaceId: string): Promise<{
  * Check if user can perform a specific action on a workspace
  */
 export const canPerformWorkspaceAction = (
-    userRole: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER',
-    action: 'create_workspace' | 'delete_workspace' | 'transfer_ownership' |
-        'manage_members' | 'link_org' | 'unlink_org' |
-        'create_api_key' | 'revoke_api_key' | 'view_usage_logs' |
-        'view_analytics'
+    userRole: WorkspaceRoleInput | WorkspaceMemberRole,
+    action: WorkspacePermissionAction
 ): boolean => {
-    const permissions: Record<string, string[]> = {
-        // Only OWNER can delete or transfer
+    const normalizedRole = normalizeWorkspaceRole(userRole);
+    if (!normalizedRole) return false;
+
+    const permissions: Record<WorkspacePermissionAction, WorkspaceRoleCanonical[]> = {
+        create_workspace: ['OWNER', 'ADMIN'],
         delete_workspace: ['OWNER'],
         transfer_ownership: ['OWNER'],
+        update_workspace: ['OWNER', 'ADMIN'],
 
-        // OWNER + ADMIN can manage org linking and members
+        view_members: ['OWNER', 'ADMIN'],
         manage_members: ['OWNER', 'ADMIN'],
+
+        view_organizations: ['OWNER', 'ADMIN'],
+        manage_organizations: ['OWNER', 'ADMIN'],
         link_org: ['OWNER', 'ADMIN'],
         unlink_org: ['OWNER', 'ADMIN'],
 
-        // OWNER + ADMIN can manage API keys
+        view_api_keys: ['OWNER', 'ADMIN', 'DEVELOPER'],
         create_api_key: ['OWNER', 'ADMIN'],
+        rotate_api_key: ['OWNER', 'ADMIN'],
         revoke_api_key: ['OWNER', 'ADMIN'],
+        copy_api_key: ['OWNER', 'ADMIN', 'DEVELOPER'],
 
-        // Everyone can view logs and analytics (read-only)
-        view_usage_logs: ['OWNER', 'ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'],
-        view_analytics: ['OWNER', 'ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'],
+        view_usage_logs: ['OWNER', 'ADMIN', 'DEVELOPER'],
+        view_analytics: ['OWNER', 'ADMIN', 'ANALYST'],
+        view_compliance_logs: ['OWNER', 'ADMIN', 'DEVELOPER', 'AUDITOR'],
 
-        // Only OWNER + ADMIN can create workspaces (checked at org level)
-        create_workspace: ['OWNER', 'ADMIN']
+        export_analytics: ['OWNER', 'ADMIN', 'ANALYST'],
+        export_usage: ['OWNER', 'ADMIN'],
+        export_audit_logs: ['OWNER', 'ADMIN', 'AUDITOR'],
+
+        view_billing: ['OWNER'],
+        manage_billing: ['OWNER']
     };
 
-    return permissions[action]?.includes(userRole) ?? false;
+    return permissions[action].includes(normalizedRole);
 };
 
 /**
@@ -277,7 +348,7 @@ export const canPerformWorkspaceAction = (
 export const getUserWorkspaceRole = async (
     workspaceId: string,
     userId: string
-): Promise<'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER' | null> => {
+): Promise<WorkspaceRoleInput | null> => {
     const member = await prisma.workspaceMember.findUnique({
         where: {
             workspaceId_userId: { workspaceId, userId }

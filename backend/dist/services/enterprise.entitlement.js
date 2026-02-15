@@ -6,7 +6,7 @@
  * Used to gate access to API keys, multi-org features, and advanced analytics.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.validateScopes = exports.ALL_SCOPES = exports.API_SCOPES = exports.canCreateWorkspace = exports.getUserWorkspaceRole = exports.canPerformWorkspaceAction = exports.getWorkspaceEntitlements = exports.getUserEnterpriseAccess = exports.hasActiveEnterprisePlan = exports.resolveEnterprisePlanEntitlements = void 0;
+exports.validateScopes = exports.ALL_SCOPES = exports.API_SCOPES = exports.canCreateWorkspace = exports.getUserWorkspaceRole = exports.canPerformWorkspaceAction = exports.getWorkspaceEntitlements = exports.getUserEnterpriseAccess = exports.hasActiveEnterprisePlan = exports.resolveEnterprisePlanEntitlements = exports.normalizeWorkspaceRoleForStorage = exports.normalizeWorkspaceRole = void 0;
 const client_1 = require("@prisma/client");
 const client_2 = require("../db/client");
 const enterprise_quota_service_1 = require("./enterprise-quota.service");
@@ -37,9 +37,37 @@ const NO_ENTERPRISE_ENTITLEMENTS = {
     apiRateLimitPerMinute: 0,
     apiBurstLimit: 0
 };
-// ============================================
-// Core Functions
-// ============================================
+const normalizeWorkspaceRole = (role) => {
+    if (!role)
+        return null;
+    if (role === 'EDITOR')
+        return 'DEVELOPER';
+    if (role === 'VIEWER')
+        return 'AUDITOR';
+    if (role === 'OWNER' || role === 'ADMIN' || role === 'ANALYST' || role === 'DEVELOPER' || role === 'AUDITOR') {
+        return role;
+    }
+    return null;
+};
+exports.normalizeWorkspaceRole = normalizeWorkspaceRole;
+const normalizeWorkspaceRoleForStorage = (role) => {
+    const normalized = (0, exports.normalizeWorkspaceRole)(role);
+    switch (normalized) {
+        case 'DEVELOPER':
+            return client_1.WorkspaceMemberRole.EDITOR;
+        case 'AUDITOR':
+            return client_1.WorkspaceMemberRole.VIEWER;
+        case 'OWNER':
+            return client_1.WorkspaceMemberRole.OWNER;
+        case 'ADMIN':
+            return client_1.WorkspaceMemberRole.ADMIN;
+        case 'ANALYST':
+            return client_1.WorkspaceMemberRole.ANALYST;
+        default:
+            return client_1.WorkspaceMemberRole.VIEWER;
+    }
+};
+exports.normalizeWorkspaceRoleForStorage = normalizeWorkspaceRoleForStorage;
 /**
  * Resolve enterprise entitlements based on plan type and persisted organization quota overrides.
  */
@@ -166,24 +194,35 @@ exports.getWorkspaceEntitlements = getWorkspaceEntitlements;
  * Check if user can perform a specific action on a workspace
  */
 const canPerformWorkspaceAction = (userRole, action) => {
+    const normalizedRole = (0, exports.normalizeWorkspaceRole)(userRole);
+    if (!normalizedRole)
+        return false;
     const permissions = {
-        // Only OWNER can delete or transfer
+        create_workspace: ['OWNER', 'ADMIN'],
         delete_workspace: ['OWNER'],
         transfer_ownership: ['OWNER'],
-        // OWNER + ADMIN can manage org linking and members
+        update_workspace: ['OWNER', 'ADMIN'],
+        view_members: ['OWNER', 'ADMIN'],
         manage_members: ['OWNER', 'ADMIN'],
+        view_organizations: ['OWNER', 'ADMIN'],
+        manage_organizations: ['OWNER', 'ADMIN'],
         link_org: ['OWNER', 'ADMIN'],
         unlink_org: ['OWNER', 'ADMIN'],
-        // OWNER + ADMIN can manage API keys
+        view_api_keys: ['OWNER', 'ADMIN', 'DEVELOPER'],
         create_api_key: ['OWNER', 'ADMIN'],
+        rotate_api_key: ['OWNER', 'ADMIN'],
         revoke_api_key: ['OWNER', 'ADMIN'],
-        // Everyone can view logs and analytics (read-only)
-        view_usage_logs: ['OWNER', 'ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'],
-        view_analytics: ['OWNER', 'ADMIN', 'ANALYST', 'EDITOR', 'VIEWER'],
-        // Only OWNER + ADMIN can create workspaces (checked at org level)
-        create_workspace: ['OWNER', 'ADMIN']
+        copy_api_key: ['OWNER', 'ADMIN', 'DEVELOPER'],
+        view_usage_logs: ['OWNER', 'ADMIN', 'DEVELOPER'],
+        view_analytics: ['OWNER', 'ADMIN', 'ANALYST'],
+        view_compliance_logs: ['OWNER', 'ADMIN', 'DEVELOPER', 'AUDITOR'],
+        export_analytics: ['OWNER', 'ADMIN', 'ANALYST'],
+        export_usage: ['OWNER', 'ADMIN'],
+        export_audit_logs: ['OWNER', 'ADMIN', 'AUDITOR'],
+        view_billing: ['OWNER'],
+        manage_billing: ['OWNER']
     };
-    return permissions[action]?.includes(userRole) ?? false;
+    return permissions[action].includes(normalizedRole);
 };
 exports.canPerformWorkspaceAction = canPerformWorkspaceAction;
 /**

@@ -12,6 +12,9 @@ import { Request, Response, NextFunction } from 'express';
 import { hashApiKey, findApiKeyByHash, getApiKeyRateLimitOverride, isApiKeyValid, hasScope, touchApiKeyUsage, logApiUsage } from '../services/apikey.service';
 import { getWorkspaceEntitlements } from '../services/enterprise.entitlement';
 import { ApiKey } from '@prisma/client';
+import { prisma } from '../db/client';
+import * as auditService from '../services/audit.service';
+import { AuditActionType } from '@prisma/client';
 
 // ============================================
 // Types
@@ -35,6 +38,7 @@ interface RateLimitState {
 }
 
 const rateLimitMap = new Map<string, RateLimitState>();
+const workspaceRateLimitMap = new Map<string, RateLimitState>();
 
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;       // 1 minute
 const DEFAULT_RATE_LIMIT_MAX_REQUESTS = 100;   // fallback requests per minute
@@ -91,6 +95,77 @@ const checkRateLimit = (
         remaining: safeMinuteLimit - state.count,
         resetIn: RATE_LIMIT_WINDOW_MS - (now - state.windowStart)
     };
+};
+
+const checkWorkspaceRateLimit = (
+    workspaceId: string,
+    minuteLimit: number
+): { allowed: boolean; remaining: number; resetIn: number } => {
+    const now = Date.now();
+    let state = workspaceRateLimitMap.get(workspaceId);
+    const safeMinuteLimit = Math.max(1, minuteLimit || DEFAULT_RATE_LIMIT_MAX_REQUESTS);
+
+    if (!state || now - state.windowStart >= RATE_LIMIT_WINDOW_MS) {
+        state = {
+            count: 1,
+            windowStart: now,
+            burstCount: 1,
+            burstWindowStart: now
+        };
+        workspaceRateLimitMap.set(workspaceId, state);
+        return { allowed: true, remaining: safeMinuteLimit - 1, resetIn: RATE_LIMIT_WINDOW_MS };
+    }
+
+    state.count++;
+    if (state.count > safeMinuteLimit) {
+        const resetIn = RATE_LIMIT_WINDOW_MS - (now - state.windowStart);
+        return { allowed: false, remaining: 0, resetIn };
+    }
+
+    workspaceRateLimitMap.set(workspaceId, state);
+    return {
+        allowed: true,
+        remaining: safeMinuteLimit - state.count,
+        resetIn: RATE_LIMIT_WINDOW_MS - (now - state.windowStart)
+    };
+};
+
+const logRateLimitAudit = async (
+    req: Request,
+    workspaceId: string,
+    apiKeyId: string,
+    reason: 'API_KEY_LIMIT_EXCEEDED' | 'WORKSPACE_LIMIT_EXCEEDED'
+) => {
+    try {
+        let admin = null;
+        if (process.env.COMPLIANCE_SYSTEM_ADMIN_ID) {
+            admin = await prisma.admin.findUnique({
+                where: { id: process.env.COMPLIANCE_SYSTEM_ADMIN_ID },
+                select: { id: true, role: true }
+            });
+        }
+        if (!admin) {
+            admin = await prisma.admin.findFirst({
+                where: { role: 'SUPER_ADMIN' },
+                orderBy: { createdAt: 'asc' },
+                select: { id: true, role: true }
+            });
+        }
+        if (!admin) return;
+
+        await auditService.logAction({
+            adminId: admin.id,
+            actorRole: admin.role,
+            action: AuditActionType.OTHER,
+            entity: 'ApiUsageLimit',
+            targetId: apiKeyId,
+            details: `${reason} workspaceId=${workspaceId} apiKeyId=${apiKeyId} method=${req.method} endpoint=${req.path}`,
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent']
+        });
+    } catch {
+        // best-effort only
+    }
 };
 
 // ============================================
@@ -180,11 +255,41 @@ export const authenticateApiKey = async (
             userAgent: req.headers['user-agent'],
             latencyMs: Date.now() - startTime
         });
+        logRateLimitAudit(req, apiKey.workspaceId, apiKey.id, 'API_KEY_LIMIT_EXCEEDED').catch(() => void 0);
 
         res.status(429).json({
             error: 'Too Many Requests',
             message: 'Rate limit exceeded. Please slow down.',
             retryAfter: Math.ceil(rateLimit.resetIn / 1000)
+        });
+        return;
+    }
+
+    // Workspace aggregate cap (shared across keys)
+    const workspaceRateLimit = checkWorkspaceRateLimit(
+        apiKey.workspaceId,
+        workspaceMinuteLimit || minuteLimit
+    );
+    res.setHeader('X-Workspace-RateLimit-Limit', workspaceMinuteLimit || minuteLimit);
+    res.setHeader('X-Workspace-RateLimit-Remaining', workspaceRateLimit.remaining);
+    res.setHeader('X-Workspace-RateLimit-Reset', Math.ceil(workspaceRateLimit.resetIn / 1000));
+
+    if (!workspaceRateLimit.allowed) {
+        await logApiUsage({
+            apiKeyId: apiKey.id,
+            endpoint: req.path,
+            method: req.method,
+            statusCode: 429,
+            ip: req.ip,
+            userAgent: req.headers['user-agent'],
+            latencyMs: Date.now() - startTime
+        });
+        logRateLimitAudit(req, apiKey.workspaceId, apiKey.id, 'WORKSPACE_LIMIT_EXCEEDED').catch(() => void 0);
+
+        res.status(429).json({
+            error: 'Too Many Requests',
+            message: 'Workspace rate limit exceeded. Please slow down.',
+            retryAfter: Math.ceil(workspaceRateLimit.resetIn / 1000)
         });
         return;
     }
@@ -250,6 +355,11 @@ setInterval(() => {
     for (const [keyId, state] of rateLimitMap.entries()) {
         if (now - state.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
             rateLimitMap.delete(keyId);
+        }
+    }
+    for (const [workspaceId, state] of workspaceRateLimitMap.entries()) {
+        if (now - state.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+            workspaceRateLimitMap.delete(workspaceId);
         }
     }
 }, 60 * 1000); // Every minute

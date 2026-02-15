@@ -88,6 +88,47 @@ export const listActiveAdminSessions = async () => {
     }));
 };
 
+export const listActiveSessionsForActorIds = async (
+    actorType: SessionActorType,
+    actorIds: string[]
+) => {
+    if (actorIds.length === 0) return [];
+
+    const now = new Date();
+    return prisma.authSession.findMany({
+        where: {
+            actorType,
+            actorId: { in: actorIds },
+            revokedAt: null,
+            expiresAt: { gt: now }
+        },
+        orderBy: [{ lastSeenAt: 'desc' }, { issuedAt: 'desc' }]
+    });
+};
+
+export const revokeSessionForActorIds = async (
+    actorType: SessionActorType,
+    actorIds: string[],
+    sessionId: string
+) => {
+    const session = await prisma.authSession.findFirst({
+        where: {
+            id: sessionId,
+            actorType,
+            actorId: { in: actorIds }
+        }
+    });
+
+    if (!session) {
+        throw new Error('Session not found');
+    }
+
+    return prisma.authSession.update({
+        where: { id: sessionId },
+        data: { revokedAt: new Date() }
+    });
+};
+
 export const logSecurityEvent = async (data: {
     actorType: SessionActorType;
     actorId: string;

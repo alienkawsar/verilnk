@@ -276,6 +276,40 @@ export const updateMemberRole = async (
 };
 
 /**
+ * Update member role by workspace member id
+ */
+export const updateMemberRoleById = async (
+    workspaceId: string,
+    memberId: string,
+    newRole: WorkspaceMemberRole
+): Promise<{ member: WorkspaceMember; oldRole: WorkspaceMemberRole }> => {
+    const member = await prisma.workspaceMember.findFirst({
+        where: {
+            id: memberId,
+            workspaceId
+        }
+    });
+
+    if (!member) {
+        throw new Error('Member not found');
+    }
+
+    if (member.role === WorkspaceMemberRole.OWNER) {
+        throw new Error('Cannot change owner role. Use transfer ownership instead.');
+    }
+
+    const updatedMember = await prisma.workspaceMember.update({
+        where: { id: memberId },
+        data: { role: newRole }
+    });
+
+    return {
+        member: updatedMember,
+        oldRole: member.role
+    };
+};
+
+/**
  * Remove member from workspace
  */
 export const removeMember = async (workspaceId: string, userId: string): Promise<void> => {

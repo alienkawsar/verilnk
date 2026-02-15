@@ -54,8 +54,7 @@ const handleUserToken = async (decoded: any, req: AuthRequest, res: Response, ne
         return res.status(401).json({ message: 'Session expired. Please login again.' });
     }
 
-    const isOrg = Boolean(user.organizationId);
-    if (isOrg && decoded.jti) {
+    if (decoded.jti) {
         const existing = await getSessionByJti(decoded.jti);
         if (existing) {
             if (existing.revokedAt || existing.expiresAt <= now) {
@@ -70,7 +69,7 @@ const handleUserToken = async (decoded: any, req: AuthRequest, res: Response, ne
                 jti: decoded.jti,
                 actorType: SessionActorType.ORG,
                 actorId: user.id,
-                organizationId: user.organizationId,
+                organizationId: user.organizationId ?? null,
                 issuedAt: new Date(decoded.iat * 1000),
                 expiresAt: new Date(decoded.exp * 1000),
                 ipAddress: req.ip,

@@ -214,67 +214,69 @@ router.post('/login', strictRateLimiter, async (req, res) => {
         });
 
         const decoded = jwt.decode(token) as any;
-        if (isOrg && decoded?.exp && decoded?.iat) {
+        if (decoded?.exp && decoded?.iat) {
             const issuedAt = new Date(decoded.iat * 1000);
             const expiresAt = new Date(decoded.exp * 1000);
             const session = await createSession({
                 jti,
                 actorType: SessionActorType.ORG,
                 actorId: user.id,
-                organizationId: user.organizationId,
+                organizationId: user.organizationId ?? null,
                 issuedAt,
                 expiresAt,
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent']
             });
-            // Suspicious login: new device or new IP
-            const recent = await prisma.authSession.findFirst({
-                where: {
-                    actorType: SessionActorType.ORG,
-                    actorId: user.id,
-                    revokedAt: null,
-                    id: { not: session.id }
-                },
-                orderBy: { createdAt: 'desc' }
-            });
-            if (recent?.userAgent && recent.userAgent !== session.userAgent) {
-                await logSecurityEvent({
-                    actorType: SessionActorType.ORG,
-                    actorId: user.id,
-                    eventType: SecurityEventType.NEW_DEVICE,
-                    severity: SecurityEventSeverity.MEDIUM,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent']
+            if (isOrg) {
+                // Suspicious login: new device or new IP
+                const recent = await prisma.authSession.findFirst({
+                    where: {
+                        actorType: SessionActorType.ORG,
+                        actorId: user.id,
+                        revokedAt: null,
+                        id: { not: session.id }
+                    },
+                    orderBy: { createdAt: 'desc' }
                 });
-            }
-            if (recent?.ipAddress && recent.ipAddress !== session.ipAddress) {
-                await logSecurityEvent({
-                    actorType: SessionActorType.ORG,
-                    actorId: user.id,
-                    eventType: SecurityEventType.NEW_IP,
-                    severity: SecurityEventSeverity.MEDIUM,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent']
-                });
-            }
-            const activeCount = await prisma.authSession.count({
-                where: {
-                    actorType: SessionActorType.ORG,
-                    actorId: user.id,
-                    revokedAt: null,
-                    expiresAt: { gt: new Date() }
+                if (recent?.userAgent && recent.userAgent !== session.userAgent) {
+                    await logSecurityEvent({
+                        actorType: SessionActorType.ORG,
+                        actorId: user.id,
+                        eventType: SecurityEventType.NEW_DEVICE,
+                        severity: SecurityEventSeverity.MEDIUM,
+                        ipAddress: req.ip,
+                        userAgent: req.headers['user-agent']
+                    });
                 }
-            });
-            if (activeCount > 5) {
-                await logSecurityEvent({
-                    actorType: SessionActorType.ORG,
-                    actorId: user.id,
-                    eventType: SecurityEventType.MULTI_SESSION,
-                    severity: SecurityEventSeverity.MEDIUM,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent'],
-                    metadata: { activeCount }
+                if (recent?.ipAddress && recent.ipAddress !== session.ipAddress) {
+                    await logSecurityEvent({
+                        actorType: SessionActorType.ORG,
+                        actorId: user.id,
+                        eventType: SecurityEventType.NEW_IP,
+                        severity: SecurityEventSeverity.MEDIUM,
+                        ipAddress: req.ip,
+                        userAgent: req.headers['user-agent']
+                    });
+                }
+                const activeCount = await prisma.authSession.count({
+                    where: {
+                        actorType: SessionActorType.ORG,
+                        actorId: user.id,
+                        revokedAt: null,
+                        expiresAt: { gt: new Date() }
+                    }
                 });
+                if (activeCount > 5) {
+                    await logSecurityEvent({
+                        actorType: SessionActorType.ORG,
+                        actorId: user.id,
+                        eventType: SecurityEventType.MULTI_SESSION,
+                        severity: SecurityEventSeverity.MEDIUM,
+                        ipAddress: req.ip,
+                        userAgent: req.headers['user-agent'],
+                        metadata: { activeCount }
+                    });
+                }
             }
         }
 
@@ -606,23 +608,21 @@ router.post('/refresh', authenticateAny, async (req: any, res) => {
         }, sessionHours);
 
         const decodedNew = jwt.decode(token) as any;
-        if (isOrg) {
-            const expAt = new Date(decodedNew.exp * 1000);
-            const existing = await getSessionByJti(jti);
-            if (existing) {
-                await updateSessionExpiry(jti, expAt);
-            } else {
-                await createSession({
-                    jti,
-                    actorType: SessionActorType.ORG,
-                    actorId: user.id,
-                    organizationId: user.organizationId,
-                    issuedAt: new Date(decodedNew.iat * 1000),
-                    expiresAt: expAt,
-                    ipAddress: req.ip,
-                    userAgent: req.headers['user-agent']
-                });
-            }
+        const expAt = new Date(decodedNew.exp * 1000);
+        const existing = await getSessionByJti(jti);
+        if (existing) {
+            await updateSessionExpiry(jti, expAt);
+        } else {
+            await createSession({
+                jti,
+                actorType: SessionActorType.ORG,
+                actorId: user.id,
+                organizationId: user.organizationId ?? null,
+                issuedAt: new Date(decodedNew.iat * 1000),
+                expiresAt: expAt,
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent']
+            });
         }
 
         res.cookie('token', token, {

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter, useParams, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import {
@@ -12,7 +12,6 @@ import {
     Copy,
     Plus,
     Trash2,
-    MoreVertical,
     RefreshCw,
     Eye,
     EyeOff,
@@ -22,8 +21,8 @@ import {
     Clock,
     Link2,
     Download,
-    Globe,
-    ExternalLink
+    Shield,
+    Search
 } from 'lucide-react';
 import Link from 'next/link';
 import AnalyticsChart from '@/components/analytics/AnalyticsChart';
@@ -46,8 +45,12 @@ import {
     createApiKey,
     revokeApiKey,
     rotateApiKey,
+    logApiKeyCopy,
+    exportWorkspaceUsage,
+    exportWorkspaceAuditLogs,
     unlinkOrganization,
     removeMember,
+    updateMemberRole,
     createWorkspaceInvite,
     cancelWorkspaceInvite,
     exportEnterpriseAnalytics,
@@ -56,6 +59,9 @@ import {
     getEnterpriseAnalyticsSummary,
     getEnterpriseAnalyticsHeatmap,
     getEnterpriseAnalyticsCategories,
+    getWorkspaceAuditLogs,
+    getWorkspaceSessions,
+    revokeWorkspaceSession,
     formatLimitReachedMessage,
     isLimitReachedError,
     type EnterpriseAccess,
@@ -71,15 +77,31 @@ import {
     type EnterpriseAnalyticsDaily,
     type EnterpriseAnalyticsSummary,
     type EnterpriseAnalyticsHeatmap,
-    type EnterpriseAnalyticsCategories
+    type EnterpriseAnalyticsCategories,
+    type WorkspaceAuditLog,
+    type WorkspaceSession
 } from '@/lib/enterprise-api';
 import { fetchCategories, fetchCountries, fetchStates, uploadPublicOrgLogo } from '@/lib/api';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
 import { useToast } from '@/components/ui/Toast';
+import { useDebounce } from '@/hooks/useDebounce';
+import { TableSkeleton, CardSkeleton, ChartSkeleton } from '@/components/ui/Loading';
 
-type Tab = 'organizations' | 'members' | 'api-keys' | 'usage' | 'analytics';
+type Tab = 'organizations' | 'members' | 'api-keys' | 'usage' | 'analytics' | 'security';
 type LinkRequestMethod = 'EMAIL' | 'DOMAIN' | 'SLUG' | 'ORG_ID';
 type InviteMethod = 'EMAIL' | 'USER_ID';
+type WorkspaceRoleCanonical = 'OWNER' | 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR';
+
+const normalizeWorkspaceRole = (role: string | null | undefined): WorkspaceRoleCanonical | null => {
+    if (!role) return null;
+    const value = role.toUpperCase();
+    if (value === 'EDITOR') return 'DEVELOPER';
+    if (value === 'VIEWER') return 'AUDITOR';
+    if (value === 'OWNER' || value === 'ADMIN' || value === 'DEVELOPER' || value === 'ANALYST' || value === 'AUDITOR') {
+        return value;
+    }
+    return null;
+};
 
 const ORG_ID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -115,21 +137,6 @@ const LINK_REQUEST_METHOD_OPTIONS: Array<{
     }
 ];
 
-const roleBadgeClass = (role: string) => {
-    switch (role) {
-        case 'OWNER':
-            return 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300';
-        case 'ADMIN':
-            return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
-        case 'EDITOR':
-            return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
-        case 'ANALYST':
-            return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300';
-        default:
-            return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
-    }
-};
-
 const resolveTabFromQuery = (value: string | null): Tab => {
     switch (value) {
         case 'members':
@@ -140,6 +147,8 @@ const resolveTabFromQuery = (value: string | null): Tab => {
             return 'usage';
         case 'analytics':
             return 'analytics';
+        case 'security':
+            return 'security';
         default:
             return 'organizations';
     }
@@ -174,6 +183,15 @@ export default function WorkspacePage() {
     const [analyticsHeatmap, setAnalyticsHeatmap] = useState<EnterpriseAnalyticsHeatmap | null>(null);
     const [analyticsCategories, setAnalyticsCategories] = useState<EnterpriseAnalyticsCategories | null>(null);
     const [analyticsRange, setAnalyticsRange] = useState<'7' | '30' | '90'>('30');
+    const [auditLogs, setAuditLogs] = useState<WorkspaceAuditLog[]>([]);
+    const [auditPagination, setAuditPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
+    const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSession[]>([]);
+    const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
+    const [tabLoading, setTabLoading] = useState(false);
+    const [tabError, setTabError] = useState<string | null>(null);
+
+    const tabAbortRef = useRef<AbortController | null>(null);
+    const tabRequestIdRef = useRef(0);
 
     // Modals
     const [showCreateApiKeyModal, setShowCreateApiKeyModal] = useState(false);
@@ -218,10 +236,32 @@ export default function WorkspacePage() {
     const [showInviteModal, setShowInviteModal] = useState(false);
     const [inviteMethod, setInviteMethod] = useState<InviteMethod>('EMAIL');
     const [inviteIdentifier, setInviteIdentifier] = useState('');
-    const [inviteRole, setInviteRole] = useState<'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER'>('VIEWER');
+    const [inviteRole, setInviteRole] = useState<'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR'>('AUDITOR');
     const [creatingInvite, setCreatingInvite] = useState(false);
     const [inviteError, setInviteError] = useState<string | null>(null);
     const [latestInviteLink, setLatestInviteLink] = useState<string | null>(null);
+    const [updatingMemberRoles, setUpdatingMemberRoles] = useState<Record<string, boolean>>({});
+    const [apiKeySecrets, setApiKeySecrets] = useState<Record<string, string>>({});
+    const [exportingAnalyticsFormat, setExportingAnalyticsFormat] = useState<'csv' | 'pdf' | null>(null);
+    const [exportingUsage, setExportingUsage] = useState(false);
+    const [exportingAuditFormat, setExportingAuditFormat] = useState<'csv' | 'log' | null>(null);
+
+    const [organizationsSearch, setOrganizationsSearch] = useState('');
+    const [membersSearch, setMembersSearch] = useState('');
+    const [apiKeysSearch, setApiKeysSearch] = useState('');
+    const [usageSearch, setUsageSearch] = useState('');
+    const [auditActionFilter, setAuditActionFilter] = useState<string>('ALL');
+    const [auditStartDate, setAuditStartDate] = useState('');
+    const [auditEndDate, setAuditEndDate] = useState('');
+
+    const debouncedOrganizationsSearch = useDebounce(organizationsSearch, 300);
+    const debouncedMembersSearch = useDebounce(membersSearch, 300);
+    const debouncedApiKeysSearch = useDebounce(apiKeysSearch, 300);
+    const debouncedUsageSearch = useDebounce(usageSearch, 300);
+    const debouncedAnalyticsRange = useDebounce(analyticsRange, 250);
+    const debouncedAuditActionFilter = useDebounce(auditActionFilter, 300);
+    const debouncedAuditStartDate = useDebounce(auditStartDate, 300);
+    const debouncedAuditEndDate = useDebounce(auditEndDate, 300);
 
     const requestedTab = resolveTabFromQuery(searchParams.get('tab'));
     const workspaceOrgCount = useMemo(
@@ -236,7 +276,6 @@ export default function WorkspacePage() {
         () => apiKeys.length || workspace?._count?.apiKeys || 0,
         [apiKeys.length, workspace],
     );
-    const primaryLinkedOrganization = organizations[0]?.organization;
     const quotaLimits = enterpriseAccess?.entitlements;
     const quotaUsage = enterpriseAccess?.usage;
     const linkedOrgLimitReached = Boolean(
@@ -260,22 +299,207 @@ export default function WorkspacePage() {
     const selectedLinkMethod = LINK_REQUEST_METHOD_OPTIONS.find(
         (option) => option.value === requestLinkMethod
     ) || LINK_REQUEST_METHOD_OPTIONS[0];
+    const organizationsSearchNormalized = debouncedOrganizationsSearch.trim().toLowerCase();
+    const membersSearchNormalized = debouncedMembersSearch.trim().toLowerCase();
+    const apiKeysSearchNormalized = debouncedApiKeysSearch.trim().toLowerCase();
+    const usageSearchNormalized = debouncedUsageSearch.trim().toLowerCase();
+
+    const filteredOrganizations = useMemo(() => {
+        if (!organizationsSearchNormalized) return organizations;
+        return organizations.filter((link) => {
+            const name = link.organization?.name?.toLowerCase() || '';
+            const slug = link.organization?.slug?.toLowerCase() || '';
+            const planType = link.organization?.planType?.toLowerCase() || '';
+            return (
+                name.includes(organizationsSearchNormalized)
+                || slug.includes(organizationsSearchNormalized)
+                || planType.includes(organizationsSearchNormalized)
+            );
+        });
+    }, [organizations, organizationsSearchNormalized]);
+
+    const filteredLinkRequests = useMemo(() => {
+        if (!organizationsSearchNormalized) return linkRequests;
+        return linkRequests.filter((request) => {
+            const orgName = request.organization?.name?.toLowerCase() || '';
+            const identifier = request.requestIdentifier?.toLowerCase() || '';
+            const status = request.status?.toLowerCase() || '';
+            return (
+                orgName.includes(organizationsSearchNormalized)
+                || identifier.includes(organizationsSearchNormalized)
+                || status.includes(organizationsSearchNormalized)
+            );
+        });
+    }, [linkRequests, organizationsSearchNormalized]);
+
+    const filteredMembers = useMemo(() => {
+        if (!membersSearchNormalized) return members;
+        return members.filter((member) => {
+            const firstName = member.user?.firstName?.toLowerCase() || '';
+            const lastName = member.user?.lastName?.toLowerCase() || '';
+            const email = member.user?.email?.toLowerCase() || '';
+            const role = member.role.toLowerCase();
+            return (
+                firstName.includes(membersSearchNormalized)
+                || lastName.includes(membersSearchNormalized)
+                || email.includes(membersSearchNormalized)
+                || role.includes(membersSearchNormalized)
+            );
+        });
+    }, [members, membersSearchNormalized]);
+
+    const filteredInvites = useMemo(() => {
+        if (!membersSearchNormalized) return invites;
+        return invites.filter((invite) => {
+            const target = `${invite.invitedEmail || ''} ${invite.invitedUserId || ''}`.toLowerCase();
+            const role = invite.role.toLowerCase();
+            const status = invite.status.toLowerCase();
+            return (
+                target.includes(membersSearchNormalized)
+                || role.includes(membersSearchNormalized)
+                || status.includes(membersSearchNormalized)
+            );
+        });
+    }, [invites, membersSearchNormalized]);
+
+    const filteredApiKeys = useMemo(() => {
+        if (!apiKeysSearchNormalized) return apiKeys;
+        return apiKeys.filter((key) => {
+            const haystack = `${key.name} ${key.prefix} ${key.scopes.join(' ')}`.toLowerCase();
+            return haystack.includes(apiKeysSearchNormalized);
+        });
+    }, [apiKeys, apiKeysSearchNormalized]);
+
+    const filteredUsageLogs = useMemo(() => {
+        if (!usageSearchNormalized) return usageLogs;
+        return usageLogs.filter((log) => {
+            const haystack = `${log.method} ${log.endpoint} ${log.apiKeyName} ${log.statusCode}`.toLowerCase();
+            return haystack.includes(usageSearchNormalized);
+        });
+    }, [usageLogs, usageSearchNormalized]);
+
+    const normalizedUserRole = useMemo(() => normalizeWorkspaceRole(userRole), [userRole]);
+    const displayRole = (role: string | null | undefined) => normalizeWorkspaceRole(role) || role || 'UNKNOWN';
+    const permissionDenied = () => showToast("You don't have permission to do that.", 'error');
+
+    const permissions = useMemo(() => {
+        const base = {
+            viewOrganizations: false,
+            manageOrganizations: false,
+            viewMembers: false,
+            manageMembers: false,
+            viewApiKeys: false,
+            manageApiKeys: false,
+            copyApiKeys: false,
+            viewUsage: false,
+            exportUsage: false,
+            viewAnalytics: false,
+            exportAnalytics: false,
+            viewCompliance: false,
+            exportAuditLogs: false
+        };
+
+        switch (normalizedUserRole) {
+            case 'OWNER':
+                return { ...base,
+                    viewOrganizations: true, manageOrganizations: true,
+                    viewMembers: true, manageMembers: true,
+                    viewApiKeys: true, manageApiKeys: true, copyApiKeys: true,
+                    viewUsage: true, exportUsage: true,
+                    viewAnalytics: true, exportAnalytics: true,
+                    viewCompliance: true, exportAuditLogs: true
+                };
+            case 'ADMIN':
+                return { ...base,
+                    viewOrganizations: true, manageOrganizations: true,
+                    viewMembers: true, manageMembers: true,
+                    viewApiKeys: true, manageApiKeys: true, copyApiKeys: true,
+                    viewUsage: true, exportUsage: true,
+                    viewAnalytics: true, exportAnalytics: true,
+                    viewCompliance: true, exportAuditLogs: true
+                };
+            case 'DEVELOPER':
+                return { ...base,
+                    viewApiKeys: true, copyApiKeys: true,
+                    viewUsage: true,
+                    viewCompliance: true
+                };
+            case 'ANALYST':
+                return { ...base,
+                    viewAnalytics: true, exportAnalytics: true
+                };
+            case 'AUDITOR':
+                return { ...base,
+                    viewCompliance: true,
+                    exportAuditLogs: true
+                };
+            default:
+                return base;
+        }
+    }, [normalizedUserRole]);
+
+    const visibleTabs = useMemo(
+        () => [
+            permissions.viewOrganizations && { id: 'organizations' as Tab, label: 'Organizations', icon: Building2 },
+            permissions.viewMembers && { id: 'members' as Tab, label: 'Members', icon: Users },
+            permissions.viewApiKeys && { id: 'api-keys' as Tab, label: 'API Keys', icon: Key },
+            permissions.viewUsage && { id: 'usage' as Tab, label: 'Usage', icon: BarChart3 },
+            permissions.viewAnalytics && { id: 'analytics' as Tab, label: 'Analytics', icon: BarChart3 },
+            permissions.viewCompliance && { id: 'security' as Tab, label: 'Security', icon: Shield },
+        ].filter(Boolean) as Array<{ id: Tab; label: string; icon: typeof Building2 }>,
+        [permissions]
+    );
 
     useEffect(() => {
         loadWorkspace();
     }, [workspaceId]);
 
     useEffect(() => {
-        if (requestedTab !== activeTab) {
-            setActiveTab(requestedTab);
+        const allowedTabs = new Set(visibleTabs.map((tab) => tab.id));
+        if (allowedTabs.size === 0) return;
+
+        const nextTab = allowedTabs.has(requestedTab) ? requestedTab : visibleTabs[0].id;
+        if (nextTab !== activeTab) {
+            setActiveTab(nextTab);
         }
-    }, [requestedTab, activeTab]);
+    }, [requestedTab, activeTab, visibleTabs]);
 
     useEffect(() => {
-        if (workspace) {
-            loadTabData(activeTab);
+        const allowedTabs = new Set(visibleTabs.map((tab) => tab.id));
+        if (allowedTabs.size === 0) return;
+        if (!allowedTabs.has(activeTab)) {
+            const fallback = visibleTabs[0].id;
+            setActiveTab(fallback);
+            router.replace(`/enterprise/${workspaceId}?tab=${fallback}`, { scroll: false });
         }
-    }, [activeTab, workspace]);
+    }, [activeTab, visibleTabs, router, workspaceId]);
+
+    useEffect(() => {
+        if (!workspace) return;
+        const allowedTabs = new Set(visibleTabs.map((tab) => tab.id));
+        if (!allowedTabs.has(activeTab)) return;
+        loadTabData(activeTab);
+    }, [
+        activeTab,
+        workspace,
+        visibleTabs,
+        debouncedAnalyticsRange,
+        auditPagination.page,
+        auditPagination.limit,
+        debouncedAuditActionFilter,
+        debouncedAuditStartDate,
+        debouncedAuditEndDate
+    ]);
+
+    useEffect(() => {
+        setAuditPagination((prev) => ({ ...prev, page: 1 }));
+    }, [debouncedAuditActionFilter, debouncedAuditStartDate, debouncedAuditEndDate]);
+
+    useEffect(() => {
+        return () => {
+            tabAbortRef.current?.abort();
+        };
+    }, []);
 
     const resetCreateOrgForm = () => {
         if (orgLogoPreviewUrl) {
@@ -444,7 +668,6 @@ export default function WorkspacePage() {
             // Load initial tab data based on route query
             const initialTab = resolveTabFromQuery(searchParams.get('tab'));
             setActiveTab(initialTab);
-            await loadTabData(initialTab);
         } catch (err: any) {
             console.error('Error loading workspace:', err);
             setError(err.message || 'Failed to load workspace');
@@ -454,51 +677,67 @@ export default function WorkspacePage() {
     };
 
     const loadTabData = async (tab: Tab) => {
+        tabAbortRef.current?.abort();
+        const controller = new AbortController();
+        tabAbortRef.current = controller;
+        const requestId = ++tabRequestIdRef.current;
+        const isStale = () => requestId !== tabRequestIdRef.current || controller.signal.aborted;
+
         try {
+            setTabLoading(true);
+            setTabError(null);
+
             switch (tab) {
                 case 'organizations': {
                     const [{ organizations: orgs }, { requests }] = await Promise.all([
-                        getLinkedOrganizations(workspaceId),
-                        getWorkspaceLinkRequests(workspaceId),
+                        getLinkedOrganizations(workspaceId, { signal: controller.signal }),
+                        getWorkspaceLinkRequests(workspaceId, { signal: controller.signal }),
                     ]);
+                    if (isStale()) return;
                     setOrganizations(orgs);
                     setLinkRequests(requests || []);
                     break;
                 }
                 case 'members': {
                     const [{ members: mems }, { invites: wsInvites }] = await Promise.all([
-                        getWorkspaceMembers(workspaceId),
-                        getWorkspaceInvites(workspaceId),
+                        getWorkspaceMembers(workspaceId, { signal: controller.signal }),
+                        getWorkspaceInvites(workspaceId, { signal: controller.signal }),
                     ]);
+                    if (isStale()) return;
                     setMembers(mems);
                     setInvites(wsInvites);
                     break;
                 }
-                case 'api-keys':
+                case 'api-keys': {
                     const [{ apiKeys: keys }, { scopes: sc }] = await Promise.all([
-                        getApiKeys(workspaceId),
-                        getApiScopes()
+                        getApiKeys(workspaceId, { signal: controller.signal }),
+                        getApiScopes({ signal: controller.signal })
                     ]);
+                    if (isStale()) return;
                     setApiKeys(keys);
                     setScopes(sc);
                     break;
-                case 'usage':
+                }
+                case 'usage': {
                     const [stats, { logs }] = await Promise.all([
-                        getUsageStats(workspaceId, 30),
-                        getUsageLogs(workspaceId, { limit: 50 })
+                        getUsageStats(workspaceId, 30, { signal: controller.signal }),
+                        getUsageLogs(workspaceId, { limit: 50 }, { signal: controller.signal })
                     ]);
+                    if (isStale()) return;
                     setUsageStats(stats);
                     setUsageLogs(logs);
                     break;
+                }
                 case 'analytics': {
-                    const range = analyticsRange;
+                    const range = debouncedAnalyticsRange;
                     const [overview, summary, daily, heatmap, categories] = await Promise.all([
-                        getEnterpriseAnalytics(workspaceId, `${range}d`),
-                        getEnterpriseAnalyticsSummary(workspaceId, range),
-                        getEnterpriseAnalyticsDaily(workspaceId, range),
-                        getEnterpriseAnalyticsHeatmap(workspaceId, range),
-                        getEnterpriseAnalyticsCategories(workspaceId, range),
+                        getEnterpriseAnalytics(workspaceId, `${range}d`, { signal: controller.signal }),
+                        getEnterpriseAnalyticsSummary(workspaceId, range, { signal: controller.signal }),
+                        getEnterpriseAnalyticsDaily(workspaceId, range, { signal: controller.signal }),
+                        getEnterpriseAnalyticsHeatmap(workspaceId, range, { signal: controller.signal }),
+                        getEnterpriseAnalyticsCategories(workspaceId, range, { signal: controller.signal }),
                     ]);
+                    if (isStale()) return;
                     setAnalytics(overview);
                     setAnalyticsSummary(summary);
                     setAnalyticsDaily(daily);
@@ -506,13 +745,50 @@ export default function WorkspacePage() {
                     setAnalyticsCategories(categories);
                     break;
                 }
+                case 'security': {
+                    const [auditRes, sessionsRes] = await Promise.all([
+                        getWorkspaceAuditLogs(
+                            workspaceId,
+                            {
+                                page: auditPagination.page,
+                                limit: auditPagination.limit,
+                                action: debouncedAuditActionFilter !== 'ALL'
+                                    ? debouncedAuditActionFilter as WorkspaceAuditLog['action']
+                                    : undefined,
+                                startDate: debouncedAuditStartDate || undefined,
+                                endDate: debouncedAuditEndDate || undefined
+                            },
+                            { signal: controller.signal }
+                        ),
+                        getWorkspaceSessions(workspaceId, { signal: controller.signal })
+                    ]);
+                    if (isStale()) return;
+                    setAuditLogs(auditRes.logs || []);
+                    setAuditPagination(auditRes.pagination || { page: 1, limit: 20, total: 0, totalPages: 1 });
+                    setWorkspaceSessions(sessionsRes.sessions || []);
+                    break;
+                }
             }
         } catch (err: any) {
+            if (controller.signal.aborted || err?.name === 'AbortError') {
+                return;
+            }
             console.error(`Error loading ${tab} data:`, err);
+            const message = err?.message || `Failed to load ${tab} data`;
+            setTabError(message);
+            showToast(message, 'error');
+        } finally {
+            if (!isStale()) {
+                setTabLoading(false);
+            }
         }
     };
 
     const handleCreateApiKey = async () => {
+        if (!canManageApiKeys) {
+            permissionDenied();
+            return;
+        }
         if (!newApiKeyName.trim() || selectedScopes.length === 0) return;
         if (apiKeyLimitReached) {
             showQuotaLimitToast('API Keys', quotaUsage?.apiKeys, quotaLimits?.maxApiKeys);
@@ -523,6 +799,7 @@ export default function WorkspacePage() {
             setCreating(true);
             const result = await createApiKey(workspaceId, newApiKeyName.trim(), selectedScopes);
             setCreatedKey(result.plainTextKey);
+            setApiKeySecrets((prev) => ({ ...prev, [result.apiKey.id]: result.plainTextKey }));
             setNewApiKeyName('');
             setSelectedScopes([]);
             await loadTabData('api-keys');
@@ -536,10 +813,19 @@ export default function WorkspacePage() {
     };
 
     const handleRevokeKey = async (keyId: string) => {
+        if (!canManageApiKeys) {
+            permissionDenied();
+            return;
+        }
         if (!confirm('Are you sure you want to revoke this API key? This action cannot be undone.')) return;
 
         try {
             await revokeApiKey(workspaceId, keyId);
+            setApiKeySecrets((prev) => {
+                const next = { ...prev };
+                delete next[keyId];
+                return next;
+            });
             await loadTabData('api-keys');
         } catch (err: any) {
             setError(err.message || 'Failed to revoke API key');
@@ -547,18 +833,47 @@ export default function WorkspacePage() {
     };
 
     const handleRotateKey = async (keyId: string) => {
+        if (!canManageApiKeys) {
+            permissionDenied();
+            return;
+        }
         if (!confirm('Rotate this key? The old key will stop working immediately.')) return;
 
         try {
             const result = await rotateApiKey(workspaceId, keyId);
             setCreatedKey(result.plainTextKey);
+            setApiKeySecrets((prev) => ({ ...prev, [result.apiKey.id]: result.plainTextKey }));
             await loadTabData('api-keys');
         } catch (err: any) {
             setError(err.message || 'Failed to rotate API key');
         }
     };
 
+    const handleCopyActiveApiKey = async (keyId: string) => {
+        if (!permissions.copyApiKeys) {
+            permissionDenied();
+            return;
+        }
+        const secret = apiKeySecrets[keyId];
+        if (!secret) {
+            showToast('Key is only shown once on creation. Rotate to generate a new key.', 'error');
+            return;
+        }
+
+        try {
+            await logApiKeyCopy(workspaceId, keyId);
+            await copyToClipboard(secret);
+            showToast('API key copied', 'success');
+        } catch (err: any) {
+            showToast(err?.message || 'Failed to copy API key', 'error');
+        }
+    };
+
     const handleUnlinkOrg = async (orgId: string) => {
+        if (!canManageOrganizations) {
+            permissionDenied();
+            return;
+        }
         if (!confirm('Unlink this organization from the workspace?')) return;
 
         try {
@@ -581,6 +896,10 @@ export default function WorkspacePage() {
     };
 
     const handleCreateLinkRequest = async () => {
+        if (!canManageOrganizations) {
+            permissionDenied();
+            return;
+        }
         const identifierValue = requestIdentifier.trim();
         const validationError = validateLinkRequestIdentifier(identifierValue, requestLinkMethod);
         if (validationError) {
@@ -623,6 +942,10 @@ export default function WorkspacePage() {
     };
 
     const handleCancelLinkRequest = async (requestId: string) => {
+        if (!canManageOrganizations) {
+            permissionDenied();
+            return;
+        }
         if (!confirm('Cancel this link request?')) return;
         try {
             await cancelWorkspaceLinkRequest(requestId);
@@ -633,6 +956,10 @@ export default function WorkspacePage() {
     };
 
     const handleCreateOrganization = async () => {
+        if (!canManageOrganizations) {
+            permissionDenied();
+            return;
+        }
         if (linkedOrgLimitReached) {
             showQuotaLimitToast('Linked Organizations', quotaUsage?.linkedOrgs, quotaLimits?.maxLinkedOrgs);
             return;
@@ -687,6 +1014,10 @@ export default function WorkspacePage() {
     };
 
     const handleCreateInvite = async () => {
+        if (!canManage) {
+            permissionDenied();
+            return;
+        }
         const targetValue = inviteIdentifier.trim();
         if (!targetValue) return;
         if (memberLimitReached) {
@@ -726,6 +1057,10 @@ export default function WorkspacePage() {
     };
 
     const handleCancelInvite = async (inviteId: string) => {
+        if (!canManage) {
+            permissionDenied();
+            return;
+        }
         if (!confirm('Cancel this invite?')) return;
 
         try {
@@ -738,6 +1073,10 @@ export default function WorkspacePage() {
     };
 
     const handleRemoveMember = async (userId: string) => {
+        if (!canManage) {
+            permissionDenied();
+            return;
+        }
         if (!confirm('Remove this member from the workspace?')) return;
 
         try {
@@ -753,37 +1092,152 @@ export default function WorkspacePage() {
         await navigator.clipboard.writeText(text);
     };
 
-    const handleAnalyticsRangeChange = async (range: '7' | '30' | '90') => {
+    const handleAnalyticsRangeChange = (range: '7' | '30' | '90') => {
         setAnalyticsRange(range);
+    };
+
+    const handleRevokeSession = async (sessionId: string) => {
+        if (!canManage) {
+            permissionDenied();
+            return;
+        }
+        if (!confirm('Revoke this session? The user will need to login again on that device.')) return;
+
         try {
-            const [overview, summary, daily, heatmap, categories] = await Promise.all([
-                getEnterpriseAnalytics(workspaceId, `${range}d`),
-                getEnterpriseAnalyticsSummary(workspaceId, range),
-                getEnterpriseAnalyticsDaily(workspaceId, range),
-                getEnterpriseAnalyticsHeatmap(workspaceId, range),
-                getEnterpriseAnalyticsCategories(workspaceId, range),
-            ]);
-            setAnalytics(overview);
-            setAnalyticsSummary(summary);
-            setAnalyticsDaily(daily);
-            setAnalyticsHeatmap(heatmap);
-            setAnalyticsCategories(categories);
-        } catch {
-            setAnalytics(null);
-            setAnalyticsSummary(null);
-            setAnalyticsDaily(null);
-            setAnalyticsHeatmap(null);
-            setAnalyticsCategories(null);
+            setRevokingSessionId(sessionId);
+            await revokeWorkspaceSession(workspaceId, sessionId);
+            showToast('Session revoked', 'success');
+            await loadTabData('security');
+        } catch (err: any) {
+            showToast(err?.message || 'Failed to revoke session', 'error');
+        } finally {
+            setRevokingSessionId(null);
         }
     };
 
+    const handleUpdateMemberRole = async (
+        member: WorkspaceMember,
+        nextRole: 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR'
+    ) => {
+        if (!canManage) {
+            permissionDenied();
+            return;
+        }
+
+        const currentRole = displayRole(member.role);
+        if (currentRole === 'OWNER') {
+            showToast('Owner role cannot be changed here. Use transfer ownership instead.', 'error');
+            return;
+        }
+        if (currentRole === nextRole) return;
+
+        const previousRole = member.role;
+        setUpdatingMemberRoles((prev) => ({ ...prev, [member.id]: true }));
+        setMembers((prev) =>
+            prev.map((row) => (row.id === member.id ? { ...row, role: nextRole } : row))
+        );
+
+        try {
+            const { member: updatedMember } = await updateMemberRole(workspaceId, member.id, nextRole);
+            setMembers((prev) =>
+                prev.map((row) =>
+                    row.id === member.id ? { ...row, role: updatedMember.role } : row
+                )
+            );
+            showToast('Role updated', 'success');
+        } catch (err: any) {
+            setMembers((prev) =>
+                prev.map((row) => (row.id === member.id ? { ...row, role: previousRole } : row))
+            );
+            showToast(err?.message || 'Failed to update member role', 'error');
+        } finally {
+            setUpdatingMemberRoles((prev) => {
+                const next = { ...prev };
+                delete next[member.id];
+                return next;
+            });
+        }
+    };
+
+    const formatAuditActionLabel = (action: string) =>
+        action
+            .toLowerCase()
+            .split('_')
+            .map((token) => token.charAt(0).toUpperCase() + token.slice(1))
+            .join(' ');
+
+    const sanitizeAuditDetails = (details: string | null) =>
+        (details || '')
+            .replace(/\s*\|\s*actorType=[^|]*/g, '')
+            .replace(/\s*\|\s*actorUserId=[^|]*/g, '')
+            .replace(/\s*\|\s*actorWorkspaceId=[^|]*/g, '')
+            .replace(/\s*\|\s*actorWorkspaceRole=[^|]*/g, '')
+            .trim();
+
     const handleTabChange = (tab: Tab) => {
+        const allowed = visibleTabs.some((entry) => entry.id === tab);
+        if (!allowed) {
+            permissionDenied();
+            return;
+        }
         if (tab === activeTab) return;
         setActiveTab(tab);
         router.replace(`/enterprise/${workspaceId}?tab=${tab}`, { scroll: false });
     };
 
+    const handleExportAnalytics = async (format: 'csv' | 'pdf') => {
+        if (!canExportAnalytics) {
+            permissionDenied();
+            return;
+        }
+        try {
+            setExportingAnalyticsFormat(format);
+            await exportEnterpriseAnalytics(workspaceId, format, analyticsRange);
+            showToast(`${format.toUpperCase()} exported`, 'success');
+        } catch (err: any) {
+            showToast(err?.message || `Failed to export ${format.toUpperCase()}`, 'error');
+        } finally {
+            setExportingAnalyticsFormat(null);
+        }
+    };
+
+    const handleExportUsage = async () => {
+        if (!canExportUsage) {
+            permissionDenied();
+            return;
+        }
+        try {
+            setExportingUsage(true);
+            await exportWorkspaceUsage(workspaceId, '30');
+            showToast('Usage CSV exported', 'success');
+        } catch (err: any) {
+            showToast(err?.message || 'Failed to export usage', 'error');
+        } finally {
+            setExportingUsage(false);
+        }
+    };
+
+    const handleExportAuditLogs = async (format: 'csv' | 'log') => {
+        if (!canExportAuditLogs) {
+            permissionDenied();
+            return;
+        }
+        try {
+            setExportingAuditFormat(format);
+            await exportWorkspaceAuditLogs(workspaceId, format, analyticsRange);
+            showToast(`Audit logs exported (${format.toUpperCase()})`, 'success');
+        } catch (err: any) {
+            showToast(err?.message || 'Failed to export audit logs', 'error');
+        } finally {
+            setExportingAuditFormat(null);
+        }
+    };
+
     const openLinkOrganizationModal = () => {
+        if (!canManageOrganizations) {
+            permissionDenied();
+            return;
+        }
         if (linkedOrgLimitReached) {
             showQuotaLimitToast('Linked Organizations', quotaUsage?.linkedOrgs, quotaLimits?.maxLinkedOrgs);
             return;
@@ -793,7 +1247,12 @@ export default function WorkspacePage() {
         setShowRequestLinkModal(true);
     };
 
-    const canManage = ['OWNER', 'ADMIN'].includes(userRole);
+    const canManage = permissions.manageMembers;
+    const canManageOrganizations = permissions.manageOrganizations;
+    const canManageApiKeys = permissions.manageApiKeys;
+    const canExportAnalytics = permissions.exportAnalytics;
+    const canExportUsage = permissions.exportUsage;
+    const canExportAuditLogs = permissions.exportAuditLogs;
 
     if (loading) {
         return (
@@ -834,8 +1293,8 @@ export default function WorkspacePage() {
             <main className="min-h-screen bg-app pb-16">
                 <div className="w-full px-4 py-8">
                     <header className="mb-6">
-                        <div className="surface-card rounded-2xl p-5 md:p-6 border border-[var(--app-border)] shadow-lg">
-                            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+                        <div className="surface-card rounded-2xl p-4 md:p-5 border border-[var(--app-border)] shadow-lg">
+                            <div className="mb-3">
                                 <button
                                     onClick={() => router.push('/enterprise')}
                                     className="inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 focus-visible:ring-offset-white dark:focus-visible:ring-offset-slate-900 rounded-md px-1"
@@ -845,62 +1304,44 @@ export default function WorkspacePage() {
                                 </button>
                             </div>
 
-                            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5">
-                                <div className="flex items-start gap-4 min-w-0">
-                                    <div className="w-16 h-16 md:w-[72px] md:h-[72px] rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/20 border-2 border-white/20">
-                                        <Building2 className="w-7 h-7 md:w-8 md:h-8 text-white" />
+                            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className="w-12 h-12 md:w-14 md:h-14 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shrink-0 shadow-lg shadow-blue-500/20 border-2 border-white/20">
+                                        <Building2 className="w-6 h-6 text-white" />
                                     </div>
-                                    <div className="min-w-0 space-y-2">
-                                        <div className="flex items-center flex-wrap gap-2">
-                                            <h1 className="text-xl md:text-2xl font-semibold text-slate-900 dark:text-white truncate">
-                                                {workspace?.name}
-                                            </h1>
-                                            <span className={`px-2.5 py-1 rounded-full text-xs font-semibold ${roleBadgeClass(userRole)}`}>
-                                                {userRole || 'MEMBER'}
-                                            </span>
-                                            <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border ${workspace?.status === 'ACTIVE'
-                                                ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20'
-                                                : workspace?.status === 'SUSPENDED'
-                                                    ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20'
-                                                    : 'bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600/50'
-                                                }`}>
-                                                <CheckCircle2 className="w-3.5 h-3.5" />
-                                                {workspace?.status || 'ACTIVE'}
-                                            </span>
-                                        </div>
-
-                                        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-500 dark:text-slate-400">
-                                            <span className="inline-flex items-center gap-1.5">
-                                                <Building2 className="w-3.5 h-3.5" />
-                                                {workspaceOrgCount} orgs
-                                            </span>
-                                            <span className="inline-flex items-center gap-1.5">
-                                                <Users className="w-3.5 h-3.5" />
-                                                {workspaceMemberCount} members
-                                            </span>
-                                            <span className="inline-flex items-center gap-1.5">
-                                                <Key className="w-3.5 h-3.5" />
-                                                {workspaceApiKeyCount} API keys
-                                            </span>
-                                        </div>
-
-                                        <div className="flex items-center gap-1.5 text-sm text-slate-500 dark:text-slate-400">
-                                            <Globe className="w-4 h-4" />
-                                            {primaryLinkedOrganization ? (
-                                                <Link
-                                                    href={`/org/${primaryLinkedOrganization.slug || primaryLinkedOrganization.id}`}
-                                                    target="_blank"
-                                                    className="inline-flex items-center gap-1 hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
-                                                >
-                                                    {primaryLinkedOrganization.name}
-                                                    <ExternalLink className="w-3 h-3" />
-                                                </Link>
-                                            ) : (
-                                                <span>No linked website</span>
-                                            )}
-                                        </div>
+                                    <div className="min-w-0">
+                                        <h1 className="text-lg md:text-xl font-semibold text-slate-900 dark:text-white truncate">
+                                            {workspace?.name}
+                                        </h1>
+                                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                                            Your role: <span className="font-medium text-slate-700 dark:text-slate-200">{normalizedUserRole || 'MEMBER'}</span>
+                                        </p>
                                     </div>
                                 </div>
+                                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium border self-start sm:self-auto ${workspace?.status === 'ACTIVE'
+                                    ? 'bg-emerald-100 dark:bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20'
+                                    : workspace?.status === 'SUSPENDED'
+                                        ? 'bg-amber-100 dark:bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20'
+                                        : 'bg-slate-100 dark:bg-slate-700/50 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600/50'
+                                    }`}>
+                                    <CheckCircle2 className="w-3.5 h-3.5" />
+                                    {workspace?.status || 'ACTIVE'}
+                                </span>
+                            </div>
+
+                            <div className="mt-3 pt-3 border-t border-[var(--app-border)]/70 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+                                <span className="inline-flex items-center gap-1.5">
+                                    <Building2 className="w-3.5 h-3.5" />
+                                    Orgs: {workspaceOrgCount}
+                                </span>
+                                <span className="inline-flex items-center gap-1.5">
+                                    <Users className="w-3.5 h-3.5" />
+                                    Members: {workspaceMemberCount}
+                                </span>
+                                <span className="inline-flex items-center gap-1.5">
+                                    <Key className="w-3.5 h-3.5" />
+                                    API Keys: {workspaceApiKeyCount}
+                                </span>
                             </div>
                         </div>
                     </header>
@@ -922,13 +1363,7 @@ export default function WorkspacePage() {
                     <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden">
                         <div className="border-b border-slate-200 dark:border-slate-800">
                             <nav className="flex overflow-x-auto" aria-label="Workspace sections">
-                                {[
-                                    { id: 'organizations', label: 'Organizations', icon: Building2 },
-                                    { id: 'members', label: 'Members', icon: Users },
-                                    { id: 'api-keys', label: 'API Keys', icon: Key },
-                                    { id: 'usage', label: 'Usage', icon: BarChart3 },
-                                    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-                                ].map(({ id, label, icon: Icon }) => (
+                                {visibleTabs.map(({ id, label, icon: Icon }) => (
                                     <button
                                         key={id}
                                         type="button"
@@ -946,6 +1381,11 @@ export default function WorkspacePage() {
                         </div>
 
                         <div className="p-6">
+                            {tabError && (
+                                <div className="mb-4 rounded-lg border border-red-200 dark:border-red-900/60 bg-red-50/80 dark:bg-red-900/20 px-3 py-2 text-sm text-red-700 dark:text-red-300">
+                                    {tabError}
+                                </div>
+                            )}
                             {/* Organizations Tab */}
                             {activeTab === 'organizations' && (
                                 <div>
@@ -953,7 +1393,7 @@ export default function WorkspacePage() {
                                         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                                             Linked Organizations
                                         </h2>
-                                        {canManage && (
+                                        {canManageOrganizations && (
                                             <div className="flex items-center gap-2">
                                                 <button
                                                     onClick={openLinkOrganizationModal}
@@ -974,19 +1414,31 @@ export default function WorkspacePage() {
                                             </div>
                                         )}
                                     </div>
-                                    {canManage && linkedOrgLimitReached && (
+                                    <div className="mb-4 relative">
+                                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                        <input
+                                            type="text"
+                                            value={organizationsSearch}
+                                            onChange={(e) => setOrganizationsSearch(e.target.value)}
+                                            placeholder="Search organizations and link requests..."
+                                            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        />
+                                    </div>
+                                    {canManageOrganizations && linkedOrgLimitReached && (
                                         <p className="mb-4 text-xs text-amber-600 dark:text-amber-400">
                                             Limit reached: Linked Organizations ({quotaUsage?.linkedOrgs ?? 0}/{quotaLimits?.maxLinkedOrgs ?? 0})
                                         </p>
                                     )}
 
-                                    {organizations.length === 0 ? (
+                                    {tabLoading ? (
+                                        <TableSkeleton cols={4} rows={4} />
+                                    ) : workspaceOrgCount === 0 ? (
                                         <div className="py-12 text-center">
                                             <Building2 className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-4" />
                                             <p className="text-slate-600 dark:text-slate-400">
                                                 No linked organizations yet
                                             </p>
-                                            {canManage && (
+                                            {canManageOrganizations && (
                                                 <div className="mt-4 flex items-center justify-center gap-2">
                                                     <button
                                                         onClick={openLinkOrganizationModal}
@@ -1006,15 +1458,19 @@ export default function WorkspacePage() {
                                                     </button>
                                                 </div>
                                             )}
-                                            {canManage && linkedOrgLimitReached && (
+                                            {canManageOrganizations && linkedOrgLimitReached && (
                                                 <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
                                                     Limit reached: Linked Organizations ({quotaUsage?.linkedOrgs ?? 0}/{quotaLimits?.maxLinkedOrgs ?? 0})
                                                 </p>
                                             )}
                                         </div>
+                                    ) : filteredOrganizations.length === 0 ? (
+                                        <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                                            No organizations match your search.
+                                        </div>
                                     ) : (
                                         <div className="space-y-3">
-                                            {organizations.map((link) => (
+                                            {filteredOrganizations.map((link) => (
                                                 <div
                                                     key={link.id}
                                                     className="flex items-center justify-between p-4 surface-card rounded-lg"
@@ -1027,7 +1483,7 @@ export default function WorkspacePage() {
                                                             {link.organization.slug} • {link.organization.planType}
                                                         </p>
                                                     </div>
-                                                    {canManage && (
+                                                    {canManageOrganizations && (
                                                         <button
                                                             onClick={() => handleUnlinkOrg(link.organizationId)}
                                                             className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
@@ -1045,13 +1501,19 @@ export default function WorkspacePage() {
                                         <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-3">
                                             Link Requests
                                         </h3>
-                                        {linkRequests.length === 0 ? (
+                                        {tabLoading ? (
+                                            <TableSkeleton cols={3} rows={3} />
+                                        ) : linkRequests.length === 0 ? (
                                             <p className="text-sm text-slate-500 dark:text-slate-400">
                                                 No link requests yet.
                                             </p>
+                                        ) : filteredLinkRequests.length === 0 ? (
+                                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                No link requests match your search.
+                                            </p>
                                         ) : (
                                             <div className="space-y-2">
-                                                {linkRequests.map((request) => (
+                                                {filteredLinkRequests.map((request) => (
                                                     <div
                                                         key={request.id}
                                                         className="surface-card rounded-lg p-3 flex items-center justify-between gap-4"
@@ -1064,7 +1526,7 @@ export default function WorkspacePage() {
                                                                 {request.status} • Requested {new Date(request.createdAt).toLocaleDateString()}
                                                             </p>
                                                         </div>
-                                                        {canManage &&
+                                                        {canManageOrganizations &&
                                                             (request.status === 'PENDING' ||
                                                                 request.status ===
                                                                     'PENDING_APPROVAL') && (
@@ -1096,7 +1558,7 @@ export default function WorkspacePage() {
                                                     setShowInviteModal(true);
                                                     setInviteMethod('EMAIL');
                                                     setInviteIdentifier('');
-                                                    setInviteRole('VIEWER');
+                                                    setInviteRole('AUDITOR');
                                                     setInviteError(null);
                                                     setLatestInviteLink(null);
                                                 }}
@@ -1108,22 +1570,48 @@ export default function WorkspacePage() {
                                             </button>
                                         )}
                                     </div>
+                                    <div className="mb-4 relative">
+                                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                        <input
+                                            type="text"
+                                            value={membersSearch}
+                                            onChange={(e) => setMembersSearch(e.target.value)}
+                                            placeholder="Search members and invites..."
+                                            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        />
+                                    </div>
                                     {canManage && memberLimitReached && (
                                         <p className="mb-4 text-xs text-amber-600 dark:text-amber-400">
                                             Limit reached: Members ({quotaUsage?.members ?? 0}/{quotaLimits?.maxMembers ?? 0})
                                         </p>
                                     )}
 
-                                    {members.length === 0 ? (
+                                    {tabLoading ? (
+                                        <TableSkeleton cols={4} rows={4} />
+                                    ) : members.length === 0 ? (
                                         <div className="py-12 text-center">
                                             <Users className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-4" />
                                             <p className="text-slate-600 dark:text-slate-400">
                                                 No members yet
                                             </p>
                                         </div>
+                                    ) : filteredMembers.length === 0 ? (
+                                        <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                                            No members match your search.
+                                        </div>
                                     ) : (
                                         <div className="space-y-3">
-                                            {members.map((member) => (
+                                            {filteredMembers.map((member) => {
+                                                const memberRole = displayRole(member.role);
+                                                const canEditRole =
+                                                    canManage
+                                                    && memberRole !== 'OWNER'
+                                                    && (memberRole === 'ADMIN'
+                                                        || memberRole === 'DEVELOPER'
+                                                        || memberRole === 'ANALYST'
+                                                        || memberRole === 'AUDITOR');
+                                                const roleUpdating = Boolean(updatingMemberRoles[member.id]);
+                                                return (
                                                 <div
                                                     key={member.id}
                                                     className="flex items-center justify-between p-4 surface-card rounded-lg"
@@ -1144,18 +1632,38 @@ export default function WorkspacePage() {
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-2">
-                                                        <span className={`px-2.5 py-1 text-xs font-medium rounded ${member.role === 'OWNER'
-                                                            ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
-                                                            : member.role === 'ADMIN'
-                                                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
-                                                                : 'bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-400'
-                                                            }`}>
-                                                            {member.role}
-                                                        </span>
-                                                        {canManage && member.role !== 'OWNER' && (
+                                                        {canEditRole ? (
+                                                            <select
+                                                                value={memberRole}
+                                                                onChange={(e) =>
+                                                                    handleUpdateMemberRole(
+                                                                        member,
+                                                                        e.target.value as 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR'
+                                                                    )
+                                                                }
+                                                                disabled={roleUpdating}
+                                                                className="px-2.5 py-1 text-xs font-medium rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            >
+                                                                <option value="ADMIN">ADMIN</option>
+                                                                <option value="DEVELOPER">DEVELOPER</option>
+                                                                <option value="ANALYST">ANALYST</option>
+                                                                <option value="AUDITOR">AUDITOR</option>
+                                                            </select>
+                                                        ) : (
+                                                            <span className={`px-2.5 py-1 text-xs font-medium rounded ${memberRole === 'OWNER'
+                                                                ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400'
+                                                                : memberRole === 'ADMIN'
+                                                                    ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                                                                    : 'bg-slate-100 text-slate-800 dark:bg-slate-900/30 dark:text-slate-400'
+                                                                }`}>
+                                                                {memberRole}
+                                                            </span>
+                                                        )}
+                                                        {canManage && memberRole !== 'OWNER' && (
                                                             <button
                                                                 onClick={() => handleRemoveMember(member.userId)}
-                                                                className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                                                                disabled={roleUpdating}
+                                                                className="p-1 text-slate-400 hover:text-red-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                                                 title="Remove member"
                                                             >
                                                                 <Trash2 className="w-4 h-4" />
@@ -1163,7 +1671,7 @@ export default function WorkspacePage() {
                                                         )}
                                                     </div>
                                                 </div>
-                                            ))}
+                                            )})}
                                         </div>
                                     )}
 
@@ -1171,8 +1679,14 @@ export default function WorkspacePage() {
                                         <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-3">
                                             Pending & Recent Invites
                                         </h3>
-                                        {invites.length === 0 ? (
+                                        {tabLoading ? (
+                                            <TableSkeleton cols={7} rows={3} />
+                                        ) : invites.length === 0 ? (
                                             <p className="text-sm text-slate-500 dark:text-slate-400">No invites yet.</p>
+                                        ) : filteredInvites.length === 0 ? (
+                                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                No invites match your search.
+                                            </p>
                                         ) : (
                                             <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
                                                 <table className="min-w-full text-sm">
@@ -1188,12 +1702,12 @@ export default function WorkspacePage() {
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                                                        {invites.map((invite) => (
+                                                        {filteredInvites.map((invite) => (
                                                             <tr key={invite.id} className="bg-white dark:bg-slate-950/20">
                                                                 <td className="px-3 py-2 text-slate-900 dark:text-white">
                                                                     {invite.invitedEmail || invite.invitedUserId || 'Unknown'}
                                                                 </td>
-                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{invite.role}</td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">{displayRole(invite.role)}</td>
                                                                 <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
                                                                     {invite.createdByUser?.name || invite.createdByUser?.email || invite.createdBy || '-'}
                                                                 </td>
@@ -1243,7 +1757,7 @@ export default function WorkspacePage() {
                                         <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
                                             API Keys
                                         </h2>
-                                        {canManage && (
+                                        {canManageApiKeys && (
                                             <button
                                                 onClick={() => setShowCreateApiKeyModal(true)}
                                                 disabled={apiKeyLimitReached}
@@ -1254,22 +1768,38 @@ export default function WorkspacePage() {
                                             </button>
                                         )}
                                     </div>
-                                    {canManage && apiKeyLimitReached && (
+                                    <div className="mb-4 relative">
+                                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                        <input
+                                            type="text"
+                                            value={apiKeysSearch}
+                                            onChange={(e) => setApiKeysSearch(e.target.value)}
+                                            placeholder="Search API keys by name, prefix, or scope..."
+                                            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        />
+                                    </div>
+                                    {canManageApiKeys && apiKeyLimitReached && (
                                         <p className="mb-4 text-xs text-amber-600 dark:text-amber-400">
                                             Limit reached: API Keys ({quotaUsage?.apiKeys ?? 0}/{quotaLimits?.maxApiKeys ?? 0})
                                         </p>
                                     )}
 
-                                    {apiKeys.length === 0 ? (
+                                    {tabLoading ? (
+                                        <TableSkeleton cols={4} rows={4} />
+                                    ) : apiKeys.length === 0 ? (
                                         <div className="py-12 text-center">
                                             <Key className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-4" />
                                             <p className="text-slate-600 dark:text-slate-400">
                                                 No API keys created yet
                                             </p>
                                         </div>
+                                    ) : filteredApiKeys.length === 0 ? (
+                                        <div className="py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                                            No API keys match your search.
+                                        </div>
                                     ) : (
                                         <div className="space-y-3">
-                                            {apiKeys.map((key) => (
+                                            {filteredApiKeys.map((key) => (
                                                 <div
                                                     key={key.id}
                                                     className={`p-4 surface-card rounded-lg ${key.isRevoked ? 'opacity-60' : ''
@@ -1286,22 +1816,41 @@ export default function WorkspacePage() {
                                                                 </span>
                                                             )}
                                                         </div>
-                                                        {!key.isRevoked && canManage && (
+                                                        {!key.isRevoked && (permissions.copyApiKeys || canManageApiKeys) && (
                                                             <div className="flex items-center gap-1">
-                                                                <button
-                                                                    onClick={() => handleRotateKey(key.id)}
-                                                                    className="p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
-                                                                    title="Rotate"
-                                                                >
-                                                                    <RefreshCw className="w-4 h-4" />
-                                                                </button>
-                                                                <button
-                                                                    onClick={() => handleRevokeKey(key.id)}
-                                                                    className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
-                                                                    title="Revoke"
-                                                                >
-                                                                    <Trash2 className="w-4 h-4" />
-                                                                </button>
+                                                                {permissions.copyApiKeys && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => handleCopyActiveApiKey(key.id)}
+                                                                        disabled={!apiKeySecrets[key.id]}
+                                                                        className="p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                        title={apiKeySecrets[key.id]
+                                                                            ? 'Copy key'
+                                                                            : 'Key is only shown once on creation. Rotate to generate a new key.'}
+                                                                    >
+                                                                        <Copy className="w-4 h-4" />
+                                                                    </button>
+                                                                )}
+                                                                {canManageApiKeys && (
+                                                                    <>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleRotateKey(key.id)}
+                                                                            className="p-2 text-slate-500 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                                                                            title="Rotate"
+                                                                        >
+                                                                            <RefreshCw className="w-4 h-4" />
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleRevokeKey(key.id)}
+                                                                            className="p-2 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"
+                                                                            title="Revoke"
+                                                                        >
+                                                                            <Trash2 className="w-4 h-4" />
+                                                                        </button>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                         )}
                                                     </div>
@@ -1334,11 +1883,43 @@ export default function WorkspacePage() {
                             {/* Usage Tab */}
                             {activeTab === 'usage' && (
                                 <div>
-                                    <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-6">
-                                        API Usage (Last 30 Days)
-                                    </h2>
+                                    <div className="flex items-center justify-between mb-6 gap-3">
+                                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                                            API Usage (Last 30 Days)
+                                        </h2>
+                                        {canExportUsage && (
+                                            <button
+                                                type="button"
+                                                onClick={handleExportUsage}
+                                                disabled={exportingUsage}
+                                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs border border-[var(--app-border)] rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {exportingUsage ? (
+                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                    <Download className="w-3.5 h-3.5" />
+                                                )}
+                                                Export CSV
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="mb-4 relative">
+                                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                        <input
+                                            type="text"
+                                            value={usageSearch}
+                                            onChange={(e) => setUsageSearch(e.target.value)}
+                                            placeholder="Search API usage logs..."
+                                            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                        />
+                                    </div>
 
-                                    {usageStats && (
+                                    {tabLoading ? (
+                                        <div className="space-y-4">
+                                            <CardSkeleton count={3} />
+                                            <TableSkeleton cols={4} rows={6} />
+                                        </div>
+                                    ) : usageStats ? (
                                         <>
                                             {/* Stats Cards */}
                                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
@@ -1376,9 +1957,13 @@ export default function WorkspacePage() {
                                                 <p className="text-slate-600 dark:text-slate-400 text-center py-8">
                                                     No API calls recorded yet
                                                 </p>
+                                            ) : filteredUsageLogs.length === 0 ? (
+                                                <p className="text-slate-600 dark:text-slate-400 text-center py-8">
+                                                    No API usage logs match your search
+                                                </p>
                                             ) : (
                                                 <div className="space-y-2">
-                                                    {usageLogs.slice(0, 10).map((log) => (
+                                                    {filteredUsageLogs.slice(0, 10).map((log) => (
                                                         <div
                                                             key={log.id}
                                                             className="flex items-center justify-between p-3 surface-card rounded-lg text-sm"
@@ -1402,6 +1987,10 @@ export default function WorkspacePage() {
                                                 </div>
                                             )}
                                         </>
+                                    ) : (
+                                        <p className="text-slate-600 dark:text-slate-400 text-center py-8">
+                                            No data yet
+                                        </p>
                                     )}
                                 </div>
                             )}
@@ -1423,30 +2012,55 @@ export default function WorkspacePage() {
                                                 <option value="30">Last 30 days</option>
                                                 <option value="90">Last 90 days</option>
                                             </select>
-                                            <button
-                                                onClick={() => exportEnterpriseAnalytics(workspaceId, 'csv', analyticsRange).catch((err) => setError(err.message || 'Failed to export CSV'))}
-                                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs border border-[var(--app-border)] rounded-lg"
-                                            >
-                                                <Download className="w-3.5 h-3.5" />
-                                                CSV
-                                            </button>
-                                            <button
-                                                onClick={() => exportEnterpriseAnalytics(workspaceId, 'pdf', analyticsRange).catch((err) => setError(err.message || 'Failed to export PDF'))}
-                                                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs border border-[var(--app-border)] rounded-lg"
-                                            >
-                                                <Download className="w-3.5 h-3.5" />
-                                                PDF
-                                            </button>
+                                            {canExportAnalytics && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleExportAnalytics('csv')}
+                                                    disabled={Boolean(exportingAnalyticsFormat)}
+                                                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs border border-[var(--app-border)] rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {exportingAnalyticsFormat === 'csv' ? (
+                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    ) : (
+                                                        <Download className="w-3.5 h-3.5" />
+                                                    )}
+                                                    CSV
+                                                </button>
+                                            )}
+                                            {canExportAnalytics && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleExportAnalytics('pdf')}
+                                                    disabled={Boolean(exportingAnalyticsFormat)}
+                                                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs border border-[var(--app-border)] rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                                >
+                                                    {exportingAnalyticsFormat === 'pdf' ? (
+                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                    ) : (
+                                                        <Download className="w-3.5 h-3.5" />
+                                                    )}
+                                                    PDF
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
 
-                                    {organizations.length === 0 ? (
+                                    {tabLoading ? (
+                                        <div className="space-y-4">
+                                            <CardSkeleton count={3} />
+                                            <ChartSkeleton />
+                                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                                <ChartSkeleton />
+                                                <ChartSkeleton />
+                                            </div>
+                                        </div>
+                                    ) : workspaceOrgCount === 0 ? (
                                         <div className="py-12 text-center">
                                             <Building2 className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto mb-4" />
                                             <p className="text-slate-700 dark:text-slate-300 mb-2">
                                                 No linked organizations yet
                                             </p>
-                                            {canManage && (
+                                            {canManageOrganizations && (
                                                 <button
                                                     onClick={openLinkOrganizationModal}
                                                     disabled={linkedOrgLimitReached}
@@ -1565,6 +2179,276 @@ export default function WorkspacePage() {
                                             </button>
                                         </div>
                                     )}
+                                </div>
+                            )}
+
+                            {/* Security Tab */}
+                            {activeTab === 'security' && (
+                                <div className="space-y-8">
+                                    <section>
+                                        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 mb-4">
+                                            <div>
+                                                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
+                                                    Audit Logs
+                                                </h2>
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">
+                                                    Critical workspace actions from the last 30 days by default.
+                                                </p>
+                                            </div>
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                {canExportAuditLogs && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleExportAuditLogs('csv')}
+                                                        disabled={Boolean(exportingAuditFormat)}
+                                                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border border-[var(--app-border)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800"
+                                                    >
+                                                        {exportingAuditFormat === 'csv' ? (
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        ) : (
+                                                            <Download className="w-3.5 h-3.5" />
+                                                        )}
+                                                        Export CSV
+                                                    </button>
+                                                )}
+                                                {canExportAuditLogs && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleExportAuditLogs('log')}
+                                                        disabled={Boolean(exportingAuditFormat)}
+                                                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border border-[var(--app-border)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800"
+                                                    >
+                                                        {exportingAuditFormat === 'log' ? (
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        ) : (
+                                                            <Download className="w-3.5 h-3.5" />
+                                                        )}
+                                                        Export .log
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={() => loadTabData('security')}
+                                                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm rounded-lg border border-[var(--app-border)] hover:bg-slate-50 dark:hover:bg-slate-800"
+                                                >
+                                                    <RefreshCw className="w-4 h-4" />
+                                                    Refresh
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        <div className="surface-card rounded-xl border border-[var(--app-border)] p-4 mb-4">
+                                            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                                                <div className="md:col-span-2">
+                                                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                                        Action
+                                                    </label>
+                                                    <select
+                                                        value={auditActionFilter}
+                                                        onChange={(e) => setAuditActionFilter(e.target.value)}
+                                                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                                    >
+                                                        <option value="ALL">All actions</option>
+                                                        <option value="CREATE">Create</option>
+                                                        <option value="UPDATE">Update</option>
+                                                        <option value="DELETE">Delete</option>
+                                                        <option value="APPROVE">Approve</option>
+                                                        <option value="REJECT">Reject</option>
+                                                        <option value="LOGIN">Login</option>
+                                                        <option value="SUSPEND">Suspend</option>
+                                                        <option value="OTHER">Other</option>
+                                                    </select>
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                                        Start date
+                                                    </label>
+                                                    <input
+                                                        type="date"
+                                                        value={auditStartDate}
+                                                        onChange={(e) => setAuditStartDate(e.target.value)}
+                                                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                                    />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                                                        End date
+                                                    </label>
+                                                    <input
+                                                        type="date"
+                                                        value={auditEndDate}
+                                                        onChange={(e) => setAuditEndDate(e.target.value)}
+                                                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {tabLoading ? (
+                                            <TableSkeleton cols={5} rows={6} />
+                                        ) : auditLogs.length === 0 ? (
+                                            <div className="surface-card rounded-xl border border-[var(--app-border)] p-6 text-sm text-slate-500 dark:text-slate-400">
+                                                No audit logs found for this filter.
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                                                    <table className="min-w-full text-sm">
+                                                        <thead className="bg-slate-50 dark:bg-slate-900/60 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                            <tr>
+                                                                <th className="px-3 py-2 text-left font-medium">When</th>
+                                                                <th className="px-3 py-2 text-left font-medium">Action</th>
+                                                                <th className="px-3 py-2 text-left font-medium">Entity</th>
+                                                                <th className="px-3 py-2 text-left font-medium">Actor</th>
+                                                                <th className="px-3 py-2 text-left font-medium">Details</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                                            {auditLogs.map((log) => (
+                                                                <tr key={log.id} className="bg-white dark:bg-slate-950/20 align-top">
+                                                                    <td className="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                                                                        {new Date(log.createdAt).toLocaleString()}
+                                                                    </td>
+                                                                    <td className="px-3 py-2">
+                                                                        <span className="inline-flex px-2 py-0.5 rounded text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                                                            {formatAuditActionLabel(log.action)}
+                                                                        </span>
+                                                                    </td>
+                                                                    <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                        {log.entity || '-'}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                        {log.actor?.type === 'USER' ? (
+                                                                            <span>
+                                                                                {log.actor.label} · {log.actor.workspaceRole || 'Former member'}
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="inline-flex items-center gap-1.5">
+                                                                                <span>
+                                                                                    {log.actor?.label
+                                                                                        || (log.admin
+                                                                                            ? `${log.admin.firstName || ''} ${log.admin.lastName || ''}`.trim() || log.admin.email
+                                                                                            : 'Super Admin')}
+                                                                                </span>
+                                                                                <span className="inline-flex px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                                                                                    ADMIN
+                                                                                </span>
+                                                                            </span>
+                                                                        )}
+                                                                    </td>
+                                                                    <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                        <div className="max-w-xl truncate" title={sanitizeAuditDetails(log.details)}>
+                                                                            {sanitizeAuditDetails(log.details) || '-'}
+                                                                        </div>
+                                                                    </td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                                <div className="mt-3 flex items-center justify-between text-sm">
+                                                    <p className="text-slate-500 dark:text-slate-400">
+                                                        Page {auditPagination.page} of {Math.max(1, auditPagination.totalPages)}
+                                                    </p>
+                                                    <div className="flex items-center gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setAuditPagination((prev) => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
+                                                            disabled={auditPagination.page <= 1 || tabLoading}
+                                                            className="px-3 py-1.5 text-xs rounded-lg border border-[var(--app-border)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            Previous
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setAuditPagination((prev) => ({
+                                                                ...prev,
+                                                                page: Math.min(prev.totalPages || 1, prev.page + 1)
+                                                            }))}
+                                                            disabled={auditPagination.page >= (auditPagination.totalPages || 1) || tabLoading}
+                                                            className="px-3 py-1.5 text-xs rounded-lg border border-[var(--app-border)] disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        >
+                                                            Next
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
+                                    </section>
+
+                                    <section>
+                                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-3">
+                                            Active Sessions
+                                        </h3>
+                                        {tabLoading ? (
+                                            <TableSkeleton cols={5} rows={4} />
+                                        ) : workspaceSessions.length === 0 ? (
+                                            <div className="surface-card rounded-xl border border-[var(--app-border)] p-6 text-sm text-slate-500 dark:text-slate-400">
+                                                No active sessions found.
+                                            </div>
+                                        ) : (
+                                            <div className="overflow-x-auto rounded-lg border border-slate-200 dark:border-slate-700">
+                                                <table className="min-w-full text-sm">
+                                                    <thead className="bg-slate-50 dark:bg-slate-900/60 text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                        <tr>
+                                                            <th className="px-3 py-2 text-left font-medium">Member</th>
+                                                            <th className="px-3 py-2 text-left font-medium">Role</th>
+                                                            <th className="px-3 py-2 text-left font-medium">IP</th>
+                                                            <th className="px-3 py-2 text-left font-medium">Last Seen</th>
+                                                            {canManage && <th className="px-3 py-2 text-right font-medium">Action</th>}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                                                        {workspaceSessions.map((session) => (
+                                                            <tr key={session.id} className="bg-white dark:bg-slate-950/20">
+                                                                <td className="px-3 py-2 text-slate-900 dark:text-white">
+                                                                    <div className="font-medium">
+                                                                        {session.member?.user?.name
+                                                                            || `${session.member?.user?.firstName || ''} ${session.member?.user?.lastName || ''}`.trim()
+                                                                            || session.member?.user?.email
+                                                                            || session.actorId}
+                                                                    </div>
+                                                                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[280px]">
+                                                                        {session.userAgent || 'Unknown device'}
+                                                                    </div>
+                                                                </td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                    {session.member?.role ? displayRole(session.member.role) : '-'}
+                                                                </td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300">
+                                                                    {session.ipAddress || '-'}
+                                                                </td>
+                                                                <td className="px-3 py-2 text-slate-600 dark:text-slate-300 whitespace-nowrap">
+                                                                    {session.lastSeenAt
+                                                                        ? new Date(session.lastSeenAt).toLocaleString()
+                                                                        : new Date(session.issuedAt).toLocaleString()}
+                                                                </td>
+                                                                {canManage && (
+                                                                    <td className="px-3 py-2 text-right">
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleRevokeSession(session.id)}
+                                                                            disabled={revokingSessionId === session.id}
+                                                                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 dark:text-red-400 border border-red-200 dark:border-red-800 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50"
+                                                                        >
+                                                                            {revokingSessionId === session.id ? (
+                                                                                <>
+                                                                                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                                                    Revoking
+                                                                                </>
+                                                                            ) : (
+                                                                                'Revoke'
+                                                                            )}
+                                                                        </button>
+                                                                    </td>
+                                                                )}
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
+                                    </section>
                                 </div>
                             )}
                         </div>
@@ -1794,11 +2678,11 @@ export default function WorkspacePage() {
                                 </label>
                                 <select
                                     value={inviteRole}
-                                    onChange={(e) => setInviteRole(e.target.value as any)}
+                                    onChange={(e) => setInviteRole(e.target.value as 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR')}
                                     className="w-full px-4 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                                 >
-                                    <option value="VIEWER">Viewer</option>
-                                    <option value="EDITOR">Editor</option>
+                                    <option value="AUDITOR">Auditor</option>
+                                    <option value="DEVELOPER">Developer</option>
                                     <option value="ANALYST">Analyst</option>
                                     <option value="ADMIN">Admin</option>
                                 </select>
@@ -1810,7 +2694,7 @@ export default function WorkspacePage() {
                                     setShowInviteModal(false);
                                     setInviteMethod('EMAIL');
                                     setInviteIdentifier('');
-                                    setInviteRole('VIEWER');
+                                    setInviteRole('AUDITOR');
                                     setInviteError(null);
                                     setLatestInviteLink(null);
                                 }}

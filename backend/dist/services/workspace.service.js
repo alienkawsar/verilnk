@@ -9,7 +9,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getLinkedOrganizations = exports.unlinkOrganization = exports.linkOrganization = exports.searchOrganizationsForWorkspaceLink = exports.declineWorkspaceInviteById = exports.acceptWorkspaceInviteById = exports.listMyWorkspaceInvites = exports.cancelWorkspaceInvite = exports.revokeWorkspaceInvite = exports.getWorkspaceInvites = exports.acceptWorkspaceInvite = exports.createWorkspaceInvite = exports.getWorkspaceMembers = exports.transferOwnership = exports.removeMember = exports.updateMemberRole = exports.addWorkspaceMember = exports.deleteWorkspace = exports.updateWorkspace = exports.getUserWorkspaces = exports.getWorkspaceById = exports.createWorkspace = void 0;
+exports.getLinkedOrganizations = exports.unlinkOrganization = exports.linkOrganization = exports.searchOrganizationsForWorkspaceLink = exports.declineWorkspaceInviteById = exports.acceptWorkspaceInviteById = exports.listMyWorkspaceInvites = exports.cancelWorkspaceInvite = exports.revokeWorkspaceInvite = exports.getWorkspaceInvites = exports.acceptWorkspaceInvite = exports.createWorkspaceInvite = exports.getWorkspaceMembers = exports.transferOwnership = exports.removeMember = exports.updateMemberRoleById = exports.updateMemberRole = exports.addWorkspaceMember = exports.deleteWorkspace = exports.updateWorkspace = exports.getUserWorkspaces = exports.getWorkspaceById = exports.createWorkspace = void 0;
 const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const enterprise_entitlement_1 = require("./enterprise.entitlement");
@@ -178,6 +178,32 @@ const updateMemberRole = async (workspaceId, userId, newRole) => {
     });
 };
 exports.updateMemberRole = updateMemberRole;
+/**
+ * Update member role by workspace member id
+ */
+const updateMemberRoleById = async (workspaceId, memberId, newRole) => {
+    const member = await client_1.prisma.workspaceMember.findFirst({
+        where: {
+            id: memberId,
+            workspaceId
+        }
+    });
+    if (!member) {
+        throw new Error('Member not found');
+    }
+    if (member.role === client_2.WorkspaceMemberRole.OWNER) {
+        throw new Error('Cannot change owner role. Use transfer ownership instead.');
+    }
+    const updatedMember = await client_1.prisma.workspaceMember.update({
+        where: { id: memberId },
+        data: { role: newRole }
+    });
+    return {
+        member: updatedMember,
+        oldRole: member.role
+    };
+};
+exports.updateMemberRoleById = updateMemberRoleById;
 /**
  * Remove member from workspace
  */

@@ -39,6 +39,9 @@ export class EnterpriseApiError extends Error {
 // Types
 // ============================================
 
+export type WorkspaceRole = 'OWNER' | 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR' | 'EDITOR' | 'VIEWER';
+export type WorkspaceManageRole = 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR' | 'EDITOR' | 'VIEWER';
+
 export interface Workspace {
     id: string;
     name: string;
@@ -46,14 +49,14 @@ export interface Workspace {
     memberCount: number;
     orgCount: number;
     apiKeyCount: number;
-    role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+    role: WorkspaceRole;
     createdAt: string;
 }
 
 export interface WorkspaceMember {
     id: string;
     userId: string;
-    role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+    role: WorkspaceRole;
     joinedAt: string;
     user?: {
         name: string;
@@ -89,7 +92,7 @@ export interface WorkspaceInvite {
     workspaceId: string;
     invitedEmail: string | null;
     invitedUserId: string | null;
-    role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+    role: WorkspaceRole;
     status: 'PENDING' | 'ACCEPTED' | 'DECLINED' | 'REVOKED' | 'CANCELED' | 'EXPIRED';
     expiresAt: string;
     acceptedAt: string | null;
@@ -157,6 +160,55 @@ export interface ApiScope {
     endpoints: string[];
 }
 
+export interface WorkspaceAuditLog {
+    id: string;
+    action: 'CREATE' | 'UPDATE' | 'DELETE' | 'APPROVE' | 'REJECT' | 'LOGIN' | 'SUSPEND' | 'OTHER';
+    entity: string | null;
+    targetId: string | null;
+    details: string | null;
+    ipAddress: string | null;
+    userAgent: string | null;
+    createdAt: string;
+    admin: {
+        id: string;
+        firstName: string;
+        lastName: string;
+        email: string;
+        role: string;
+    };
+    actor?: {
+        type: 'USER' | 'ADMIN';
+        label: string;
+        actorUserId?: string;
+        workspaceRole?: 'OWNER' | 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR' | null;
+        isFormerMember?: boolean;
+        adminRole?: string;
+    };
+}
+
+export interface WorkspaceSession {
+    id: string;
+    jti: string;
+    actorType: string;
+    actorId: string;
+    issuedAt: string;
+    expiresAt: string;
+    lastSeenAt: string | null;
+    ipAddress: string | null;
+    userAgent: string | null;
+    member: {
+        userId: string;
+        role: WorkspaceRole;
+        user: {
+            id: string;
+            email: string;
+            firstName: string;
+            lastName: string;
+            name: string;
+        } | null;
+    } | null;
+}
+
 export interface UsageLog {
     id: string;
     apiKeyId: string;
@@ -218,7 +270,7 @@ export interface EnterpriseProfile {
         state?: { id: string; code?: string | null; name: string } | null;
         category?: { id: string; name: string; slug: string } | null;
     };
-    role: 'OWNER' | 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER' | null;
+    role: WorkspaceRole | null;
     canEdit: boolean;
     entitlements?: EnterpriseAccess['entitlements'] | null;
 }
@@ -297,8 +349,8 @@ export const formatLimitReachedMessage = (error: EnterpriseApiError): string => 
 // Enterprise Access
 // ============================================
 
-export async function checkEnterpriseAccess(): Promise<EnterpriseAccess> {
-    return apiRequest<EnterpriseAccess>('/enterprise/access');
+export async function checkEnterpriseAccess(requestOptions: RequestInit = {}): Promise<EnterpriseAccess> {
+    return apiRequest<EnterpriseAccess>('/enterprise/access', requestOptions);
 }
 
 export async function getEnterpriseProfile(): Promise<EnterpriseProfile> {
@@ -328,8 +380,11 @@ export async function getWorkspaces(): Promise<{ workspaces: Workspace[] }> {
     return apiRequest('/enterprise/workspaces');
 }
 
-export async function getWorkspace(id: string): Promise<{ workspace: any; role: string }> {
-    return apiRequest(`/enterprise/workspaces/${id}`);
+export async function getWorkspace(
+    id: string,
+    requestOptions: RequestInit = {}
+): Promise<{ workspace: any; role: string }> {
+    return apiRequest(`/enterprise/workspaces/${id}`, requestOptions);
 }
 
 export async function createWorkspace(name: string): Promise<{ workspace: any }> {
@@ -356,14 +411,17 @@ export async function deleteWorkspace(id: string): Promise<{ success: boolean }>
 // Members
 // ============================================
 
-export async function getWorkspaceMembers(workspaceId: string): Promise<{ members: WorkspaceMember[] }> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/members`);
+export async function getWorkspaceMembers(
+    workspaceId: string,
+    requestOptions: RequestInit = {}
+): Promise<{ members: WorkspaceMember[] }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/members`, requestOptions);
 }
 
 export async function addWorkspaceMember(
     workspaceId: string,
     email: string,
-    role: 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER'
+    role: WorkspaceManageRole
 ): Promise<{ member: WorkspaceMember }> {
     return apiRequest(`/enterprise/workspaces/${workspaceId}/members`, {
         method: 'POST',
@@ -371,8 +429,11 @@ export async function addWorkspaceMember(
     });
 }
 
-export async function getWorkspaceInvites(workspaceId: string): Promise<{ invites: WorkspaceInvite[] }> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/invites`);
+export async function getWorkspaceInvites(
+    workspaceId: string,
+    requestOptions: RequestInit = {}
+): Promise<{ invites: WorkspaceInvite[] }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/invites`, requestOptions);
 }
 
 export async function createWorkspaceInvite(
@@ -380,7 +441,7 @@ export async function createWorkspaceInvite(
     payload: {
         invitedEmail?: string;
         invitedUserId?: string;
-        role: 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER';
+        role: WorkspaceManageRole;
     }
 ): Promise<{ invite: WorkspaceInvite; inviteLink: string | null }> {
     return apiRequest(`/enterprise/workspaces/${workspaceId}/invites`, {
@@ -426,10 +487,10 @@ export async function declineWorkspaceInviteById(inviteId: string): Promise<{ su
 
 export async function updateMemberRole(
     workspaceId: string,
-    userId: string,
-    role: 'ADMIN' | 'ANALYST' | 'EDITOR' | 'VIEWER'
+    memberId: string,
+    role: WorkspaceManageRole
 ): Promise<{ member: WorkspaceMember }> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/members/${userId}`, {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/members/${memberId}/role`, {
         method: 'PATCH',
         body: JSON.stringify({ role }),
     });
@@ -452,8 +513,11 @@ export async function transferOwnership(workspaceId: string, newOwnerId: string)
 // Organizations
 // ============================================
 
-export async function getLinkedOrganizations(workspaceId: string): Promise<{ organizations: LinkedOrganization[] }> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/organizations`);
+export async function getLinkedOrganizations(
+    workspaceId: string,
+    requestOptions: RequestInit = {}
+): Promise<{ organizations: LinkedOrganization[] }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/organizations`, requestOptions);
 }
 
 export async function createWorkspaceOrganization(
@@ -480,9 +544,10 @@ export async function createWorkspaceOrganization(
 }
 
 export async function getWorkspaceLinkRequests(
-    workspaceId: string
+    workspaceId: string,
+    requestOptions: RequestInit = {}
 ): Promise<{ requests: EnterpriseLinkRequest[] }> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/link-requests`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/link-requests`, requestOptions);
 }
 
 export async function requestWorkspaceLink(
@@ -516,12 +581,15 @@ export async function unlinkOrganization(workspaceId: string, orgId: string): Pr
 // API Keys
 // ============================================
 
-export async function getApiScopes(): Promise<{ scopes: Record<string, ApiScope> }> {
-    return apiRequest('/enterprise/api-scopes');
+export async function getApiScopes(requestOptions: RequestInit = {}): Promise<{ scopes: Record<string, ApiScope> }> {
+    return apiRequest('/enterprise/api-scopes', requestOptions);
 }
 
-export async function getApiKeys(workspaceId: string): Promise<{ apiKeys: ApiKey[] }> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/api-keys`);
+export async function getApiKeys(
+    workspaceId: string,
+    requestOptions: RequestInit = {}
+): Promise<{ apiKeys: ApiKey[] }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/api-keys`, requestOptions);
 }
 
 export async function createApiKey(
@@ -557,7 +625,8 @@ export async function rotateApiKey(
 
 export async function getUsageLogs(
     workspaceId: string,
-    options: { limit?: number; offset?: number; apiKeyId?: string } = {}
+    options: { limit?: number; offset?: number; apiKeyId?: string } = {},
+    requestOptions: RequestInit = {}
 ): Promise<{ logs: UsageLog[]; total: number }> {
     const params = new URLSearchParams();
     if (options.limit) params.set('limit', String(options.limit));
@@ -565,14 +634,15 @@ export async function getUsageLogs(
     if (options.apiKeyId) params.set('apiKeyId', options.apiKeyId);
 
     const query = params.toString() ? `?${params.toString()}` : '';
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/usage-logs${query}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/usage-logs${query}`, requestOptions);
 }
 
 export async function getUsageStats(
     workspaceId: string,
-    days: number = 30
+    days: number = 30,
+    requestOptions: RequestInit = {}
 ): Promise<UsageStats> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/usage-stats?days=${days}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/usage-stats?days=${days}`, requestOptions);
 }
 
 // ============================================
@@ -599,9 +669,10 @@ export interface EnterpriseAnalytics {
 
 export async function getEnterpriseAnalytics(
     workspaceId: string,
-    range: string = '30d'
+    range: string = '30d',
+    requestOptions: RequestInit = {}
 ): Promise<EnterpriseAnalytics> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics?range=${range}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics?range=${range}`, requestOptions);
 }
 
 export interface EnterpriseAnalyticsDaily {
@@ -644,37 +715,42 @@ export interface EnterpriseAnalyticsCategories {
 
 export async function getEnterpriseAnalyticsDaily(
     workspaceId: string,
-    range: string = '30'
+    range: string = '30',
+    requestOptions: RequestInit = {}
 ): Promise<EnterpriseAnalyticsDaily> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/daily?range=${range}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/daily?range=${range}`, requestOptions);
 }
 
 export async function getEnterpriseAnalyticsSummary(
     workspaceId: string,
-    range: string = '30'
+    range: string = '30',
+    requestOptions: RequestInit = {}
 ): Promise<EnterpriseAnalyticsSummary> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/summary?range=${range}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/summary?range=${range}`, requestOptions);
 }
 
 export async function getEnterpriseAnalyticsHourly(
     workspaceId: string,
-    range: string = '30'
+    range: string = '30',
+    requestOptions: RequestInit = {}
 ): Promise<EnterpriseAnalyticsHourly> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/hourly?range=${range}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/hourly?range=${range}`, requestOptions);
 }
 
 export async function getEnterpriseAnalyticsHeatmap(
     workspaceId: string,
-    range: string = '30'
+    range: string = '30',
+    requestOptions: RequestInit = {}
 ): Promise<EnterpriseAnalyticsHeatmap> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/heatmap?range=${range}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/heatmap?range=${range}`, requestOptions);
 }
 
 export async function getEnterpriseAnalyticsCategories(
     workspaceId: string,
-    range: string = '30'
+    range: string = '30',
+    requestOptions: RequestInit = {}
 ): Promise<EnterpriseAnalyticsCategories> {
-    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/categories?range=${range}`);
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/analytics/categories?range=${range}`, requestOptions);
 }
 
 export async function exportEnterpriseAnalytics(
@@ -682,7 +758,7 @@ export async function exportEnterpriseAnalytics(
     format: 'csv' | 'pdf' = 'csv',
     range: string = '30'
 ): Promise<{ success: boolean }> {
-    const url = `${API_BASE}/enterprise/workspaces/${workspaceId}/analytics/export?format=${format}&range=${range}`;
+    const url = `${API_BASE}/enterprise/workspaces/${workspaceId}/exports/analytics?format=${format}&range=${range}`;
     const response = await fetch(url, {
         credentials: 'include',
     });
@@ -703,4 +779,102 @@ export async function exportEnterpriseAnalytics(
     window.URL.revokeObjectURL(objectUrl);
 
     return { success: true };
+}
+
+export async function logApiKeyCopy(
+    workspaceId: string,
+    keyId: string
+): Promise<{ success: boolean }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/api-keys/${keyId}/copy`, {
+        method: 'POST'
+    });
+}
+
+export async function exportWorkspaceUsage(
+    workspaceId: string,
+    range: string = '30'
+): Promise<{ success: boolean }> {
+    const url = `${API_BASE}/enterprise/workspaces/${workspaceId}/exports/usage?range=${range}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Export failed' }));
+        throw new Error(error.message || 'Export failed');
+    }
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.setAttribute('download', `workspace-usage-${workspaceId}-${range}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+
+    return { success: true };
+}
+
+export async function exportWorkspaceAuditLogs(
+    workspaceId: string,
+    format: 'csv' | 'log' = 'csv',
+    range: string = '30'
+): Promise<{ success: boolean }> {
+    const url = `${API_BASE}/enterprise/workspaces/${workspaceId}/exports/audit-logs?format=${format}&range=${range}`;
+    const response = await fetch(url, { credentials: 'include' });
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Export failed' }));
+        throw new Error(error.message || 'Export failed');
+    }
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.setAttribute('download', `workspace-audit-${workspaceId}-${range}.${format}`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+
+    return { success: true };
+}
+
+export async function getWorkspaceAuditLogs(
+    workspaceId: string,
+    options: {
+        page?: number;
+        limit?: number;
+        action?: WorkspaceAuditLog['action'];
+        startDate?: string;
+        endDate?: string;
+    } = {},
+    requestOptions: RequestInit = {}
+): Promise<{
+    logs: WorkspaceAuditLog[];
+    pagination: { page: number; limit: number; total: number; totalPages: number };
+}> {
+    const params = new URLSearchParams();
+    if (options.page) params.set('page', String(options.page));
+    if (options.limit) params.set('limit', String(options.limit));
+    if (options.action) params.set('action', options.action);
+    if (options.startDate) params.set('startDate', options.startDate);
+    if (options.endDate) params.set('endDate', options.endDate);
+    const query = params.toString() ? `?${params.toString()}` : '';
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/audit-logs${query}`, requestOptions);
+}
+
+export async function getWorkspaceSessions(
+    workspaceId: string,
+    requestOptions: RequestInit = {}
+): Promise<{ sessions: WorkspaceSession[] }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/sessions`, requestOptions);
+}
+
+export async function revokeWorkspaceSession(
+    workspaceId: string,
+    sessionId: string
+): Promise<{ success: boolean }> {
+    return apiRequest(`/enterprise/workspaces/${workspaceId}/sessions/${sessionId}/revoke`, {
+        method: 'POST'
+    });
 }

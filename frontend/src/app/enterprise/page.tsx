@@ -80,16 +80,30 @@ const DEFAULT_PROFILE_FORM: ProfileForm = {
     about: '',
 };
 
+const normalizeWorkspaceRoleLabel = (role: string | null | undefined): string | null => {
+    if (!role) return null;
+    const value = role.toUpperCase();
+    if (value === 'EDITOR') return 'DEVELOPER';
+    if (value === 'VIEWER') return 'AUDITOR';
+    if (value === 'OWNER' || value === 'ADMIN' || value === 'DEVELOPER' || value === 'ANALYST' || value === 'AUDITOR') {
+        return value;
+    }
+    return value;
+};
+
 const roleBadgeClass = (role: string | null | undefined) => {
-    switch (role) {
+    const normalizedRole = normalizeWorkspaceRoleLabel(role);
+    switch (normalizedRole) {
         case 'OWNER':
             return 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300';
         case 'ADMIN':
             return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300';
-        case 'EDITOR':
+        case 'DEVELOPER':
             return 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300';
         case 'ANALYST':
             return 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300';
+        case 'AUDITOR':
+            return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
         default:
             return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
     }
@@ -853,7 +867,7 @@ export default function EnterprisePage() {
                                                                     {workspace.name}
                                                                 </h3>
                                                                 <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${roleBadgeClass(workspace.role)}`}>
-                                                                    {workspace.role}
+                                                                    {normalizeWorkspaceRoleLabel(workspace.role) || workspace.role}
                                                                 </span>
                                                             </div>
                                                             <div className="mt-1 text-sm text-slate-500 dark:text-slate-400 flex flex-wrap items-center gap-3">
