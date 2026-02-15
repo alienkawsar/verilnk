@@ -12,7 +12,7 @@ import { getInitials, getFlagEmoji } from '@/lib/utils';
 import LoginModal from '@/components/auth/LoginModal';
 import SignupModal from '@/components/auth/SignupModal';
 import { useAuth } from '@/context/AuthContext';
-import { LogIn, User as UserIcon, LogOut } from 'lucide-react';
+import { LogIn, User as UserIcon, LogOut, Menu } from 'lucide-react';
 import { Skeleton } from '@/components/ui/Skeleton'; // Added Skeleton import
 
 import { useTheme } from '@/context/ThemeContext';
@@ -35,7 +35,9 @@ function NavbarContent() {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isSignupOpen, setIsSignupOpen] = useState(false);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const mobileMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -68,6 +70,35 @@ function NavbarContent() {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [dropdownOpen]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        mobileMenuRef.current &&
+        !mobileMenuRef.current.contains(event.target as Node)
+      ) {
+        setMobileMenuOpen(false);
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [mobileMenuOpen]);
 
   // Hide Navbar on admin pages
   if (pathname?.startsWith('/admin')) {
@@ -155,98 +186,140 @@ function NavbarContent() {
 
           {/* Right Side: Auth */}
           <div className='flex-1 flex justify-end items-center gap-4 relative z-20'>
-            <ThemeToggle />
-
             {user ? (
-              <div className='relative' ref={dropdownRef}>
-                <button
-                  onClick={() => setDropdownOpen(!dropdownOpen)}
-                  className='focus:outline-none transition-transform hover:scale-105'
-                  title={
-                    user.firstName
-                      ? `${user.firstName} ${user.lastName}`
-                      : user.name
-                  }
-                >
-                  <div
-                    className='w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-sm font-bold text-white border-2 border-slate-200 dark:border-slate-700 shadow-md ring-2 ring-transparent bg-cover bg-center'
-                    style={
-                      user.profileImage
-                        ? { backgroundImage: `url(${user.profileImage})` }
-                        : {}
+              <>
+                <ThemeToggle />
+                <div className='relative' ref={dropdownRef}>
+                  <button
+                    onClick={() => setDropdownOpen(!dropdownOpen)}
+                    className='focus:outline-none transition-transform hover:scale-105'
+                    title={
+                      user.firstName
+                        ? `${user.firstName} ${user.lastName}`
+                        : user.name
                     }
                   >
-                    {!user.profileImage &&
-                      getInitials(
-                        user.firstName,
-                        user.lastName,
-                        user.name,
-                        user.email,
-                      )}
-                  </div>
-                </button>
-
-                {/* Dropdown Menu */}
-                {dropdownOpen && (
-                  <>
-                    <div className='absolute top-full right-0 mt-3 w-56 surface-card rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100 origin-top-right ring-1 ring-black/5'>
-                      <div className='p-4 border-b border-slate-200 dark:border-white/10'>
-                        <p className='text-xs font-semibold text-slate-500 dark:text-blue-200/70 uppercase tracking-wider mb-1'>
-                          Signed in as
-                        </p>
-                        <p className='text-sm font-bold text-slate-900 dark:text-[#EAF0FF] truncate'>
-                          {user.firstName
-                            ? `${user.firstName} ${user.lastName}`
-                            : user.name}
-                        </p>
-                        <p className='text-xs text-slate-500 dark:text-blue-200/70 truncate'>
-                          {user.email}
-                        </p>
-                      </div>
-
-                      <div className='p-1'>
-                        <Link
-                          href={
-                            user.organizationId && user.planType === 'ENTERPRISE'
-                              ? '/enterprise'
-                              : user.organizationId
-                                ? '/org/dashboard'
-                                : '/dashboard'
-                          }
-                          onClick={() => setDropdownOpen(false)}
-                          className='flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors'
-                        >
-                          <div className='w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400'>
-                            <UserIcon className='w-4 h-4' />
-                          </div>
-                          Dashboard
-                        </Link>
-
-                        <button
-                          onClick={() => {
-                            logout();
-                            setDropdownOpen(false);
-                          }}
-                          className='w-full text-left px-3 py-2 text-sm text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-300 rounded-lg transition-colors flex items-center gap-2'
-                        >
-                          <div className='w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500 dark:text-red-400'>
-                            <LogOut className='w-4 h-4' />
-                          </div>
-                          Sign Out
-                        </button>
-                      </div>
+                    <div
+                      className='w-9 h-9 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-sm font-bold text-white border-2 border-slate-200 dark:border-slate-700 shadow-md ring-2 ring-transparent bg-cover bg-center'
+                      style={
+                        user.profileImage
+                          ? { backgroundImage: `url(${user.profileImage})` }
+                          : {}
+                      }
+                    >
+                      {!user.profileImage &&
+                        getInitials(
+                          user.firstName,
+                          user.lastName,
+                          user.name,
+                          user.email,
+                        )}
                     </div>
-                  </>
-                )}
-              </div>
+                  </button>
+
+                  {/* Dropdown Menu */}
+                  {dropdownOpen && (
+                    <>
+                      <div className='absolute top-full right-0 mt-3 w-56 surface-card rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-100 origin-top-right ring-1 ring-black/5'>
+                        <div className='p-4 border-b border-slate-200 dark:border-white/10'>
+                          <p className='text-xs font-semibold text-slate-500 dark:text-blue-200/70 uppercase tracking-wider mb-1'>
+                            Signed in as
+                          </p>
+                          <p className='text-sm font-bold text-slate-900 dark:text-[#EAF0FF] truncate'>
+                            {user.firstName
+                              ? `${user.firstName} ${user.lastName}`
+                              : user.name}
+                          </p>
+                          <p className='text-xs text-slate-500 dark:text-blue-200/70 truncate'>
+                            {user.email}
+                          </p>
+                        </div>
+
+                        <div className='p-1'>
+                          <Link
+                            href={
+                              user.organizationId && user.planType === 'ENTERPRISE'
+                                ? '/enterprise'
+                                : user.organizationId
+                                  ? '/org/dashboard'
+                                  : '/dashboard'
+                            }
+                            onClick={() => setDropdownOpen(false)}
+                            className='flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors'
+                          >
+                            <div className='w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400'>
+                              <UserIcon className='w-4 h-4' />
+                            </div>
+                            Dashboard
+                          </Link>
+
+                          <button
+                            onClick={() => {
+                              logout();
+                              setDropdownOpen(false);
+                            }}
+                            className='w-full text-left px-3 py-2 text-sm text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-300 rounded-lg transition-colors flex items-center gap-2'
+                          >
+                            <div className='w-8 h-8 rounded-lg bg-red-500/10 flex items-center justify-center text-red-500 dark:text-red-400'>
+                              <LogOut className='w-4 h-4' />
+                            </div>
+                            Sign Out
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </>
             ) : (
-              <button
-                onClick={openLogin}
-                className='h-10 px-6 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md border border-black/10 dark:border-white/10 text-slate-700 dark:text-white text-sm font-medium transition-all shadow-sm hover:shadow-md hover:bg-black/10 dark:hover:bg-white/20 active:translate-y-0.5 focus-visible:ring-2 focus-visible:ring-slate-400 flex items-center gap-2 group'
-              >
-                <LogIn className='w-3.5 h-3.5 opacity-70 group-hover:opacity-100 transition-opacity' />
-                <span className='hidden sm:inline'>Sign In</span>
-              </button>
+              <>
+                <div className='hidden sm:flex items-center gap-4'>
+                  <ThemeToggle />
+
+                  <button
+                    onClick={openLogin}
+                    className='h-10 px-6 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md border border-black/10 dark:border-white/10 text-slate-700 dark:text-white text-sm font-medium transition-all shadow-sm hover:shadow-md hover:bg-black/10 dark:hover:bg-white/20 active:translate-y-0.5 focus-visible:ring-2 focus-visible:ring-slate-400 flex items-center gap-2 group'
+                  >
+                    <LogIn className='w-3.5 h-3.5 opacity-70 group-hover:opacity-100 transition-opacity' />
+                    <span className='hidden sm:inline'>Sign In</span>
+                  </button>
+                </div>
+
+                <div className='sm:hidden relative' ref={mobileMenuRef}>
+                  <button
+                    onClick={() => setMobileMenuOpen((prev) => !prev)}
+                    aria-label='Open menu'
+                    aria-expanded={mobileMenuOpen}
+                    aria-haspopup='menu'
+                    className='w-9 h-9 rounded-full flex items-center justify-center bg-slate-100/90 dark:bg-white/10 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-100 shadow-sm transition-colors hover:bg-slate-200 dark:hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-blue-500/50'
+                  >
+                    <Menu className='w-4 h-4' />
+                  </button>
+
+                  {mobileMenuOpen && (
+                    <div className='absolute top-full right-0 mt-2 w-60 p-3 space-y-2 rounded-xl border border-slate-200/70 dark:border-white/10 bg-white/90 dark:bg-[#101627]/90 backdrop-blur-xl shadow-xl z-50'>
+                      <div className='flex items-center justify-between'>
+                        <span className='text-sm font-medium text-slate-700 dark:text-slate-200'>
+                          Theme
+                        </span>
+                        <ThemeToggle onToggle={() => setMobileMenuOpen(false)} />
+                      </div>
+
+                      <div className='h-px bg-slate-200 dark:bg-white/10' />
+
+                      <button
+                        onClick={() => {
+                          setMobileMenuOpen(false);
+                          openLogin();
+                        }}
+                        className='w-full h-10 rounded-lg bg-[#187DE9] text-white text-sm font-semibold tracking-wide hover:bg-[#176FCE] transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500/50'
+                      >
+                        SIGN IN
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </div>
         </div>

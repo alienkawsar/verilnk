@@ -4,7 +4,11 @@ import { useTheme } from '@/context/ThemeContext';
 import { Moon, Sun } from 'lucide-react';
 import { useState, useEffect } from 'react';
 
-export const ThemeToggle = () => {
+type ThemeToggleProps = {
+    onToggle?: () => void;
+};
+
+export const ThemeToggle = ({ onToggle }: ThemeToggleProps) => {
     const { setTheme, resolvedTheme } = useTheme();
     const [mounted, setMounted] = useState(false);
 
@@ -20,6 +24,7 @@ export const ThemeToggle = () => {
 
     const toggleTheme = () => {
         setTheme(resolvedTheme === 'dark' ? 'light' : 'dark');
+        onToggle?.();
     };
 
     return (

@@ -82,7 +82,7 @@ export default function SearchResultCard({ site }: { site: Site }) {
                             href={site.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className={`inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${hasVerifiedProfile ? 'border border-blue-600 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20' : 'btn-primary'}`}
+                            className={`inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/30 ${hasVerifiedProfile ? 'border-[#187DE9] text-[#187DE9] hover:border-[#187DE9] hover:text-[#187DE9] hover:bg-[#187DE9]/10 focus-visible:border-[#187DE9] focus-visible:text-[#187DE9]' : 'border-transparent bg-[#187DE9] text-white hover:border-[#187DE9] hover:text-[#187DE9] hover:bg-transparent dark:hover:bg-transparent focus-visible:border-[#187DE9] focus-visible:text-[#187DE9] focus-visible:bg-transparent dark:focus-visible:bg-transparent'}`}
                         >
                             Official Website ↗
                         </a>
