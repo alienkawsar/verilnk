@@ -49,11 +49,14 @@ const client_1 = require("@prisma/client");
 const client_2 = require("../db/client");
 const auditService = __importStar(require("../services/audit.service"));
 const analytics_service_1 = require("../services/analytics.service");
+const analytics_report_export_service_1 = require("../services/analytics-report-export.service");
 const zod_1 = require("zod");
 const requestService = __importStar(require("../services/request.service"));
 const passwordPolicy_1 = require("../utils/passwordPolicy");
 const enterprise_quota_service_1 = require("../services/enterprise-quota.service");
 const session_service_1 = require("../services/session.service");
+const invoice_pdf_service_1 = require("../services/invoice-pdf.service");
+const invoice_filename_service_1 = require("../services/invoice-filename.service");
 const router = (0, express_1.Router)();
 // All routes require user authentication
 router.use(auth_middleware_1.authenticateUser);
@@ -235,7 +238,15 @@ const resolveEnterpriseProfileContext = async (userId) => {
         include: {
             country: true,
             state: true,
-            category: true
+            category: true,
+            billingAccount: {
+                include: {
+                    invoices: {
+                        orderBy: { createdAt: 'desc' },
+                        take: 10
+                    }
+                }
+            }
         }
     });
     if (!organization)
@@ -1637,52 +1648,41 @@ const exportWorkspaceAnalyticsHandler = async (req, res) => {
         const range = normalizeRange(req.query.range, '30');
         const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'csv';
         const data = await (0, analytics_service_1.getEnterpriseAnalyticsExportData)(id, range);
+        const generatedAt = new Date();
+        const workspace = await client_2.prisma.workspace.findUnique({
+            where: { id },
+            select: { name: true }
+        });
+        const entityName = workspace?.name?.trim() || 'Workspace';
+        const rangeDays = Number.parseInt(range, 10) || 30;
+        const rows = data.daily.series.map((row) => ({
+            date: row.date,
+            views: row.views,
+            clicks: row.clicks,
+            ctr: row.views > 0 ? (row.clicks / row.views) * 100 : 0
+        }));
         await logEnterpriseAdminActionIfApplicable(req, client_1.AuditActionType.OTHER, 'WorkspaceAnalyticsExport', `ANALYTICS_EXPORTED workspaceId=${id} format=${format} range=${range}`, id);
         if (format === 'pdf') {
-            const PDFDocument = (await Promise.resolve().then(() => __importStar(require('pdfkit')))).default;
-            const doc = new PDFDocument({ margin: 48 });
-            const chunks = [];
-            doc.on('data', (chunk) => chunks.push(chunk));
-            doc.on('end', () => {
-                const buffer = Buffer.concat(chunks);
-                res.setHeader('Content-Type', 'application/pdf');
-                res.setHeader('Content-Disposition', `attachment; filename="workspace-analytics-${id}-${range}.pdf"`);
-                res.setHeader('Content-Length', buffer.length);
-                res.send(buffer);
+            const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'workspace', id, 'pdf', generatedAt);
+            const pdfBuffer = await (0, analytics_report_export_service_1.buildAnalyticsReportPdfBuffer)({
+                entityName,
+                rangeLabel: `Last ${rangeDays} days`,
+                generatedAt,
+                totalViews: data.summary.totals.views,
+                totalClicks: data.summary.totals.clicks,
+                totalCtr: data.summary.totals.ctr,
+                rows
             });
-            doc.fontSize(22).font('Helvetica-Bold').text('VeriLnk Workspace Analytics', { align: 'center' });
-            doc.moveDown(0.5);
-            doc.fontSize(10).font('Helvetica').fillColor('#64748b').text(`Workspace: ${id}`, { align: 'center' });
-            doc.text(`Range: Last ${range} days`, { align: 'center' });
-            doc.text(`Generated: ${new Date().toISOString()}`, { align: 'center' });
-            doc.moveDown(1.5);
-            doc.fillColor('#0f172a').fontSize(14).font('Helvetica-Bold').text('Summary');
-            doc.moveDown(0.3);
-            doc.fontSize(11).font('Helvetica');
-            doc.text(`Total Views: ${data.summary.totals.views.toLocaleString()}`);
-            doc.text(`Total Clicks: ${data.summary.totals.clicks.toLocaleString()}`);
-            doc.text(`CTR: ${data.summary.totals.ctr.toFixed(2)}%`);
-            doc.moveDown(1);
-            doc.fontSize(14).font('Helvetica-Bold').text('Daily Totals');
-            doc.moveDown(0.3);
-            doc.fontSize(10).font('Helvetica');
-            const rows = data.daily.series.slice(-31);
-            rows.forEach((item) => {
-                doc.text(`${item.date}  |  views ${item.views}  |  clicks ${item.clicks}`);
-            });
-            doc.end();
+            res.setHeader('Content-Type', 'application/pdf');
+            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Length', pdfBuffer.length);
+            res.send(pdfBuffer);
             return;
         }
-        let csv = 'Date,Views,Clicks\n';
-        for (const row of data.daily.series) {
-            csv += `${row.date},${row.views},${row.clicks}\n`;
-        }
-        csv += '\n';
-        csv += `Total Views,${data.summary.totals.views}\n`;
-        csv += `Total Clicks,${data.summary.totals.clicks}\n`;
-        csv += `CTR,${data.summary.totals.ctr}\n`;
-        res.setHeader('Content-Type', 'text/csv');
-        res.setHeader('Content-Disposition', `attachment; filename="workspace-analytics-${id}-${range}.csv"`);
+        const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'workspace', id, 'csv', generatedAt);
+        const csv = (0, analytics_report_export_service_1.buildAnalyticsReportCsv)(rows);
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
         res.send(csv);
     }
     catch (error) {
@@ -1692,6 +1692,115 @@ const exportWorkspaceAnalyticsHandler = async (req, res) => {
 };
 router.get('/workspaces/:id/analytics/export', exportWorkspaceAnalyticsHandler);
 router.get('/workspaces/:id/exports/analytics', exportWorkspaceAnalyticsHandler);
+// ============================================
+// Enterprise Billing
+// ============================================
+const downloadEnterpriseInvoicePdfHandler = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+        const context = await resolveEnterpriseProfileContext(userId);
+        if (!context) {
+            return res.status(403).json({ message: 'Enterprise access required' });
+        }
+        if (!context.canEdit) {
+            return respondWorkspaceForbidden(res, 'Insufficient permissions');
+        }
+        const invoiceId = req.params.invoiceId;
+        const invoice = await client_2.prisma.invoice.findFirst({
+            where: {
+                id: invoiceId,
+                billingAccount: {
+                    organizationId: context.organization.id
+                }
+            },
+            include: {
+                billingAccount: {
+                    include: {
+                        organization: {
+                            select: {
+                                id: true,
+                                name: true,
+                                email: true,
+                                website: true,
+                                address: true,
+                                planType: true
+                            }
+                        }
+                    }
+                },
+                subscription: {
+                    select: {
+                        planType: true,
+                        currentPeriodStart: true,
+                        currentPeriodEnd: true
+                    }
+                }
+            }
+        });
+        if (!invoice) {
+            return res.status(404).json({ message: 'Invoice not found' });
+        }
+        const metadata = (invoice.metadata && typeof invoice.metadata === 'object')
+            ? invoice.metadata
+            : {};
+        const planName = ((typeof metadata.planType === 'string' ? metadata.planType : null)
+            || invoice.subscription?.planType
+            || invoice.billingAccount.organization.planType
+            || 'ENTERPRISE');
+        const periodStart = invoice.periodStart || invoice.subscription?.currentPeriodStart || invoice.createdAt;
+        let periodEnd = invoice.periodEnd || invoice.subscription?.currentPeriodEnd || null;
+        if (!periodEnd && typeof metadata.durationDays === 'number' && Number.isFinite(metadata.durationDays)) {
+            const days = Math.max(0, Math.floor(Number(metadata.durationDays)));
+            if (days > 0) {
+                periodEnd = new Date(periodStart.getTime() + days * 24 * 60 * 60 * 1000);
+            }
+        }
+        const discountCents = typeof metadata.discountCents === 'number' ? Math.max(0, Math.floor(metadata.discountCents)) : 0;
+        const taxCents = typeof metadata.taxCents === 'number' ? Math.max(0, Math.floor(metadata.taxCents)) : 0;
+        const notes = typeof metadata.notes === 'string' ? metadata.notes : null;
+        const invoiceNumber = invoice.invoiceNumber || `INV-${invoice.id.slice(0, 8).toUpperCase()}`;
+        const pdfBuffer = await (0, invoice_pdf_service_1.buildInvoicePdfBuffer)({
+            invoiceNumber,
+            invoiceDate: invoice.createdAt,
+            status: invoice.status,
+            paidAt: invoice.paidAt,
+            periodStart,
+            periodEnd,
+            planName,
+            planType: planName,
+            currency: invoice.currency || 'USD',
+            amountCents: invoice.amountCents,
+            discountCents,
+            taxCents,
+            billTo: {
+                name: invoice.billingAccount.organization.name,
+                email: invoice.billingAccount.billingEmail || invoice.billingAccount.organization.email,
+                website: invoice.billingAccount.organization.website,
+                address: invoice.billingAccount.organization.address
+            },
+            notes
+        });
+        const filename = (0, invoice_filename_service_1.buildInvoiceDownloadFilename)({
+            organizationName: invoice.billingAccount.organization.name,
+            organizationId: invoice.billingAccount.organization.id,
+            invoiceNumber: invoice.invoiceNumber,
+            invoiceId: invoice.id,
+            invoiceDate: invoice.createdAt
+        });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(filename));
+        res.status(200).send(pdfBuffer);
+    }
+    catch (error) {
+        console.error('[Enterprise] Download invoice error:', error);
+        res.status(500).json({ message: error.message || 'Failed to download invoice' });
+    }
+};
+router.get('/invoices/:invoiceId/download', downloadEnterpriseInvoicePdfHandler);
+router.get('/invoices/:invoiceId/pdf', downloadEnterpriseInvoicePdfHandler);
 // ============================================
 // Enterprise Profile / Settings
 // ============================================

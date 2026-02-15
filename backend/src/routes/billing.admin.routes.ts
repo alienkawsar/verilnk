@@ -6,6 +6,11 @@ const router = Router();
 
 router.use(authenticateAdmin, authorizeRole(['SUPER_ADMIN']));
 
+router.get('/org-invoices', billingAdminController.listOrganizationInvoices);
+router.get('/enterprise-invoices', billingAdminController.listEnterpriseInvoices);
+router.get('/org-invoices/:id/pdf', billingAdminController.downloadOrganizationInvoicePdf);
+router.get('/enterprise-invoices/:id/pdf', billingAdminController.downloadEnterpriseInvoicePdf);
+
 router.post('/invoices', billingAdminController.createManualInvoice);
 router.post('/invoices/:id/offline-payment', billingAdminController.applyOfflinePayment);
 router.post('/invoices/:id/flag-refund', billingAdminController.flagRefund);

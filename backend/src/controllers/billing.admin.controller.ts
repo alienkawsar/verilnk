@@ -1,10 +1,11 @@
 import { Request, Response } from 'express';
 import { z } from 'zod';
-import { PlanType } from '@prisma/client';
+import { InvoiceStatus, PlanType } from '@prisma/client';
 import * as billingAdminService from '../services/billing-admin.service';
 import * as trialService from '../services/trial.service';
 import * as auditService from '../services/audit.service';
 import { AuditActionType } from '@prisma/client';
+import { buildInvoiceContentDisposition } from '../services/invoice-filename.service';
 
 const createInvoiceSchema = z.object({
     organizationId: z.string().uuid(),
@@ -22,6 +23,112 @@ const refundFlagSchema = z.object({
 const extendTrialSchema = z.object({
     extraDays: z.number().int().positive()
 });
+
+const invoiceListQuerySchema = z.object({
+    search: z.string().trim().max(200).optional(),
+    status: z.nativeEnum(InvoiceStatus).optional(),
+    planType: z.nativeEnum(PlanType).optional(),
+    startDate: z.string().optional(),
+    endDate: z.string().optional(),
+    minAmountCents: z.coerce.number().int().nonnegative().optional(),
+    maxAmountCents: z.coerce.number().int().nonnegative().optional(),
+    page: z.coerce.number().int().min(1).optional(),
+    limit: z.coerce.number().int().min(1).max(100).optional()
+});
+
+const parseOptionalDate = (value?: string): Date | undefined => {
+    if (!value) return undefined;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        throw new Error('Invalid date filter');
+    }
+    return date;
+};
+
+const listInvoicesByScope = async (
+    req: Request,
+    res: Response,
+    scope: billingAdminService.AdminInvoiceScope
+): Promise<void> => {
+    try {
+        const parsed = invoiceListQuerySchema.parse(req.query);
+        const startDate = parseOptionalDate(parsed.startDate);
+        const endDate = parseOptionalDate(parsed.endDate);
+
+        if (
+            typeof parsed.minAmountCents === 'number'
+            && typeof parsed.maxAmountCents === 'number'
+            && parsed.minAmountCents > parsed.maxAmountCents
+        ) {
+            res.status(400).json({ message: 'minAmountCents cannot be greater than maxAmountCents' });
+            return;
+        }
+
+        const response = await billingAdminService.listInvoices(scope, {
+            search: parsed.search,
+            status: parsed.status,
+            planType: parsed.planType,
+            startDate,
+            endDate,
+            minAmountCents: parsed.minAmountCents,
+            maxAmountCents: parsed.maxAmountCents,
+            page: parsed.page,
+            limit: parsed.limit
+        });
+
+        res.json(response);
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            res.status(400).json({ errors: error.issues });
+            return;
+        }
+        res.status(400).json({ message: error.message || 'Failed to list invoices' });
+    }
+};
+
+const downloadInvoicePdfByScope = async (
+    req: Request,
+    res: Response,
+    scope: billingAdminService.AdminInvoiceScope
+): Promise<void> => {
+    try {
+        const { id } = req.params as { id: string };
+        const actor = (req as any).user;
+        if (!actor?.id) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
+        }
+
+        const pdf = await billingAdminService.buildInvoicePdfForAdmin(id, scope);
+
+        await auditService.logAction({
+            adminId: actor.id,
+            actorRole: actor.role,
+            action: AuditActionType.OTHER,
+            entity: 'Invoice',
+            targetId: pdf.invoiceId,
+            details: `ADMIN_INVOICE_PDF_DOWNLOADED scope=${scope} invoiceNumber=${pdf.invoiceNumber}`,
+            snapshot: {
+                scope,
+                invoiceId: pdf.invoiceId,
+                invoiceNumber: pdf.invoiceNumber,
+                organizationId: pdf.organizationId
+            },
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent']
+        });
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', buildInvoiceContentDisposition(pdf.filename));
+        res.status(200).send(pdf.pdfBuffer);
+    } catch (error: any) {
+        if (error.message === 'Invoice not found') {
+            res.status(404).json({ message: 'Invoice not found' });
+            return;
+        }
+        res.status(500).json({ message: error.message || 'Failed to download invoice PDF' });
+    }
+};
 
 export const createManualInvoice = async (req: Request, res: Response): Promise<void> => {
     try {
@@ -120,4 +227,20 @@ export const extendTrial = async (req: Request, res: Response): Promise<void> =>
         }
         res.status(400).json({ message: error.message || 'Failed to extend trial' });
     }
+};
+
+export const listOrganizationInvoices = async (req: Request, res: Response): Promise<void> => {
+    await listInvoicesByScope(req, res, 'ORG');
+};
+
+export const listEnterpriseInvoices = async (req: Request, res: Response): Promise<void> => {
+    await listInvoicesByScope(req, res, 'ENTERPRISE');
+};
+
+export const downloadOrganizationInvoicePdf = async (req: Request, res: Response): Promise<void> => {
+    await downloadInvoicePdfByScope(req, res, 'ORG');
+};
+
+export const downloadEnterpriseInvoicePdf = async (req: Request, res: Response): Promise<void> => {
+    await downloadInvoicePdfByScope(req, res, 'ENTERPRISE');
 };

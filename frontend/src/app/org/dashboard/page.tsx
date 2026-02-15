@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { fetchOrgStats, fetchMyRequests, createRequest, fetchMyOrganization, fetchCountries, fetchStates, fetchCategories, uploadOrgLogo, updateMyOrganization, updateUserProfile, fetchTrafficHeatmap, fetchCategoryPerformance, fetchBusinessInsights, exportAnalytics, fetchOrgLinkRequests, approveOrgLinkRequest, denyOrgLinkRequest } from '@/lib/api';
+import { fetchOrgStats, fetchMyRequests, createRequest, fetchMyOrganization, fetchCountries, fetchStates, fetchCategories, uploadOrgLogo, updateMyOrganization, updateUserProfile, fetchTrafficHeatmap, fetchCategoryPerformance, fetchBusinessInsights, exportAnalytics, fetchOrgLinkRequests, approveOrgLinkRequest, denyOrgLinkRequest, downloadOrganizationInvoicePdf } from '@/lib/api';
 import AnalyticsChart from '@/components/analytics/AnalyticsChart';
 import TrafficHeatmap from '@/components/analytics/TrafficHeatmap';
 import CategoryPerformance from '@/components/analytics/CategoryPerformance';
@@ -51,6 +51,7 @@ export default function OrgDashboard() {
     const [activeTab, setActiveTab] = useState<'overview' | 'billing' | 'settings' | 'requests' | 'security'>('overview');
     const [uploadingLogo, setUploadingLogo] = useState(false);
     const [showOrganizationId, setShowOrganizationId] = useState(false);
+    const [downloadingInvoiceId, setDownloadingInvoiceId] = useState<string | null>(null);
 
     // Forms
     const [formData, setFormData] = useState({
@@ -430,6 +431,23 @@ export default function OrgDashboard() {
             } catch {
                 showToast('Failed to copy ID', 'error');
             }
+        }
+    };
+
+    const handleDownloadInvoice = async (invoice: any) => {
+        try {
+            setDownloadingInvoiceId(invoice.id);
+            await downloadOrganizationInvoicePdf(invoice.id, {
+                organizationName: orgData?.name,
+                organizationId: orgData?.id,
+                invoiceNumber: invoice?.invoiceNumber || null,
+                invoiceDate: invoice?.createdAt || null
+            });
+            showToast('Invoice downloaded', 'success');
+        } catch (error: any) {
+            showToast(error?.message || 'Failed to download invoice', 'error');
+        } finally {
+            setDownloadingInvoiceId(null);
         }
     };
 
@@ -914,13 +932,14 @@ export default function OrgDashboard() {
                                                         <span className={`px-3 py-1 rounded-full text-xs font-semibold ${invoice.status === 'PAID' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : invoice.status === 'OPEN' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
                                                             {invoice.status}
                                                         </span>
-                                                        {invoice.pdfUrl ? (
-                                                            <a href={invoice.pdfUrl} target="_blank" className="text-sm text-blue-600 dark:text-blue-400 hover:underline">
-                                                                Download PDF
-                                                            </a>
-                                                        ) : (
-                                                            <span className="text-xs text-slate-400">PDF soon</span>
-                                                        )}
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDownloadInvoice(invoice)}
+                                                            disabled={downloadingInvoiceId === invoice.id}
+                                                            className="text-sm text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:no-underline"
+                                                        >
+                                                            {downloadingInvoiceId === invoice.id ? 'Downloading...' : 'Download PDF'}
+                                                        </button>
                                                     </div>
                                                 </div>
                                             ))}

@@ -19,6 +19,7 @@ import {
   CheckSquare,
   Flag,
   Key,
+  Receipt,
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
@@ -44,6 +45,7 @@ import AuditLogsSection from '@/components/admin/sections/AuditLogsSection';
 import ComplianceSection from '@/components/admin/sections/ComplianceSection';
 import AdminSessionsSection from '@/components/admin/sections/AdminSessionsSection';
 import EnterpriseSection from '@/components/admin/sections/EnterpriseSection';
+import BillingSection from '@/components/admin/sections/BillingSection';
 
 type AdminSection =
   | 'SITES'
@@ -60,6 +62,7 @@ type AdminSection =
   | 'LOGS'
   | 'COMPLIANCE'
   | 'SESSIONS'
+  | 'BILLING'
   | 'ENTERPRISE';
 
 const ADMIN_SIDEBAR_COLLAPSE_STORAGE_KEY = 'verilnk_admin_sidebar_collapsed';
@@ -209,6 +212,12 @@ export default function AdminDashboard({
       icon: Landmark,
       roles: ['SUPER_ADMIN'],
     },
+    {
+      id: 'BILLING',
+      name: 'Billing',
+      icon: Receipt,
+      roles: ['SUPER_ADMIN'],
+    },
   ];
 
   // Group Definitions
@@ -227,7 +236,7 @@ export default function AdminDashboard({
     },
     {
       title: 'Accounts & Orgs',
-      items: ['ENTERPRISE', 'ORGANIZATIONS', 'USERS'],
+      items: ['ENTERPRISE', 'ORGANIZATIONS', 'BILLING', 'USERS'],
     },
   ];
 
@@ -273,6 +282,9 @@ export default function AdminDashboard({
       case 'ENTERPRISE':
         if (adminUser?.role !== 'SUPER_ADMIN') return <SitesSection />;
         return <EnterpriseSection />;
+      case 'BILLING':
+        if (adminUser?.role !== 'SUPER_ADMIN') return <SitesSection />;
+        return <BillingSection />;
       case 'ACCOUNT':
         return <AccountSection user={adminUser} />;
       default:

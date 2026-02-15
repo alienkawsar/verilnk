@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bulkUpdateOrganizationPlan = exports.updateOrganizationPlan = exports.bulkUpdateOrganizationPriority = exports.updateOrganizationPriority = exports.permanentlyDeleteOrganization = exports.restoreOrganization = exports.deleteOrganizationsBulk = exports.restrictOrganization = exports.deleteOrganization = exports.updateOrganization = exports.getPublicSitemap = exports.getPublicProfile = exports.updateMyOrganization = exports.adminCreateOrganization = exports.getMyOrganization = exports.getOrganizations = exports.signupOrganization = void 0;
+exports.bulkUpdateOrganizationPlan = exports.updateOrganizationPlan = exports.bulkUpdateOrganizationPriority = exports.updateOrganizationPriority = exports.permanentlyDeleteOrganization = exports.restoreOrganization = exports.deleteOrganizationsBulk = exports.restrictOrganization = exports.deleteOrganization = exports.updateOrganization = exports.getPublicSitemap = exports.getPublicProfile = exports.updateMyOrganization = exports.adminCreateOrganization = exports.downloadMyOrganizationInvoicePdf = exports.getMyOrganization = exports.getOrganizations = exports.signupOrganization = void 0;
 const orgService = __importStar(require("../services/organization.service"));
 const requestService = __importStar(require("../services/request.service"));
 const client_1 = require("../db/client");
@@ -42,6 +42,8 @@ const client_2 = require("@prisma/client");
 const recaptcha_service_1 = require("../services/recaptcha.service");
 const entitlement_service_1 = require("../services/entitlement.service");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
+const invoice_pdf_service_1 = require("../services/invoice-pdf.service");
+const invoice_filename_service_1 = require("../services/invoice-filename.service");
 const orgSignupSchema = zod_1.z.object({
     email: zod_1.z.string().email(),
     password: zod_1.z.string().regex(passwordPolicy_1.STRONG_PASSWORD_REGEX, passwordPolicy_1.STRONG_PASSWORD_MESSAGE),
@@ -256,6 +258,114 @@ const getMyOrganization = async (req, res) => {
     }
 };
 exports.getMyOrganization = getMyOrganization;
+const downloadMyOrganizationInvoicePdf = async (req, res) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
+        }
+        const user = await client_1.prisma.user.findUnique({
+            where: { id: userId },
+            select: { organizationId: true }
+        });
+        if (!user?.organizationId) {
+            res.status(403).json({ message: 'Organization user required' });
+            return;
+        }
+        const invoiceId = req.params.invoiceId;
+        const invoice = await client_1.prisma.invoice.findFirst({
+            where: {
+                id: invoiceId,
+                billingAccount: {
+                    organizationId: user.organizationId
+                }
+            },
+            include: {
+                billingAccount: {
+                    include: {
+                        organization: {
+                            select: {
+                                id: true,
+                                name: true,
+                                email: true,
+                                website: true,
+                                address: true,
+                                planType: true
+                            }
+                        }
+                    }
+                },
+                subscription: {
+                    select: {
+                        planType: true,
+                        currentPeriodStart: true,
+                        currentPeriodEnd: true
+                    }
+                }
+            }
+        });
+        if (!invoice) {
+            res.status(404).json({ message: 'Invoice not found' });
+            return;
+        }
+        const metadata = (invoice.metadata && typeof invoice.metadata === 'object')
+            ? invoice.metadata
+            : {};
+        const planName = ((typeof metadata.planType === 'string' ? metadata.planType : null)
+            || invoice.subscription?.planType
+            || invoice.billingAccount.organization.planType
+            || 'BASIC');
+        const periodStart = invoice.periodStart || invoice.subscription?.currentPeriodStart || invoice.createdAt;
+        let periodEnd = invoice.periodEnd || invoice.subscription?.currentPeriodEnd || null;
+        if (!periodEnd && typeof metadata.durationDays === 'number' && Number.isFinite(metadata.durationDays)) {
+            const days = Math.max(0, Math.floor(Number(metadata.durationDays)));
+            if (days > 0) {
+                periodEnd = new Date(periodStart.getTime() + days * 24 * 60 * 60 * 1000);
+            }
+        }
+        const discountCents = typeof metadata.discountCents === 'number' ? Math.max(0, Math.floor(metadata.discountCents)) : 0;
+        const taxCents = typeof metadata.taxCents === 'number' ? Math.max(0, Math.floor(metadata.taxCents)) : 0;
+        const notes = typeof metadata.notes === 'string' ? metadata.notes : null;
+        const invoiceNumber = invoice.invoiceNumber || `INV-${invoice.id.slice(0, 8).toUpperCase()}`;
+        const pdfBuffer = await (0, invoice_pdf_service_1.buildInvoicePdfBuffer)({
+            invoiceNumber,
+            invoiceDate: invoice.createdAt,
+            status: invoice.status,
+            paidAt: invoice.paidAt,
+            periodStart,
+            periodEnd,
+            planName,
+            planType: planName,
+            currency: invoice.currency || 'USD',
+            amountCents: invoice.amountCents,
+            discountCents,
+            taxCents,
+            billTo: {
+                name: invoice.billingAccount.organization.name,
+                email: invoice.billingAccount.billingEmail || invoice.billingAccount.organization.email,
+                website: invoice.billingAccount.organization.website,
+                address: invoice.billingAccount.organization.address
+            },
+            notes
+        });
+        const filename = (0, invoice_filename_service_1.buildInvoiceDownloadFilename)({
+            organizationName: invoice.billingAccount.organization.name,
+            organizationId: invoice.billingAccount.organization.id,
+            invoiceNumber: invoice.invoiceNumber,
+            invoiceId: invoice.id,
+            invoiceDate: invoice.createdAt
+        });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(filename));
+        res.status(200).send(pdfBuffer);
+    }
+    catch (error) {
+        console.error('[Organizations] download invoice error:', error);
+        res.status(500).json({ message: error.message || 'Failed to download invoice' });
+    }
+};
+exports.downloadMyOrganizationInvoicePdf = downloadMyOrganizationInvoicePdf;
 const adminCreateOrganization = async (req, res) => {
     try {
         const payload = adminCreateOrgSchema.parse(req.body);

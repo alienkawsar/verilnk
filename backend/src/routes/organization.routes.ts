@@ -13,6 +13,7 @@ router.get('/:id/public', orgController.getPublicProfile);
 // Organization User Routes (Authenticated)
 router.get('/me', authenticateUser, orgController.getMyOrganization);
 router.patch('/me', authenticateUser, checkRestriction, orgController.updateMyOrganization);
+router.get('/invoices/:invoiceId/pdf', authenticateUser, orgController.downloadMyOrganizationInvoicePdf);
 
 // Management Routes
 router.use(authenticateAdmin);

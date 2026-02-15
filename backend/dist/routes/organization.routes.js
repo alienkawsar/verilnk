@@ -48,6 +48,7 @@ router.get('/:id/public', orgController.getPublicProfile);
 // Organization User Routes (Authenticated)
 router.get('/me', auth_middleware_1.authenticateUser, orgController.getMyOrganization);
 router.patch('/me', auth_middleware_1.authenticateUser, restriction_middleware_1.checkRestriction, orgController.updateMyOrganization);
+router.get('/invoices/:invoiceId/pdf', auth_middleware_1.authenticateUser, orgController.downloadMyOrganizationInvoicePdf);
 // Management Routes
 router.use(auth_middleware_1.authenticateAdmin);
 router.get('/', (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN', 'VERIFIER', 'MODERATOR']), orgController.getOrganizations);

@@ -15,6 +15,51 @@ const pendingRequests = new Map<string, Promise<any>>();
 const searchCache = new Map<string, { ts: number; promise: Promise<any> }>();
 const SEARCH_CACHE_TTL_MS = 1500;
 
+type InvoiceFilenameFallbackInput = {
+    organizationName?: string | null;
+    organizationId?: string | null;
+    invoiceNumber?: string | null;
+    invoiceDate?: string | Date | null;
+};
+
+const sanitizeFilenameSlug = (value: string | null | undefined): string => {
+    if (!value) return '';
+    return value
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+};
+
+const formatFilenameDate = (value?: string | Date | null): string => {
+    const date = value ? new Date(value) : new Date();
+    if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
+const buildInvoiceToken = (invoiceNumber: string | null | undefined, invoiceId: string): string => {
+    const raw = (invoiceNumber || '').trim();
+    const cleaned = raw
+        .replace(/^inv[-_\s]*/i, '')
+        .replace(/[^a-zA-Z0-9-]/g, '')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return cleaned ? `INV-${cleaned.toUpperCase()}` : `INV-${invoiceId.slice(0, 8).toUpperCase()}`;
+};
+
+const buildInvoiceFallbackFilename = (invoiceId: string, fallback?: InvoiceFilenameFallbackInput): string => {
+    const orgSlug = sanitizeFilenameSlug(fallback?.organizationName)
+        || `org-${(fallback?.organizationId || invoiceId).slice(0, 8).toLowerCase()}`;
+    const invoiceToken = buildInvoiceToken(fallback?.invoiceNumber, invoiceId);
+    const dateToken = formatFilenameDate(fallback?.invoiceDate);
+    return `${orgSlug}_${invoiceToken}_${dateToken}.pdf`;
+};
+
 const sanitizeQueryParams = <T extends Record<string, unknown>>(params?: T): Partial<T> => {
     if (!params) return {};
 
@@ -59,6 +104,34 @@ export const updateUserProfile = async (data: any) => {
 
 export const fetchMyOrganization = async () => {
     return deduplicatedGet('/organizations/me', { params: { _t: Date.now() } });
+};
+
+export const downloadOrganizationInvoicePdf = async (invoiceId: string, fallback?: InvoiceFilenameFallbackInput) => {
+    const response = await fetch(`${API_URL}/organizations/invoices/${invoiceId}/pdf`, {
+        method: 'GET',
+        credentials: 'include'
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Invoice download failed' }));
+        throw new Error(error.message || 'Invoice download failed');
+    }
+
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+    const filename = filenameMatch?.[1] || buildInvoiceFallbackFilename(invoiceId, fallback);
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+
+    return { success: true };
 };
 
 
@@ -594,6 +667,108 @@ export const extendTrial = async (organizationId: string, extraDays: number) => 
     return response.data;
 };
 
+export interface AdminBillingInvoiceListParams extends Record<string, unknown> {
+    search?: string;
+    status?: 'OPEN' | 'PAID' | 'VOID' | 'DRAFT' | 'REFUNDED';
+    planType?: 'FREE' | 'BASIC' | 'PRO' | 'BUSINESS' | 'ENTERPRISE';
+    startDate?: string;
+    endDate?: string;
+    minAmountCents?: number;
+    maxAmountCents?: number;
+    page?: number;
+    limit?: number;
+}
+
+export interface AdminBillingInvoice {
+    id: string;
+    invoiceNumber: string;
+    status: 'OPEN' | 'PAID' | 'VOID' | 'DRAFT' | 'REFUNDED';
+    amountCents: number;
+    currency: string;
+    createdAt: string;
+    updatedAt: string;
+    dueAt: string | null;
+    paidAt: string | null;
+    periodStart: string | null;
+    periodEnd: string | null;
+    planType: 'FREE' | 'BASIC' | 'PRO' | 'BUSINESS' | 'ENTERPRISE';
+    subscriptionId: string | null;
+    customer: {
+        organizationId: string;
+        name: string;
+        email: string;
+        website: string | null;
+    };
+    billing: {
+        billingEmail: string | null;
+        billingName: string | null;
+        taxId: string | null;
+    };
+    metadata: Record<string, unknown>;
+}
+
+export interface AdminBillingInvoiceListResponse {
+    invoices: AdminBillingInvoice[];
+    pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+    };
+}
+
+export const fetchAdminOrganizationInvoices = async (params?: AdminBillingInvoiceListParams) => {
+    const response = await api.get('/admin/billing/org-invoices', {
+        params: sanitizeQueryParams(params)
+    });
+    return response.data as AdminBillingInvoiceListResponse;
+};
+
+export const fetchAdminEnterpriseInvoices = async (params?: AdminBillingInvoiceListParams) => {
+    const response = await api.get('/admin/billing/enterprise-invoices', {
+        params: sanitizeQueryParams(params)
+    });
+    return response.data as AdminBillingInvoiceListResponse;
+};
+
+const downloadAdminInvoicePdf = async (
+    scope: 'org-invoices' | 'enterprise-invoices',
+    invoiceId: string,
+    fallback?: InvoiceFilenameFallbackInput
+) => {
+    const response = await fetch(`${API_URL}/admin/billing/${scope}/${invoiceId}/pdf`, {
+        method: 'GET',
+        credentials: 'include'
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Invoice download failed' }));
+        throw new Error(error.message || 'Invoice download failed');
+    }
+
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+    const filename = filenameMatch?.[1] || buildInvoiceFallbackFilename(invoiceId, fallback);
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+};
+
+export const downloadAdminOrganizationInvoicePdf = async (invoiceId: string, fallback?: InvoiceFilenameFallbackInput) => {
+    await downloadAdminInvoicePdf('org-invoices', invoiceId, fallback);
+};
+
+export const downloadAdminEnterpriseInvoicePdf = async (invoiceId: string, fallback?: InvoiceFilenameFallbackInput) => {
+    await downloadAdminInvoicePdf('enterprise-invoices', invoiceId, fallback);
+};
+
 
 
 export const updateAdminProfile = async (data: any) => {
@@ -858,15 +1033,16 @@ export const exportAnalytics = async (orgId: string, format: 'csv' | 'pdf' = 'cs
             responseType: 'blob'
         });
 
-        // Create blob with correct MIME type
+        const contentDisposition = response.headers?.['content-disposition'] || '';
+        const filenameMatch = String(contentDisposition).match(/filename=\"?([^\";]+)\"?/i);
+        const filename = filenameMatch?.[1] || `analytics-report-${range}.${format}`;
         const mimeType = format === 'pdf' ? 'application/pdf' : 'text/csv';
         const blob = new Blob([response.data], { type: mimeType });
         const url = window.URL.createObjectURL(blob);
 
-        // Create and click download link
         const link = document.createElement('a');
         link.href = url;
-        link.setAttribute('download', `verilnk-analytics-${range}.${format}`);
+        link.setAttribute('download', filename);
         document.body.appendChild(link);
         link.click();
         link.remove();

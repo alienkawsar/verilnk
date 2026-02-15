@@ -7,6 +7,8 @@ import { RequestType, PlanType, PlanStatus } from '@prisma/client';
 import { verifyCaptcha } from '../services/recaptcha.service';
 import { resolveOrganizationEntitlements } from '../services/entitlement.service';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '../utils/passwordPolicy';
+import { buildInvoicePdfBuffer } from '../services/invoice-pdf.service';
+import { buildInvoiceContentDisposition, buildInvoiceDownloadFilename } from '../services/invoice-filename.service';
 
 const orgSignupSchema = z.object({
     email: z.string().email(),
@@ -230,6 +232,128 @@ export const getMyOrganization = async (req: Request, res: Response): Promise<vo
         });
     } catch (error: any) {
         res.status(500).json({ message: 'Error fetching organization' });
+    }
+};
+
+export const downloadMyOrganizationInvoicePdf = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const userId = (req as any).user?.id as string | undefined;
+        if (!userId) {
+            res.status(401).json({ message: 'Unauthorized' });
+            return;
+        }
+
+        const user = await prisma.user.findUnique({
+            where: { id: userId },
+            select: { organizationId: true }
+        });
+
+        if (!user?.organizationId) {
+            res.status(403).json({ message: 'Organization user required' });
+            return;
+        }
+
+        const invoiceId = req.params.invoiceId as string;
+        const invoice = await prisma.invoice.findFirst({
+            where: {
+                id: invoiceId,
+                billingAccount: {
+                    organizationId: user.organizationId
+                }
+            },
+            include: {
+                billingAccount: {
+                    include: {
+                        organization: {
+                            select: {
+                                id: true,
+                                name: true,
+                                email: true,
+                                website: true,
+                                address: true,
+                                planType: true
+                            }
+                        }
+                    }
+                },
+                subscription: {
+                    select: {
+                        planType: true,
+                        currentPeriodStart: true,
+                        currentPeriodEnd: true
+                    }
+                }
+            }
+        });
+
+        if (!invoice) {
+            res.status(404).json({ message: 'Invoice not found' });
+            return;
+        }
+
+        const metadata = (invoice.metadata && typeof invoice.metadata === 'object')
+            ? invoice.metadata as Record<string, unknown>
+            : {};
+
+        const planName = (
+            (typeof metadata.planType === 'string' ? metadata.planType : null)
+            || invoice.subscription?.planType
+            || invoice.billingAccount.organization.planType
+            || 'BASIC'
+        );
+
+        const periodStart = invoice.periodStart || invoice.subscription?.currentPeriodStart || invoice.createdAt;
+        let periodEnd = invoice.periodEnd || invoice.subscription?.currentPeriodEnd || null;
+        if (!periodEnd && typeof metadata.durationDays === 'number' && Number.isFinite(metadata.durationDays)) {
+            const days = Math.max(0, Math.floor(Number(metadata.durationDays)));
+            if (days > 0) {
+                periodEnd = new Date(periodStart.getTime() + days * 24 * 60 * 60 * 1000);
+            }
+        }
+
+        const discountCents = typeof metadata.discountCents === 'number' ? Math.max(0, Math.floor(metadata.discountCents)) : 0;
+        const taxCents = typeof metadata.taxCents === 'number' ? Math.max(0, Math.floor(metadata.taxCents)) : 0;
+        const notes = typeof metadata.notes === 'string' ? metadata.notes : null;
+
+        const invoiceNumber = invoice.invoiceNumber || `INV-${invoice.id.slice(0, 8).toUpperCase()}`;
+        const pdfBuffer = await buildInvoicePdfBuffer({
+            invoiceNumber,
+            invoiceDate: invoice.createdAt,
+            status: invoice.status,
+            paidAt: invoice.paidAt,
+            periodStart,
+            periodEnd,
+            planName,
+            planType: planName,
+            currency: invoice.currency || 'USD',
+            amountCents: invoice.amountCents,
+            discountCents,
+            taxCents,
+            billTo: {
+                name: invoice.billingAccount.organization.name,
+                email: invoice.billingAccount.billingEmail || invoice.billingAccount.organization.email,
+                website: invoice.billingAccount.organization.website,
+                address: invoice.billingAccount.organization.address
+            },
+            notes
+        });
+
+        const filename = buildInvoiceDownloadFilename({
+            organizationName: invoice.billingAccount.organization.name,
+            organizationId: invoice.billingAccount.organization.id,
+            invoiceNumber: invoice.invoiceNumber,
+            invoiceId: invoice.id,
+            invoiceDate: invoice.createdAt
+        });
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader(
+            'Content-Disposition',
+            buildInvoiceContentDisposition(filename)
+        );
+        res.status(200).send(pdfBuffer);
+    } catch (error: any) {
+        console.error('[Organizations] download invoice error:', error);
+        res.status(500).json({ message: error.message || 'Failed to download invoice' });
     }
 };
 

@@ -269,6 +269,22 @@ export interface EnterpriseProfile {
         country?: { id: string; code: string; name: string } | null;
         state?: { id: string; code?: string | null; name: string } | null;
         category?: { id: string; name: string; slug: string } | null;
+        billingAccount?: {
+            id: string;
+            invoices: Array<{
+                id: string;
+                invoiceNumber: string | null;
+                status: string;
+                amountCents: number;
+                currency: string;
+                createdAt: string;
+                periodStart?: string | null;
+                periodEnd?: string | null;
+                dueAt?: string | null;
+                paidAt?: string | null;
+                pdfUrl?: string | null;
+            }>;
+        } | null;
     };
     role: WorkspaceRole | null;
     canEdit: boolean;
@@ -768,11 +784,15 @@ export async function exportEnterpriseAnalytics(
         throw new Error(error.message || 'Export failed');
     }
 
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+    const filename = filenameMatch?.[1] || `workspace-analytics-${range}.${format}`;
+
     const blob = await response.blob();
     const objectUrl = window.URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = objectUrl;
-    link.setAttribute('download', `workspace-analytics-${workspaceId}-${range}.${format}`);
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -831,6 +851,32 @@ export async function exportWorkspaceAuditLogs(
     const link = document.createElement('a');
     link.href = objectUrl;
     link.setAttribute('download', `workspace-audit-${workspaceId}-${range}.${format}`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+
+    return { success: true };
+}
+
+export async function downloadEnterpriseInvoice(invoiceId: string): Promise<{ success: boolean }> {
+    const url = `${API_BASE}/enterprise/invoices/${invoiceId}/pdf`;
+    const response = await fetch(url, { credentials: 'include' });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Invoice download failed' }));
+        throw new Error(error.message || 'Invoice download failed');
+    }
+
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+    const filename = filenameMatch?.[1] || `verilnk-invoice-${invoiceId}.pdf`;
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.setAttribute('download', filename);
     document.body.appendChild(link);
     link.click();
     link.remove();

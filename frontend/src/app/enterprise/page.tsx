@@ -35,6 +35,7 @@ import {
 import {
     checkEnterpriseAccess,
     createWorkspace,
+    downloadEnterpriseInvoice,
     formatLimitReachedMessage,
     getEnterpriseProfile,
     getWorkspaces,
@@ -142,6 +143,7 @@ export default function EnterprisePage() {
     const [saving, setSaving] = useState(false);
     const [uploadingLogo, setUploadingLogo] = useState(false);
     const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+    const [downloadingInvoiceId, setDownloadingInvoiceId] = useState<string | null>(null);
 
     const [hasAccess, setHasAccess] = useState(false);
     const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
@@ -195,6 +197,8 @@ export default function EnterprisePage() {
         && workspaceUsage >= workspaceLimit,
     );
     const planStatusLabel = profile?.organization.planStatus || 'ACTIVE';
+    const invoices = profile?.organization.billingAccount?.invoices || [];
+    const latestInvoice = invoices[0] || null;
     const planEndAt = (profile?.organization as { planEndAt?: string | null } | null)
         ?.planEndAt;
     const renewalLabel = planEndAt
@@ -424,7 +428,11 @@ export default function EnterprisePage() {
                 if (!previous) return previous;
                 return {
                     ...previous,
-                    organization: response.organization,
+                    organization: {
+                        ...previous.organization,
+                        ...response.organization,
+                        billingAccount: response.organization?.billingAccount ?? previous.organization.billingAccount,
+                    },
                     role: response.role,
                     canEdit: response.canEdit,
                 };
@@ -440,6 +448,18 @@ export default function EnterprisePage() {
             showToast(err.message || 'Failed to update enterprise profile', 'error');
         } finally {
             setSaving(false);
+        }
+    };
+
+    const handleDownloadInvoice = async (invoiceId: string) => {
+        try {
+            setDownloadingInvoiceId(invoiceId);
+            await downloadEnterpriseInvoice(invoiceId);
+            showToast('Invoice downloaded', 'success');
+        } catch (err: any) {
+            showToast(err.message || 'Failed to download invoice', 'error');
+        } finally {
+            setDownloadingInvoiceId(null);
         }
     };
 
@@ -802,14 +822,67 @@ export default function EnterprisePage() {
                                     </div>
 
                                     <div className="mt-6">
-                                        <button
-                                            onClick={() => router.push('/org/upgrade')}
-                                            className="inline-flex items-center gap-2 px-4 py-2 btn-primary text-sm font-medium rounded-lg"
-                                        >
-                                            <ExternalLink className="w-4 h-4" />
-                                            Manage Plan
-                                        </button>
+                                        <div className="flex flex-wrap items-center gap-3">
+                                            <button
+                                                onClick={() => router.push('/org/upgrade')}
+                                                className="inline-flex items-center gap-2 px-4 py-2 btn-primary text-sm font-medium rounded-lg"
+                                            >
+                                                <ExternalLink className="w-4 h-4" />
+                                                Manage Plan
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => latestInvoice && handleDownloadInvoice(latestInvoice.id)}
+                                                disabled={!latestInvoice || !!downloadingInvoiceId || !canEditProfile}
+                                                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg border border-[var(--app-border)] text-sm font-medium text-slate-700 dark:text-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                {downloadingInvoiceId && latestInvoice?.id === downloadingInvoiceId ? (
+                                                    <Loader2 className="w-4 h-4 animate-spin" />
+                                                ) : (
+                                                    <CreditCard className="w-4 h-4" />
+                                                )}
+                                                Invoice
+                                            </button>
+                                        </div>
                                     </div>
+                                </div>
+
+                                <div className="surface-card rounded-xl p-6 border border-[var(--app-border)]">
+                                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Invoice History</h3>
+                                    {invoices.length ? (
+                                        <div className="space-y-3">
+                                            {invoices.map((invoice) => (
+                                                <div
+                                                    key={invoice.id}
+                                                    className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 border border-[var(--app-border)] rounded-lg p-4"
+                                                >
+                                                    <div>
+                                                        <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                                                            {invoice.invoiceNumber || invoice.id}
+                                                        </div>
+                                                        <div className="text-xs text-slate-500 dark:text-slate-400">
+                                                            {new Date(invoice.createdAt).toLocaleDateString()} · {(invoice.amountCents / 100).toFixed(2)} {invoice.currency}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${invoice.status === 'PAID' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300' : invoice.status === 'OPEN' ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-500/10 dark:text-yellow-300' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
+                                                            {invoice.status}
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDownloadInvoice(invoice.id)}
+                                                            disabled={!canEditProfile || downloadingInvoiceId === invoice.id}
+                                                            className="text-sm text-blue-600 dark:text-blue-400 hover:underline disabled:opacity-50 disabled:no-underline"
+                                                        >
+                                                            {downloadingInvoiceId === invoice.id ? 'Downloading...' : 'Download PDF'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-sm text-slate-500 dark:text-slate-400">No invoices yet.</p>
+                                    )}
                                 </div>
                             </div>
                         )}
