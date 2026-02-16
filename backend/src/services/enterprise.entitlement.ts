@@ -78,6 +78,35 @@ const NO_ENTERPRISE_ENTITLEMENTS: EnterpriseEntitlements = {
     apiBurstLimit: 0
 };
 
+const resolveEffectiveEnterpriseApiRateLimit = (
+    workspaceRates: Array<number | null | undefined>
+): number => {
+    const validRates = workspaceRates.filter(
+        (value): value is number => typeof value === 'number' && Number.isFinite(value) && value > 0
+    );
+    if (validRates.length === 0) {
+        return ENTERPRISE_DEFAULTS.apiRateLimitPerMinute;
+    }
+
+    // When multiple workspace overrides exist, use the most frequent value as
+    // the enterprise-level "default" shown in dashboard-level summaries.
+    const frequencies = new Map<number, number>();
+    for (const rate of validRates) {
+        frequencies.set(rate, (frequencies.get(rate) || 0) + 1);
+    }
+
+    let selectedRate = ENTERPRISE_DEFAULTS.apiRateLimitPerMinute;
+    let selectedCount = -1;
+    for (const [rate, count] of frequencies.entries()) {
+        if (count > selectedCount || (count === selectedCount && rate < selectedRate)) {
+            selectedRate = rate;
+            selectedCount = count;
+        }
+    }
+
+    return selectedRate;
+};
+
 // ============================================
 // Core Functions
 // ============================================
@@ -231,12 +260,32 @@ export const getUserEnterpriseAccess = async (userId: string): Promise<{
         return { hasAccess: false };
     }
 
-    const snapshot = await getEnterpriseQuotaSnapshotByOrganizationId(user.organization.id);
+    const [snapshot, linkedWorkspaces] = await Promise.all([
+        getEnterpriseQuotaSnapshotByOrganizationId(user.organization.id),
+        prisma.workspace.findMany({
+            where: {
+                organizations: {
+                    some: { organizationId: user.organization.id }
+                }
+            },
+            select: {
+                customApiRateLimitRpm: true
+            }
+        })
+    ]);
+
+    const baseEntitlements = resolveEnterprisePlanEntitlements(PlanType.ENTERPRISE, snapshot.limits);
+    const effectiveApiRateLimit = resolveEffectiveEnterpriseApiRateLimit(
+        linkedWorkspaces.map((workspace) => workspace.customApiRateLimitRpm)
+    );
 
     return {
         hasAccess: true,
         organizationId: user.organization.id,
-        entitlements: resolveEnterprisePlanEntitlements(PlanType.ENTERPRISE, snapshot.limits),
+        entitlements: {
+            ...baseEntitlements,
+            apiRateLimitPerMinute: effectiveApiRateLimit
+        },
         usage: snapshot.usage
     };
 };

@@ -96,11 +96,35 @@ export const trackClick = async (organizationId: string, siteId?: string) => {
 
 export const getAnalytics = async (organizationId: string) => {
     try {
-        const stats = await prisma.orgAnalytics.findMany({
-            where: { organizationId },
-            orderBy: { date: 'asc' },
-            take: 30
-        });
+        const since = parseRange('30d');
+        const events = (await prisma.orgAnalyticsEvent.findMany({
+            where: {
+                organizationId,
+                createdAt: { gte: since }
+            },
+            select: {
+                eventType: true,
+                createdAt: true
+            },
+            orderBy: { createdAt: 'asc' }
+        })) || [];
+
+        const dayBucket = new Map<string, { views: number; clicks: number }>();
+        for (const event of events) {
+            const key = toLocalDateKey(event.createdAt);
+            const current = dayBucket.get(key) || { views: 0, clicks: 0 };
+            if (event.eventType === 'view') current.views += 1;
+            if (event.eventType === 'click') current.clicks += 1;
+            dayBucket.set(key, current);
+        }
+
+        const stats = Array.from(dayBucket.entries())
+            .map(([date, counts]) => ({
+                date: new Date(`${date}T00:00:00`),
+                views: counts.views,
+                clicks: counts.clicks
+            }))
+            .sort((a, b) => a.date.getTime() - b.date.getTime());
 
         const totalViews = stats.reduce((acc, curr) => acc + curr.views, 0);
         const totalClicks = stats.reduce((acc, curr) => acc + curr.clicks, 0);
@@ -138,6 +162,14 @@ const parseRange = (range: string): Date => {
     startDate.setDate(startDate.getDate() - days);
     startDate.setHours(0, 0, 0, 0);
     return startDate;
+};
+
+const toLocalDateKey = (value: Date): string => {
+    const date = new Date(value);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
 };
 
 /**
@@ -251,7 +283,7 @@ export const getCategoryPerformance = async (organizationId: string, range: stri
         const catId = event.site.category.id;
         if (!topCategoryIds.includes(catId)) continue;
 
-        const dateKey = new Date(event.createdAt).toISOString().split('T')[0];
+        const dateKey = toLocalDateKey(event.createdAt);
 
         if (!trendData[dateKey]) {
             trendData[dateKey] = {};
@@ -450,7 +482,49 @@ export const getWorkspaceLinkedOrgIds = async (workspaceId: string): Promise<str
         where: { workspaceId },
         select: { organizationId: true }
     });
-    return linkedOrgs.map(link => link.organizationId);
+
+    // Source of truth is WorkspaceOrganization, but we also include enterprise
+    // link-intents as a sync-safe fallback so analytics covers both linked orgs
+    // and enterprise-created orgs without double-counting.
+    const organizationIds = new Set(linkedOrgs.map((link) => link.organizationId));
+    const linkRequestModel = (prisma as any).enterpriseOrgLinkRequest;
+
+    if (linkRequestModel) {
+        try {
+            const intentRows = await linkRequestModel.findMany({
+                where: {
+                    workspaceId,
+                    // enterpriseOrgLinkRequest.organizationId is non-null in schema.
+                    // Filter out empty identifiers without using nullable comparisons.
+                    organizationId: { not: '' },
+                    OR: [
+                        { status: 'APPROVED' },
+                        {
+                            intentType: 'CREATE_UNDER_ENTERPRISE',
+                            status: 'PENDING_APPROVAL'
+                        }
+                    ]
+                },
+                select: {
+                    organizationId: true
+                }
+            }) as Array<{ organizationId?: string | null }>;
+
+            for (const row of intentRows) {
+                if (typeof row.organizationId === 'string' && row.organizationId.trim().length > 0) {
+                    organizationIds.add(row.organizationId);
+                }
+            }
+        } catch (error) {
+            // Soft-fail: analytics should still return linked org data from WorkspaceOrganization.
+            console.warn('[Analytics] Failed to include enterprise link intents for workspace', {
+                workspaceId,
+                error
+            });
+        }
+    }
+
+    return Array.from(organizationIds);
 };
 
 const buildEnterpriseStartDate = (range: string): { rangeDays: number; since: Date } => {
@@ -472,28 +546,35 @@ export const getEnterpriseAnalyticsDaily = async (workspaceId: string, range: st
         };
     }
 
-    const grouped = await prisma.orgAnalytics.groupBy({
-        by: ['date'],
+    const events = (await prisma.orgAnalyticsEvent.findMany({
         where: {
             organizationId: { in: organizationIds },
-            date: { gte: since }
+            createdAt: { gte: since }
         },
-        _sum: {
-            views: true,
-            clicks: true
-        },
-        orderBy: {
-            date: 'asc'
+        select: {
+            eventType: true,
+            createdAt: true
         }
-    });
+    })) || [];
+
+    const dayBucket = new Map<string, { views: number; clicks: number }>();
+    for (const event of events) {
+        const key = toLocalDateKey(event.createdAt);
+        const current = dayBucket.get(key) || { views: 0, clicks: 0 };
+        if (event.eventType === 'view') current.views += 1;
+        if (event.eventType === 'click') current.clicks += 1;
+        dayBucket.set(key, current);
+    }
 
     return {
         rangeDays,
-        series: grouped.map((item) => ({
-            date: item.date.toISOString().split('T')[0],
-            views: item._sum.views || 0,
-            clicks: item._sum.clicks || 0
-        }))
+        series: Array.from(dayBucket.entries())
+            .map(([date, counts]) => ({
+                date,
+                views: counts.views,
+                clicks: counts.clicks
+            }))
+            .sort((a, b) => a.date.localeCompare(b.date))
     };
 };
 
@@ -516,44 +597,46 @@ export const getEnterpriseAnalyticsSummary = async (workspaceId: string, range: 
         };
     }
 
-    const totalsAgg = await prisma.orgAnalytics.aggregate({
+    const events = (await prisma.orgAnalyticsEvent.findMany({
         where: {
             organizationId: { in: organizationIds },
-            date: { gte: since }
+            createdAt: { gte: since }
         },
-        _sum: { views: true, clicks: true }
-    });
+        select: {
+            organizationId: true,
+            eventType: true
+        }
+    })) || [];
 
-    const totalViews = totalsAgg._sum.views || 0;
-    const totalClicks = totalsAgg._sum.clicks || 0;
+    const orgBucket = new Map<string, { views: number; clicks: number }>();
+    for (const event of events) {
+        const current = orgBucket.get(event.organizationId) || { views: 0, clicks: 0 };
+        if (event.eventType === 'view') current.views += 1;
+        if (event.eventType === 'click') current.clicks += 1;
+        orgBucket.set(event.organizationId, current);
+    }
+
+    const totalViews = Array.from(orgBucket.values()).reduce((sum, item) => sum + item.views, 0);
+    const totalClicks = Array.from(orgBucket.values()).reduce((sum, item) => sum + item.clicks, 0);
     const totals = {
         views: totalViews,
         clicks: totalClicks,
         ctr: totalViews > 0 ? (totalClicks / totalViews) * 100 : 0
     };
 
-    const groupedByOrg = await prisma.orgAnalytics.groupBy({
-        by: ['organizationId'],
-        where: {
-            organizationId: { in: organizationIds },
-            date: { gte: since }
-        },
-        _sum: { views: true, clicks: true }
-    });
-
     const orgs = await prisma.organization.findMany({
-        where: { id: { in: groupedByOrg.map((item) => item.organizationId) } },
+        where: { id: { in: Array.from(orgBucket.keys()) } },
         select: { id: true, name: true, slug: true }
     });
     const orgMap = new Map(orgs.map((org) => [org.id, org]));
 
-    const topOrgs = groupedByOrg
-        .map((item) => {
-            const org = orgMap.get(item.organizationId);
-            const views = item._sum.views || 0;
-            const clicks = item._sum.clicks || 0;
+    const topOrgs = Array.from(orgBucket.entries())
+        .map(([organizationId, counts]) => {
+            const org = orgMap.get(organizationId);
+            const views = counts.views;
+            const clicks = counts.clicks;
             return {
-                organizationId: item.organizationId,
+                organizationId,
                 name: org?.name || 'Unknown',
                 slug: org?.slug || null,
                 views,
@@ -727,7 +810,7 @@ export const getEnterpriseAnalyticsCategories = async (workspaceId: string, rang
         if (event.eventType === 'view') categoryData[categoryId].views += 1;
         if (event.eventType === 'click') categoryData[categoryId].clicks += 1;
 
-        const dateKey = new Date(event.createdAt).toISOString().split('T')[0];
+        const dateKey = toLocalDateKey(event.createdAt);
         if (!trendData[dateKey]) trendData[dateKey] = {};
         if (!trendData[dateKey][categoryId]) trendData[dateKey][categoryId] = { views: 0, clicks: 0 };
         if (event.eventType === 'view') trendData[dateKey][categoryId].views += 1;

@@ -7,6 +7,7 @@ import ReportModal from '@/components/ReportModal';
 import LoginModal from '@/components/auth/LoginModal';
 import SignupModal from '@/components/auth/SignupModal';
 import { useAuth } from '@/context/AuthContext';
+import { trackClickFireAndForget } from '@/lib/api';
 
 interface Site {
     id: string;
@@ -24,6 +25,9 @@ interface Site {
     organization_public?: boolean;
     organizationId?: string | null;
     organizationPublic?: boolean;
+    organizationWebsite?: string | null;
+    organization_website?: string | null;
+    organization?: { website?: string | null } | null;
 }
 
 export default function SearchResultCard({ site }: { site: Site }) {
@@ -34,12 +38,19 @@ export default function SearchResultCard({ site }: { site: Site }) {
 
     const countryName = site.country_name || site.country?.name;
     const categoryName = site.category_name || site.category?.name;
-    const hostname = (() => { try { return new URL(site.url).hostname } catch { return site.url } })();
+    const orgWebsite =
+        site.organization?.website ||
+        site.organization_website ||
+        site.organizationWebsite ||
+        null;
+    const officialWebsite = orgWebsite || site.url;
+    const hostname = (() => { try { return new URL(officialWebsite).hostname } catch { return officialWebsite } })();
     const displayName = site.title || site.name || hostname;
     const isVerified = (site as any).isApproved === true || site.status === 'SUCCESS' || site.verification === 'SUCCESS';
     const orgId = site.organization_id || site.organizationId;
     const orgPublic = site.organization_public ?? site.organizationPublic ?? false;
     const hasVerifiedProfile = !!orgId && orgPublic === true;
+    const websiteLabel = orgId ? 'Official Website ↗' : 'Visit Website ↗';
 
     const handleReportClick = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -49,6 +60,11 @@ export default function SearchResultCard({ site }: { site: Site }) {
         } else {
             setIsReportOpen(true);
         }
+    };
+
+    const handleOfficialWebsiteClick = () => {
+        if (!orgId) return;
+        trackClickFireAndForget(orgId, site.id);
     };
 
     return (
@@ -79,12 +95,13 @@ export default function SearchResultCard({ site }: { site: Site }) {
                             </Link>
                         )}
                         <a
-                            href={site.url}
+                            href={officialWebsite}
                             target="_blank"
                             rel="noopener noreferrer"
+                            onClick={handleOfficialWebsiteClick}
                             className={`inline-flex items-center justify-center rounded-lg px-3 py-1.5 text-xs font-medium border transition-colors duration-150 ease-in-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/30 ${hasVerifiedProfile ? 'border-[#187DE9] text-[#187DE9] hover:border-[#187DE9] hover:text-[#187DE9] hover:bg-[#187DE9]/10 focus-visible:border-[#187DE9] focus-visible:text-[#187DE9]' : 'border-transparent bg-[#187DE9] text-white hover:border-[#187DE9] hover:text-[#187DE9] hover:bg-transparent dark:hover:bg-transparent focus-visible:border-[#187DE9] focus-visible:text-[#187DE9] focus-visible:bg-transparent dark:focus-visible:bg-transparent'}`}
                         >
-                            Official Website ↗
+                            {websiteLabel}
                         </a>
                     </div>
                     {hasVerifiedProfile && (

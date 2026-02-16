@@ -71,6 +71,11 @@ const normalizeRange = (value, fallback = '30') => {
     return fallback;
 };
 const WORKSPACE_AUDIT_ROLE_VALUES = new Set(['OWNER', 'ADMIN', 'DEVELOPER', 'ANALYST', 'AUDITOR', 'EDITOR', 'VIEWER', 'FORMER_MEMBER']);
+const applyNoStoreHeaders = (res) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+};
 const extractWorkspaceIdFromDetails = (details) => {
     if (!details)
         return null;
@@ -1814,6 +1819,7 @@ router.get('/profile', async (req, res) => {
         if (!context) {
             return res.status(403).json({ message: 'Enterprise access required' });
         }
+        applyNoStoreHeaders(res);
         res.json({
             organization: context.organization,
             role: context.role,
@@ -2066,6 +2072,7 @@ router.get('/usage/summary', async (req, res) => {
 router.get('/access', async (req, res) => {
     try {
         const access = await (0, enterprise_entitlement_1.getUserEnterpriseAccess)(req.user.id);
+        applyNoStoreHeaders(res);
         res.json(access);
     }
     catch (error) {

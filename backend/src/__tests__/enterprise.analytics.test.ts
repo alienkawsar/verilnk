@@ -5,6 +5,9 @@ const { prismaMock } = vi.hoisted(() => ({
         workspaceOrganization: {
             findMany: vi.fn()
         },
+        enterpriseOrgLinkRequest: {
+            findMany: vi.fn()
+        },
         orgAnalytics: {
             groupBy: vi.fn(),
             aggregate: vi.fn()
@@ -23,6 +26,7 @@ vi.mock('../db/client', () => ({
 }));
 
 import {
+    getWorkspaceLinkedOrgIds,
     getEnterpriseAnalyticsDaily,
     getEnterpriseAnalyticsSummary,
     getEnterpriseAnalyticsHourly,
@@ -32,6 +36,36 @@ import {
 describe('enterprise analytics service', () => {
     beforeEach(() => {
         vi.clearAllMocks();
+        prismaMock.enterpriseOrgLinkRequest.findMany.mockResolvedValue([]);
+    });
+
+    it('filters invalid organizationIds from link-intents without throwing', async () => {
+        prismaMock.workspaceOrganization.findMany.mockResolvedValue([]);
+        prismaMock.enterpriseOrgLinkRequest.findMany.mockResolvedValue([
+            { organizationId: null },
+            { organizationId: '' },
+            { organizationId: 'org-1' }
+        ]);
+
+        const result = await getWorkspaceLinkedOrgIds('ws-1');
+
+        expect(result).toEqual(['org-1']);
+    });
+
+    it('falls back to workspace links when link-intent lookup fails', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+        prismaMock.workspaceOrganization.findMany.mockResolvedValue([
+            { organizationId: 'org-1' }
+        ]);
+        prismaMock.enterpriseOrgLinkRequest.findMany.mockRejectedValue(
+            new Error('intent query failed')
+        );
+
+        const result = await getWorkspaceLinkedOrgIds('ws-1');
+
+        expect(result).toEqual(['org-1']);
+        expect(warnSpy).toHaveBeenCalled();
+        warnSpy.mockRestore();
     });
 
     it('queries daily analytics across all linked organizations', async () => {
@@ -39,22 +73,34 @@ describe('enterprise analytics service', () => {
             { organizationId: 'org-1' },
             { organizationId: 'org-2' }
         ]);
-        prismaMock.orgAnalytics.groupBy.mockResolvedValue([
+        prismaMock.orgAnalyticsEvent.findMany.mockResolvedValue([
             {
-                date: new Date('2026-02-01T00:00:00.000Z'),
-                _sum: { views: 120, clicks: 40 }
+                organizationId: 'org-1',
+                eventType: 'view',
+                createdAt: new Date('2026-02-01T00:15:00.000Z')
+            },
+            {
+                organizationId: 'org-2',
+                eventType: 'click',
+                createdAt: new Date('2026-02-01T09:00:00.000Z')
+            },
+            {
+                organizationId: 'org-2',
+                eventType: 'view',
+                createdAt: new Date('2026-02-02T12:00:00.000Z')
             }
         ]);
 
         const result = await getEnterpriseAnalyticsDaily('ws-1', '30');
 
-        expect(prismaMock.orgAnalytics.groupBy).toHaveBeenCalledWith(expect.objectContaining({
+        expect(prismaMock.orgAnalyticsEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
                 organizationId: { in: ['org-1', 'org-2'] }
             })
         }));
         expect(result.series).toEqual([
-            { date: '2026-02-01', views: 120, clicks: 40 }
+            { date: '2026-02-01', views: 1, clicks: 1 },
+            { date: '2026-02-02', views: 1, clicks: 0 }
         ]);
     });
 

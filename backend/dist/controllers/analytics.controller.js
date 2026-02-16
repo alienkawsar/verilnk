@@ -53,6 +53,13 @@ const getOrgId = (req) => {
     const orgId = req.params.orgId;
     return typeof orgId === 'string' ? orgId : Array.isArray(orgId) ? orgId[0] : '';
 };
+const getOptionalSiteId = (req) => {
+    const body = req.body && typeof req.body === 'object'
+        ? req.body
+        : null;
+    const siteId = typeof body?.siteId === 'string' ? body.siteId.trim() : '';
+    return siteId || undefined;
+};
 // Helper to check authorization
 const checkOrgAuthorization = async (req, orgId) => {
     const user = req.user;
@@ -84,7 +91,11 @@ const checkOrgAuthorization = async (req, orgId) => {
 const trackView = async (req, res) => {
     try {
         const orgId = getOrgId(req);
-        const { siteId } = req.body;
+        const siteId = getOptionalSiteId(req);
+        if (!orgId) {
+            res.status(400).send({ error: 'orgId is required' });
+            return;
+        }
         const entitlementResult = await (0, entitlement_service_1.resolveOrganizationEntitlementsById)(orgId);
         if (!entitlementResult) {
             res.status(404).send({ error: 'Organization not found' });
@@ -98,6 +109,7 @@ const trackView = async (req, res) => {
         res.status(200).send({ success: true });
     }
     catch (error) {
+        console.error('[Analytics] trackView error:', error);
         res.status(500).send({ error: 'Failed to track view' });
     }
 };
@@ -105,7 +117,11 @@ exports.trackView = trackView;
 const trackClick = async (req, res) => {
     try {
         const orgId = getOrgId(req);
-        const { siteId } = req.body;
+        const siteId = getOptionalSiteId(req);
+        if (!orgId) {
+            res.status(400).send({ error: 'orgId is required' });
+            return;
+        }
         const entitlementResult = await (0, entitlement_service_1.resolveOrganizationEntitlementsById)(orgId);
         if (!entitlementResult) {
             res.status(404).send({ error: 'Organization not found' });
@@ -119,6 +135,7 @@ const trackClick = async (req, res) => {
         res.status(200).send({ success: true });
     }
     catch (error) {
+        console.error('[Analytics] trackClick error:', error);
         res.status(500).send({ error: 'Failed to track click' });
     }
 };

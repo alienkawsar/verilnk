@@ -9,7 +9,9 @@ export default function OrgTracker({ orgId }: { orgId: string }) {
         // In strict mode dev, fires twice. That's fine for now, or use ref to prevent.
         const tracked = sessionStorage.getItem(`viewed_org_${orgId}`);
         if (!tracked) {
-            trackView(orgId).catch(console.error);
+            trackView(orgId).catch(() => {
+                // Soft-fail tracking to keep UX clean on transient network/auth states.
+            });
             sessionStorage.setItem(`viewed_org_${orgId}`, 'true');
         }
     }, [orgId]);

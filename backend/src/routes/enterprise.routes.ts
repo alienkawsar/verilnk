@@ -118,6 +118,12 @@ type ParsedAuditActorMetadata = {
     actorWorkspaceRole: string | null;
 };
 
+const applyNoStoreHeaders = (res: Response) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+};
+
 const extractWorkspaceIdFromDetails = (details: string | null | undefined): string | null => {
     if (!details) return null;
     const workspaceIdMatch = details.match(/(?:^|\s)workspaceId=([a-zA-Z0-9-]+)/);
@@ -2261,6 +2267,7 @@ router.get('/profile', async (req: AuthRequest, res: Response) => {
             return res.status(403).json({ message: 'Enterprise access required' });
         }
 
+        applyNoStoreHeaders(res);
         res.json({
             organization: context.organization,
             role: context.role,
@@ -2538,6 +2545,7 @@ router.get('/usage/summary', async (req: AuthRequest, res: Response) => {
 router.get('/access', async (req: AuthRequest, res: Response) => {
     try {
         const access = await getUserEnterpriseAccess(req.user.id as string);
+        applyNoStoreHeaders(res);
         res.json(access);
     } catch (error: any) {
         console.error('[Enterprise] Check access error:', error);

@@ -147,6 +147,8 @@ const buildSiteDocument = (site) => {
         organization_id: site.organizationId ?? null,
         organization_slug: org?.slug ?? null,
         organization_public: org ? orgEntitlements?.canAccessOrgPage === true : false,
+        organizationWebsite: org?.website ?? null,
+        organization_website: org?.website ?? null,
         orgPriority,
         orgPriorityRank: toOrgPriorityRank(org),
         organization_priority: toLegacyPriorityScore(org),
@@ -447,7 +449,10 @@ const initializeMeilisearch = async () => {
         });
         const existingDocs = await index.getDocuments({ limit: 1 });
         const sample = existingDocs.results?.[0];
-        if (sample && (sample.orgPriorityRank === undefined || sample.countryIso === undefined)) {
+        if (sample &&
+            (sample.orgPriorityRank === undefined ||
+                sample.countryIso === undefined ||
+                sample.organization_website === undefined)) {
             console.log('Detected legacy MeiliSearch document schema; triggering safe full reindex.');
             await (0, exports.reindexAllSites)();
         }

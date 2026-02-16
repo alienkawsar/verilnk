@@ -22,6 +22,14 @@ const getOrgId = (req: Request): string => {
     return typeof orgId === 'string' ? orgId : Array.isArray(orgId) ? orgId[0] : '';
 };
 
+const getOptionalSiteId = (req: Request): string | undefined => {
+    const body = req.body && typeof req.body === 'object'
+        ? req.body as Record<string, unknown>
+        : null;
+    const siteId = typeof body?.siteId === 'string' ? body.siteId.trim() : '';
+    return siteId || undefined;
+};
+
 // Helper to check authorization
 const checkOrgAuthorization = async (req: Request, orgId: string): Promise<{ authorized: boolean; entitlements?: any }> => {
     const user = (req as any).user;
@@ -56,7 +64,12 @@ const checkOrgAuthorization = async (req: Request, orgId: string): Promise<{ aut
 export const trackView = async (req: Request, res: Response) => {
     try {
         const orgId = getOrgId(req);
-        const { siteId } = req.body;
+        const siteId = getOptionalSiteId(req);
+
+        if (!orgId) {
+            res.status(400).send({ error: 'orgId is required' });
+            return;
+        }
 
         const entitlementResult = await resolveOrganizationEntitlementsById(orgId);
         if (!entitlementResult) {
@@ -72,6 +85,7 @@ export const trackView = async (req: Request, res: Response) => {
         await analyticsService.trackView(orgId, siteId);
         res.status(200).send({ success: true });
     } catch (error) {
+        console.error('[Analytics] trackView error:', error);
         res.status(500).send({ error: 'Failed to track view' });
     }
 };
@@ -79,7 +93,12 @@ export const trackView = async (req: Request, res: Response) => {
 export const trackClick = async (req: Request, res: Response) => {
     try {
         const orgId = getOrgId(req);
-        const { siteId } = req.body;
+        const siteId = getOptionalSiteId(req);
+
+        if (!orgId) {
+            res.status(400).send({ error: 'orgId is required' });
+            return;
+        }
 
         const entitlementResult = await resolveOrganizationEntitlementsById(orgId);
         if (!entitlementResult) {
@@ -95,6 +114,7 @@ export const trackClick = async (req: Request, res: Response) => {
         await analyticsService.trackClick(orgId, siteId);
         res.status(200).send({ success: true });
     } catch (error) {
+        console.error('[Analytics] trackClick error:', error);
         res.status(500).send({ error: 'Failed to track click' });
     }
 };

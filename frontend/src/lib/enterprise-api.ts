@@ -415,11 +415,16 @@ export const formatLimitReachedMessage = (error: EnterpriseApiError): string => 
 // ============================================
 
 export async function checkEnterpriseAccess(requestOptions: RequestInit = {}): Promise<EnterpriseAccess> {
-    return apiRequest<EnterpriseAccess>('/enterprise/access', requestOptions);
+    return apiRequest<EnterpriseAccess>('/enterprise/access', {
+        cache: 'no-store',
+        ...requestOptions
+    });
 }
 
 export async function getEnterpriseProfile(): Promise<EnterpriseProfile> {
-    return apiRequest<EnterpriseProfile>('/enterprise/profile');
+    return apiRequest<EnterpriseProfile>('/enterprise/profile', {
+        cache: 'no-store'
+    });
 }
 
 export async function updateEnterpriseProfile(

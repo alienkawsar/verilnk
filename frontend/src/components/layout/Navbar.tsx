@@ -115,6 +115,16 @@ function NavbarContent() {
     setIsLoginOpen(false);
   };
 
+  const countryIsoLabel =
+    countryCode === 'Global' ? 'Global' : countryCode?.toUpperCase() || '--';
+  const stateLabel = (stateCode || stateName)?.toUpperCase();
+  const dashboardHref =
+    user?.organizationId && user.planType === 'ENTERPRISE'
+      ? '/enterprise'
+      : user?.organizationId
+        ? '/org/dashboard'
+        : '/dashboard';
+
   return (
     <>
       <nav className='fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 transition-colors duration-300'>
@@ -127,39 +137,53 @@ function NavbarContent() {
             >
               {!isResolved ? (
                 <>
-                  <Skeleton className='w-5 h-5 rounded-full' />
+                  <Skeleton className='hidden md:block w-5 h-5 rounded-full' />
                   <Skeleton className='h-2.5 w-10 rounded-full' />
                 </>
               ) : flagImage && !imgError ? (
-                <div className='relative w-5 h-5 rounded-full overflow-hidden border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-slate-700 shrink-0 shadow-sm'>
+                <div className='hidden md:block relative w-5 h-5 rounded-full overflow-hidden border border-slate-200 dark:border-white/10 bg-slate-100 dark:bg-slate-700 shrink-0 shadow-sm'>
                   <Image
                     src={flagImage}
                     alt={countryName}
                     fill
-                    sizes="20px"
+                    sizes='20px'
                     className='object-cover'
                     onError={() => setImgError(true)}
                   />
                 </div>
               ) : countryCode === 'Global' ? (
-                <div className='p-0.5 bg-blue-500/10 rounded-full'>
+                <div className='hidden md:block p-0.5 bg-blue-500/10 rounded-full'>
                   <Globe className='w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0' />
                 </div>
               ) : null}
               {isResolved && (
-                <span className='relative pr-3'>
-                  <span className='font-medium text-xs tracking-tight'>
-                    {countryCode === 'Global'
-                      ? 'Global'
-                      : countryCode?.toUpperCase()}
+                <>
+                  <span className='inline-flex md:hidden items-center gap-1 text-xs font-medium tracking-tight min-w-0'>
+                    <span>{countryIsoLabel}</span>
+                    {countryCode !== 'Global' && stateLabel && (
+                      <>
+                        <span className='text-slate-400 dark:text-slate-500'>
+                          •
+                        </span>
+                        <span className='max-w-[120px] truncate'>
+                          {stateLabel}
+                        </span>
+                      </>
+                    )}
                   </span>
-                  {countryCode !== 'Global' &&
-                    (stateCode || stateName) && (
+                  <span className='hidden md:inline-block relative pr-3'>
+                    <span className='font-medium text-xs tracking-tight'>
+                      {countryCode === 'Global'
+                        ? 'Global'
+                        : countryCode?.toUpperCase()}
+                    </span>
+                    {countryCode !== 'Global' && (stateCode || stateName) && (
                       <span className='absolute -top-0.5 -right-0.5 text-[8px] font-medium text-slate-400 dark:text-slate-500 leading-none'>
                         {(stateCode || stateName)?.toUpperCase()}
                       </span>
                     )}
-                </span>
+                  </span>
+                </>
               )}
             </div>
           </div>
@@ -176,7 +200,7 @@ function NavbarContent() {
                   }
                   alt='VeriLnk'
                   fill
-                  sizes="(min-width: 768px) 160px, 128px"
+                  sizes='(min-width: 768px) 160px, 128px'
                   className='object-contain'
                   priority
                 />
@@ -186,10 +210,15 @@ function NavbarContent() {
 
           {/* Right Side: Auth */}
           <div className='flex-1 flex justify-end items-center gap-4 relative z-20'>
+            {/* Theme toggle behavior contract:
+               - >= md: always visible in navbar for all auth states
+               - < md: only visible in mobile menu panel */}
+            <div className='hidden md:flex items-center'>
+              <ThemeToggle />
+            </div>
             {user ? (
               <>
-                <ThemeToggle />
-                <div className='relative' ref={dropdownRef}>
+                <div className='hidden md:block relative' ref={dropdownRef}>
                   <button
                     onClick={() => setDropdownOpen(!dropdownOpen)}
                     className='focus:outline-none transition-transform hover:scale-105'
@@ -237,13 +266,7 @@ function NavbarContent() {
 
                         <div className='p-1'>
                           <Link
-                            href={
-                              user.organizationId && user.planType === 'ENTERPRISE'
-                                ? '/enterprise'
-                                : user.organizationId
-                                  ? '/org/dashboard'
-                                  : '/dashboard'
-                            }
+                            href={dashboardHref}
                             onClick={() => setDropdownOpen(false)}
                             className='flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors'
                           >
@@ -270,22 +293,8 @@ function NavbarContent() {
                     </>
                   )}
                 </div>
-              </>
-            ) : (
-              <>
-                <div className='hidden sm:flex items-center gap-4'>
-                  <ThemeToggle />
 
-                  <button
-                    onClick={openLogin}
-                    className='h-10 px-6 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md border border-black/10 dark:border-white/10 text-slate-700 dark:text-white text-sm font-medium transition-all shadow-sm hover:shadow-md hover:bg-black/10 dark:hover:bg-white/20 active:translate-y-0.5 focus-visible:ring-2 focus-visible:ring-slate-400 flex items-center gap-2 group'
-                  >
-                    <LogIn className='w-3.5 h-3.5 opacity-70 group-hover:opacity-100 transition-opacity' />
-                    <span className='hidden sm:inline'>Sign In</span>
-                  </button>
-                </div>
-
-                <div className='sm:hidden relative' ref={mobileMenuRef}>
+                <div className='md:hidden relative' ref={mobileMenuRef}>
                   <button
                     onClick={() => setMobileMenuOpen((prev) => !prev)}
                     aria-label='Open menu'
@@ -303,6 +312,63 @@ function NavbarContent() {
                           Theme
                         </span>
                         <ThemeToggle onToggle={() => setMobileMenuOpen(false)} />
+                      </div>
+
+                      <div className='h-px bg-slate-200 dark:bg-white/10' />
+
+                      <Link
+                        href={dashboardHref}
+                        onClick={() => setMobileMenuOpen(false)}
+                        className='w-full h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/5 text-slate-700 dark:text-slate-200 text-sm font-semibold tracking-wide hover:bg-slate-100 dark:hover:bg-white/10 transition-colors flex items-center justify-center gap-2'
+                      >
+                        <UserIcon className='w-4 h-4' />
+                        Dashboard
+                      </Link>
+
+                      <button
+                        onClick={() => {
+                          logout();
+                          setMobileMenuOpen(false);
+                        }}
+                        className='w-full h-10 rounded-lg bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm font-semibold tracking-wide hover:bg-red-500/20 transition-colors flex items-center justify-center gap-2'
+                      >
+                        <LogOut className='w-4 h-4' />
+                        Sign Out
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={openLogin}
+                  className='hidden md:flex h-10 px-6 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md border border-black/10 dark:border-white/10 text-slate-700 dark:text-white text-sm font-medium transition-all shadow-sm hover:shadow-md hover:bg-black/10 dark:hover:bg-white/20 active:translate-y-0.5 focus-visible:ring-2 focus-visible:ring-slate-400 items-center gap-2 group'
+                >
+                  <LogIn className='w-3.5 h-3.5 opacity-70 group-hover:opacity-100 transition-opacity' />
+                  <span className='hidden sm:inline'>Sign In</span>
+                </button>
+
+                <div className='md:hidden relative' ref={mobileMenuRef}>
+                  <button
+                    onClick={() => setMobileMenuOpen((prev) => !prev)}
+                    aria-label='Open menu'
+                    aria-expanded={mobileMenuOpen}
+                    aria-haspopup='menu'
+                    className='w-9 h-9 rounded-full flex items-center justify-center bg-slate-100/90 dark:bg-white/10 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-100 shadow-sm transition-colors hover:bg-slate-200 dark:hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-blue-500/50'
+                  >
+                    <Menu className='w-4 h-4' />
+                  </button>
+
+                  {mobileMenuOpen && (
+                    <div className='absolute top-full right-0 mt-2 w-60 p-3 space-y-2 rounded-xl border border-slate-200/70 dark:border-white/10 bg-white/90 dark:bg-[#101627]/90 backdrop-blur-xl shadow-xl z-50'>
+                      <div className='flex items-center justify-between'>
+                        <span className='text-sm font-medium text-slate-700 dark:text-slate-200'>
+                          Theme
+                        </span>
+                        <ThemeToggle
+                          onToggle={() => setMobileMenuOpen(false)}
+                        />
                       </div>
 
                       <div className='h-px bg-slate-200 dark:bg-white/10' />
@@ -341,7 +407,11 @@ function NavbarContent() {
 
 export default function Navbar() {
   return (
-    <Suspense fallback={<nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 h-16" />}>
+    <Suspense
+      fallback={
+        <nav className='fixed top-0 left-0 right-0 z-50 bg-white/80 dark:bg-slate-900/80 h-16' />
+      }
+    >
       <NavbarContent />
     </Suspense>
   );

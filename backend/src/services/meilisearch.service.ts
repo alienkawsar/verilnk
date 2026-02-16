@@ -37,6 +37,8 @@ interface SiteDocument {
     organization_id?: string | null;
     organization_slug?: string | null;
     organization_public?: boolean;
+    organizationWebsite?: string | null;
+    organization_website?: string | null;
     orgPriority: OrgPriority;
     orgPriorityRank: number; // HIGH=1, MEDIUM=2, NORMAL=3, LOW=4
     organization_priority: number; // legacy score: HIGH=3, MEDIUM=2, NORMAL=1, LOW=0
@@ -235,6 +237,8 @@ const buildSiteDocument = (site: IndexableSite): SiteDocument => {
         organization_id: site.organizationId ?? null,
         organization_slug: org?.slug ?? null,
         organization_public: org ? orgEntitlements?.canAccessOrgPage === true : false,
+        organizationWebsite: org?.website ?? null,
+        organization_website: org?.website ?? null,
         orgPriority,
         orgPriorityRank: toOrgPriorityRank(org),
         organization_priority: toLegacyPriorityScore(org),
@@ -592,7 +596,14 @@ export const initializeMeilisearch = async () => {
 
         const existingDocs = await index.getDocuments<Partial<SiteDocument>>({ limit: 1 });
         const sample = existingDocs.results?.[0];
-        if (sample && (sample.orgPriorityRank === undefined || sample.countryIso === undefined)) {
+        if (
+            sample &&
+            (
+                sample.orgPriorityRank === undefined ||
+                sample.countryIso === undefined ||
+                sample.organization_website === undefined
+            )
+        ) {
             console.log('Detected legacy MeiliSearch document schema; triggering safe full reindex.');
             await reindexAllSites();
         }

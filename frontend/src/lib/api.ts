@@ -1048,14 +1048,40 @@ export const getPublicOrganization = async (id: string) => {
 };
 
 // Analytics
-export const trackView = async (orgId: string) => {
-    const response = await api.post(`/analytics/${orgId}/view`);
+export const trackView = async (orgId: string, siteId?: string) => {
+    const payload = siteId ? { siteId } : {};
+    const response = await api.post(`/analytics/${orgId}/view`, payload);
     return response.data;
 };
 
-export const trackClick = async (orgId: string) => {
-    const response = await api.post(`/analytics/${orgId}/click`);
+export const trackClick = async (orgId: string, siteId?: string) => {
+    const payload = siteId ? { siteId } : {};
+    const response = await api.post(`/analytics/${orgId}/click`, payload);
     return response.data;
+};
+
+export const trackClickFireAndForget = (orgId?: string | null, siteId?: string) => {
+    if (!orgId || typeof window === 'undefined') return;
+
+    const payload = siteId ? { siteId } : {};
+    const body = JSON.stringify(payload);
+    const url = `${API_URL}/analytics/${orgId}/click`;
+
+    // Prefer sendBeacon for navigation-safe writes on outbound link clicks.
+    if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        const sent = navigator.sendBeacon(url, new Blob([body], { type: 'application/json' }));
+        if (sent) return;
+    }
+
+    fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+        keepalive: true,
+        credentials: 'include'
+    }).catch(() => {
+        // Keep outbound navigation smooth for public traffic.
+    });
 };
 
 export const fetchOrgStats = async (orgId: string) => {

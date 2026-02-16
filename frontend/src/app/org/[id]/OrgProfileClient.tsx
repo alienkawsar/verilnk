@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { getPublicOrganization, trackView, trackClick } from '@/lib/api';
+import { getPublicOrganization, trackView, trackClickFireAndForget } from '@/lib/api';
 import VerifiedBadge from '@/components/ui/VerifiedBadge';
 import { ExternalLink, MapPin, Globe, Building2, Tag, Loader2, ArrowLeft, ShieldCheck } from 'lucide-react';
 import Image from 'next/image';
@@ -43,8 +43,8 @@ function OrgProfileContent({ initialData }: OrgProfileContentProps) {
             // Track View (always)
             try {
                 await trackView(id);
-            } catch (e) {
-                console.error("Analytics view tracking failed", e);
+            } catch {
+                // Soft-fail analytics tracking for public pages to avoid user-facing noise.
             }
         };
 
@@ -53,7 +53,7 @@ function OrgProfileContent({ initialData }: OrgProfileContentProps) {
 
     const handleWebsiteClick = () => {
         if (org && org.website && id) {
-            trackClick(id).catch(err => console.error("Analytics click tracking failed", err));
+            trackClickFireAndForget(id);
             window.open(org.website, '_blank');
         }
     };
