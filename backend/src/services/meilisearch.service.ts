@@ -95,6 +95,7 @@ export const ORG_PRIORITY_RANK_MAP: Record<OrgPriority, number> = {
 
 const CATEGORY_DETECTION_TTL_MS = 5 * 60 * 1000;
 const FETCH_BATCH_SIZE = 250;
+const REINDEX_BATCH_SIZE = 500;
 const MAX_EXACT_ID_SCAN = 5000;
 const MAX_CATEGORY_SCAN = 5000;
 const UUID_PATTERN =
@@ -785,43 +786,66 @@ export const reindexAllSites = async () => {
         await index.deleteAllDocuments();
         console.log('Cleared existing Meilisearch documents.');
 
-        const sites = await prisma.site.findMany({
-            where: {
-                status: VerificationStatus.SUCCESS,
-                deletedAt: null,
-                OR: [
-                    { organizationId: null },
-                    { organization: { status: OrgStatus.APPROVED, deletedAt: null } }
-                ]
-            },
-            include: {
-                country: true,
-                category: true,
-                state: true,
-                organization: true,
-                siteTags: { include: { tag: true } }
-            }
-        });
+        let lastCursor: string | null = null;
+        let foundSites = false;
+        let totalDocuments = 0;
+        let lastTaskUid: number | undefined;
 
-        if (sites.length === 0) {
+        while (true) {
+            const sites = await prisma.site.findMany({
+                take: REINDEX_BATCH_SIZE,
+                ...(lastCursor
+                    ? {
+                          skip: 1,
+                          cursor: { id: lastCursor }
+                      }
+                    : {}),
+                where: {
+                    status: VerificationStatus.SUCCESS,
+                    deletedAt: null,
+                    OR: [
+                        { organizationId: null },
+                        { organization: { status: OrgStatus.APPROVED, deletedAt: null } }
+                    ]
+                },
+                include: {
+                    country: true,
+                    category: true,
+                    state: true,
+                    organization: true,
+                    siteTags: { include: { tag: true } }
+                },
+                orderBy: { id: 'asc' }
+            });
+
+            if (sites.length === 0) break;
+            foundSites = true;
+            lastCursor = sites[sites.length - 1].id;
+
+            const documents: SiteDocument[] = sites
+                .map((site) => site as IndexableSite)
+                .filter((site) => shouldBeIndexed(site))
+                .map((site) => buildSiteDocument(site));
+
+            if (documents.length === 0) continue;
+
+            const task = await index.addDocuments(documents);
+            lastTaskUid = task.taskUid;
+            totalDocuments += documents.length;
+            console.log(`Enqueued indexing task for ${documents.length} documents. Task params:`, task);
+        }
+
+        if (!foundSites) {
             console.log('No approved sites to index.');
             return;
         }
 
-        const documents: SiteDocument[] = sites
-            .map((site) => site as IndexableSite)
-            .filter((site) => shouldBeIndexed(site))
-            .map((site) => buildSiteDocument(site));
-
-        if (documents.length === 0) {
+        if (totalDocuments === 0) {
             console.log('No eligible sites to index after filtering.');
             return;
         }
 
-        const task = await index.addDocuments(documents);
-        console.log(`Enqueued indexing task for ${documents.length} documents. Task params:`, task);
-
-        return { count: documents.length, taskUid: task.taskUid };
+        return { count: totalDocuments, taskUid: lastTaskUid };
     } catch (error) {
         console.error('Re-indexing failed:', error);
         throw error;
