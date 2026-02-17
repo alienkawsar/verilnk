@@ -824,6 +824,9 @@ export const createEnterpriseWorkspaceForOrganizationAdmin = async (req: Request
             });
 
             return created;
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
         });
 
         await logAdminEnterpriseAction(
@@ -1274,6 +1277,9 @@ export const updateEnterpriseRateLimitsAdmin = async (req: Request, res: Respons
                 `;
                 keyOverrideCount += 1;
             }
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
         });
 
         await logAdminEnterpriseAction(
@@ -1658,6 +1664,9 @@ export const deleteEnterpriseWorkspaceAdmin = async (req: Request, res: Response
             });
             await tx.apiKey.deleteMany({ where: { workspaceId: id } });
             await tx.workspace.delete({ where: { id } });
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
         });
 
         await logAdminEnterpriseAction(

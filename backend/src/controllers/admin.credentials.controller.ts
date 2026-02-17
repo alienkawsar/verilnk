@@ -121,6 +121,9 @@ export const resetOrgPassword = async (req: Request, res: Response): Promise<voi
                     tokenVersion: { increment: 1 } // Invalidate existing sessions
                 }
             });
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
         });
 
         const actor = (req as any).user;

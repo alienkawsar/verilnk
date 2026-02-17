@@ -682,6 +682,9 @@ export const acceptWorkspaceInvite = async (
         });
 
         return member;
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 
@@ -920,6 +923,9 @@ export const acceptWorkspaceInviteById = async (
         });
 
         return member;
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 
@@ -972,6 +978,9 @@ export const declineWorkspaceInviteById = async (
                 status: InviteStatus.REVOKED
             }
         });
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 
@@ -1075,6 +1084,9 @@ export const linkOrganization = async (
                 linkedBy
             }
         });
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 
@@ -1106,6 +1118,9 @@ export const unlinkOrganization = async (
         await tx.workspaceOrganization.delete({
             where: { workspaceId_organizationId: { workspaceId, organizationId } }
         });
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 

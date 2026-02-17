@@ -296,6 +296,9 @@ const activatePendingEnterpriseLinkIntents = async (
             requestIds,
             workspaceIds: Array.from(workspaceIds)
         };
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 
@@ -407,6 +410,9 @@ export const signupOrganization = async (data: OrgSignupData) => {
         });
 
         return { user, org, site };
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 
@@ -550,6 +556,9 @@ export const adminCreateOrganization = async (
         }
 
         return { org, user, site };
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 
     if (result.org.status === OrgStatus.APPROVED) {
@@ -701,6 +710,9 @@ export const updateOrganization = async (
         }
 
         return org;
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 
     let activatedLinkIntents = { activated: 0, requestIds: [] as string[], workspaceIds: [] as string[] };
@@ -873,6 +885,9 @@ export const softDeleteOrganization = async (
         }
 
         return updated;
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 
     for (const site of sitesToRemove) {
@@ -936,6 +951,9 @@ export const restoreOrganization = async (
         }
 
         return updated;
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 
     if (restored.status === OrgStatus.APPROVED) {
@@ -1004,6 +1022,9 @@ export const permanentlyDeleteOrganization = async (
         }
 
         return deleted;
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 
     for (const site of sitesToRemove) {
@@ -1085,6 +1106,9 @@ export const deleteOrganizations = async (
                 });
             }
         }
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 
     for (const site of sitesToRemove) {
@@ -1135,6 +1159,9 @@ export const bulkUpdateOrganizationPriority = async (ids: string[], priority: st
                 priorityExpiresAt: expiresAt
             }
         });
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 
     // 2. Re-index only affected approved orgs with controlled concurrency.
