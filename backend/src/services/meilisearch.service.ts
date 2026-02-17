@@ -792,7 +792,7 @@ export const reindexAllSites = async () => {
         let lastTaskUid: number | undefined;
 
         while (true) {
-            const sites = await prisma.site.findMany({
+            const sites: IndexableSite[] = await prisma.site.findMany({
                 take: REINDEX_BATCH_SIZE,
                 ...(lastCursor
                     ? {
