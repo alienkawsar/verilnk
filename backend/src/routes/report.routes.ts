@@ -1,11 +1,10 @@
 import express from 'express';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../db/client';
 import { authenticateAdmin, authenticateUser } from '../middleware/auth.middleware';
 import { authorizeRole } from '../middleware/role.guard';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 const reportSchema = z.object({
     siteId: z.string().uuid('Invalid Site ID'),

@@ -21,6 +21,9 @@ const { prismaMock, signupOrganizationMock } = vi.hoisted(() => ({
         workspaceMember: {
             count: vi.fn()
         },
+        invite: {
+            count: vi.fn()
+        },
         enterpriseOrgLinkRequest: {
             findFirst: vi.fn(),
             findMany: vi.fn(),
@@ -63,6 +66,7 @@ describe('enterprise linking consent flow', () => {
         prismaMock.workspaceOrganization.findMany.mockResolvedValue([{ workspaceId: 'ws-1' }]);
         prismaMock.apiKey.count.mockResolvedValue(0);
         prismaMock.workspaceMember.count.mockResolvedValue(0);
+        prismaMock.invite.count.mockResolvedValue(0);
         prismaMock.$queryRaw.mockResolvedValue([{ count: 0 }]);
         prismaMock.enterpriseOrgLinkRequest.findMany.mockResolvedValue([]);
     });

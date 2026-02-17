@@ -5,7 +5,7 @@ import crypto from 'crypto';
 import { SessionActorType, SecurityEventType, SecurityEventSeverity } from '@prisma/client';
 import { createSession, getSessionByJti, logSecurityEvent, updateSessionExpiry, countRecentFailedLogins, revokeSessionByJti } from '../services/session.service';
 import { z } from 'zod';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../db/client';
 import { authenticateAny, authenticateAdmin, authenticateUser, authorizeRole } from '../middleware/auth.middleware';
 import { checkRestriction } from '../middleware/restriction.middleware';
 import { getUserRequestUsage } from '../services/request.service';
@@ -15,7 +15,6 @@ import { getJwtSecret } from '../config/jwt';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX, generateStrongPassword } from '../utils/passwordPolicy';
 
 const router = express.Router();
-const prisma = new PrismaClient();
 
 const ADMIN_SESSION_HOURS = 8;
 const ORG_SESSION_HOURS = 8;

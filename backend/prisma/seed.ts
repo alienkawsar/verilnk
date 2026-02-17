@@ -1,10 +1,9 @@
 import 'dotenv/config';
-import { PrismaClient, AdminRole } from '@prisma/client';
+import { AdminRole } from '@prisma/client';
+import { prisma } from '../src/db/client';
 import bcrypt from 'bcryptjs';
 
 console.log("Seed: DATABASE_URL is", process.env.DATABASE_URL ? "defined" : "undefined");
-
-const prisma = new PrismaClient();
 
 async function main() {
     console.log('Start seeding ...');

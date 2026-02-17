@@ -27,3 +27,17 @@ app.listen(PORT, async () => {
     await initializeMeilisearch();
     console.log(`Server is running on port ${PORT}`);
 });
+
+const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
+    console.log(`${signal} received, disconnecting Prisma...`);
+    await prisma.$disconnect();
+    process.exit(0);
+};
+
+process.on('SIGTERM', () => {
+    void shutdown('SIGTERM');
+});
+
+process.on('SIGINT', () => {
+    void shutdown('SIGINT');
+});

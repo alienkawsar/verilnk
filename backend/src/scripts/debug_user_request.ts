@@ -1,8 +1,7 @@
 
-import { PrismaClient, RequestType, RequestStatus } from '@prisma/client';
+import { RequestType, RequestStatus } from '@prisma/client';
+import { prisma } from '../db/client';
 import { approveRequest, rejectRequest, createRequest } from '../services/request.service';
-
-const prisma = new PrismaClient();
 
 async function main() {
     console.log('--- Starting Debug Simulation ---');

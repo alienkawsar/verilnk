@@ -1,9 +1,8 @@
 
 import 'dotenv/config';
-import { PrismaClient, RequestType, RequestStatus } from '@prisma/client';
+import { RequestType, RequestStatus } from '@prisma/client';
+import { prisma } from '../db/client';
 import bcrypt from 'bcryptjs';
-
-const prisma = new PrismaClient();
 
 async function main() {
     console.log('--- SYSTEM DIAGNOSTIC START ---');
