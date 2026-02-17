@@ -432,6 +432,9 @@ export const approveOrganizationLinkRequest = async (input: {
         });
 
         return { request: updatedRequest, link };
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
     });
 };
 

@@ -255,6 +255,9 @@ export const approveRequest = async (
                 where: { id },
                 data: { status: RequestStatus.APPROVED }
             });
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
         });
     }
 
@@ -331,6 +334,9 @@ export const approveRequest = async (
                 where: { id },
                 data: { status: RequestStatus.APPROVED }
             });
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
         });
 
         // 3. Post-Transaction Indexing
@@ -418,6 +424,9 @@ export const approveRequest = async (
                 where: { id },
                 data: { status: RequestStatus.APPROVED }
             });
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
         });
     }
 
