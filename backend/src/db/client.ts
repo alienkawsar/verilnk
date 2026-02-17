@@ -2,9 +2,10 @@ import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PrismaClient } from '@prisma/client';
 
-console.log("Initializing Prisma Client...");
-console.log("DATABASE_URL Env Var:", process.env.DATABASE_URL ? "Defined" : "Undefined");
-console.log("DATABASE_URL Length:", process.env.DATABASE_URL?.length);
+if (process.env.NODE_ENV !== 'production') {
+  console.log("Initializing Prisma Client...");
+  console.log("DATABASE_URL Env Var:", process.env.DATABASE_URL ? "Defined" : "Undefined");
+}
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
