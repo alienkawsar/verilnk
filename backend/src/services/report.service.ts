@@ -2,7 +2,6 @@ import { prisma } from '../db/client';
 import { Report } from '@prisma/client';
 import { handleReport } from './verification.service';
 
-// const prisma = new PrismaClient();
 
 export const createReport = async (
     siteId: string,

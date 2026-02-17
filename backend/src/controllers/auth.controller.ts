@@ -7,7 +7,6 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { getJwtSecret } from '../config/jwt';
 
-// const prisma = new PrismaClient();
 
 const COOKIE_OPTIONS = {
     httpOnly: true,

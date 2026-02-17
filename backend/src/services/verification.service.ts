@@ -2,7 +2,6 @@ import { prisma } from '../db/client';
 import { VerificationStatus, Site } from '@prisma/client';
 import { isTrustedDomain, REPORT_THRESHOLD, shouldFlagForReview } from './verification.rules';
 
-// const prisma = new PrismaClient();
 
 export const verifySite = async (
     siteId: string,
