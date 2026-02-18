@@ -5,13 +5,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv/config");
 const client_1 = require("@prisma/client");
+const client_2 = require("../db/client");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
-const prisma = new client_1.PrismaClient();
 async function main() {
     console.log('--- SYSTEM DIAGNOSTIC START ---');
     // 1. Check for Orphaned Requests (Causes Dashboard Crash)
     console.log('\n[1] Checking for Invalid Requests...');
-    const allRequests = await prisma.changeRequest.findMany({
+    const allRequests = await client_2.prisma.changeRequest.findMany({
         where: { status: 'PENDING' },
         include: { requester: true, organization: true }
     });
@@ -32,7 +32,7 @@ async function main() {
     console.log('\n[2] Simulating User Approval Transaction...');
     // Create Test User
     const userEmail = `sys_test_${Date.now()}@test.com`;
-    const user = await prisma.user.create({
+    const user = await client_2.prisma.user.create({
         data: {
             name: 'System Test User',
             email: userEmail,
@@ -41,7 +41,7 @@ async function main() {
     });
     console.log(`Created Test User: ${user.id}`);
     // Create Test Request
-    const request = await prisma.changeRequest.create({
+    const request = await client_2.prisma.changeRequest.create({
         data: {
             type: client_1.RequestType.USER_UPDATE,
             requesterId: user.id,
@@ -57,7 +57,7 @@ async function main() {
     // Execute Approval Logic MANUALLY (Replicating service logic exact steps)
     console.log('Executing Transaction Logic...');
     try {
-        await prisma.$transaction(async (tx) => {
+        await client_2.prisma.$transaction(async (tx) => {
             console.log('  > Transaction Started');
             // Step A: Fetch & Verify
             const currentReq = await tx.changeRequest.findUnique({ where: { id: request.id } });
@@ -105,9 +105,9 @@ async function main() {
     finally {
         // Cleanup
         console.log('\n[3] Cleanup...');
-        await prisma.changeRequest.deleteMany({ where: { requesterId: user.id } });
-        await prisma.user.delete({ where: { id: user.id } });
-        await prisma.$disconnect();
+        await client_2.prisma.changeRequest.deleteMany({ where: { requesterId: user.id } });
+        await client_2.prisma.user.delete({ where: { id: user.id } });
+        await client_2.prisma.$disconnect();
     }
 }
 main().catch(e => console.error(e));

@@ -38,6 +38,7 @@ const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const meilisearch_service_1 = require("./meilisearch.service");
 const organization_service_1 = require("./organization.service");
+const organization_visibility_service_1 = require("./organization-visibility.service");
 // Helper to extract hostname
 const extractHostname = (url) => {
     try {
@@ -49,43 +50,30 @@ const extractHostname = (url) => {
 };
 const getAllSites = async (countryId, stateId, categoryId, status, search, organizationId, type) => {
     await (0, organization_service_1.checkAndExpirePriorities)().catch(console.error);
-    const where = {
-        // Exclude sites that belong to an organization that is NOT approved.
-        NOT: {
-            organization: {
-                status: {
-                    not: client_2.OrgStatus.APPROVED
-                }
-            }
-        },
-        deletedAt: null,
-        OR: [
-            { organizationId: null },
-            { organization: { deletedAt: null } }
-        ]
-    };
+    const baseWhere = {};
     if (countryId)
-        where.countryId = countryId;
+        baseWhere.countryId = countryId;
     if (stateId)
-        where.stateId = stateId;
+        baseWhere.stateId = stateId;
     if (categoryId)
-        where.categoryId = categoryId;
+        baseWhere.categoryId = categoryId;
     if (status)
-        where.status = status;
+        baseWhere.status = status;
     if (organizationId)
-        where.organizationId = organizationId;
+        baseWhere.organizationId = organizationId;
     if (search) {
-        where.name = {
+        baseWhere.name = {
             contains: search,
             mode: 'insensitive'
         };
     }
     if (type === 'independent') {
-        where.organizationId = null;
+        baseWhere.organizationId = null;
     }
     else if (type === 'organization') {
-        where.organizationId = { not: null };
+        baseWhere.organizationId = { not: null };
     }
+    const where = await (0, organization_visibility_service_1.buildVisibleSiteWhere)(baseWhere);
     const sites = await client_1.prisma.site.findMany({
         where,
         include: {
@@ -113,7 +101,7 @@ const getAllSites = async (countryId, stateId, categoryId, status, search, organ
 };
 exports.getAllSites = getAllSites;
 const getSiteById = async (id) => {
-    return client_1.prisma.site.findUnique({
+    const site = await client_1.prisma.site.findUnique({
         where: { id },
         include: {
             country: true,
@@ -126,6 +114,16 @@ const getSiteById = async (id) => {
             },
         },
     });
+    if (!site)
+        return null;
+    if (site.deletedAt)
+        return null;
+    if (site.organizationId) {
+        const restricted = await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(site.organizationId);
+        if (restricted)
+            return null;
+    }
+    return site;
 };
 exports.getSiteById = getSiteById;
 const createSite = async (data, auditContext) => {

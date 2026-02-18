@@ -1,7 +1,0 @@
-
-> backend@1.0.0 build
-> tsc
-
-src/controllers/analytics.controller.ts(7,32): error TS2339: Property 'trackView' does not exist on type 'typeof import("C:/Users/Next Future IT/Desktop/verilnk/backend/src/services/analytics.service")'.
-src/controllers/analytics.controller.ts(17,32): error TS2339: Property 'trackClick' does not exist on type 'typeof import("C:/Users/Next Future IT/Desktop/verilnk/backend/src/services/analytics.service")'.
-src/controllers/analytics.controller.ts(61,46): error TS2339: Property 'getAnalytics' does not exist on type 'typeof import("C:/Users/Next Future IT/Desktop/verilnk/backend/src/services/analytics.service")'.

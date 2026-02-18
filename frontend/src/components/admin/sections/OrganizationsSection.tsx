@@ -12,6 +12,8 @@ import {
   Loader2,
   Ban,
   Upload,
+  Eye,
+  EyeOff,
   Lock,
   Mail,
   Key,
@@ -37,11 +39,14 @@ import {
   bulkUpdateOrganizationPlan,
   updateOrgLoginEmail,
   resetOrgPassword,
+  resetEnterprisePassword,
 } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { TableSkeleton } from '@/components/ui/Loading';
 import { useDebounce } from '@/hooks/useDebounce';
 import { toProxyImageUrl } from '@/lib/imageProxy';
+import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
+import PasswordStrengthChecklist from '@/components/ui/PasswordStrengthChecklist';
 
 interface Organization {
   id: string;
@@ -79,6 +84,15 @@ interface Organization {
   deleteReason?: string | null;
 }
 
+const adminOrgFormControlClass =
+  'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 transition-colors';
+
+const adminOrgFormControlIconClass =
+  'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-4 pr-10 py-2 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 transition-colors';
+
+const adminOrgCompactControlClass =
+  'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 disabled:opacity-60 disabled:cursor-not-allowed transition-colors';
+
 export default function OrganizationsSection({
   currentUser,
 }: {
@@ -106,12 +120,14 @@ export default function OrganizationsSection({
   const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [createdTempPassword, setCreatedTempPassword] = useState<string | null>(
-    null,
-  );
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [showCreateConfirmPassword, setShowCreateConfirmPassword] =
+    useState(false);
+  const [createConfirmPassword, setCreateConfirmPassword] = useState('');
   const [createForm, setCreateForm] = useState({
     name: '',
     email: '',
+    password: '',
     website: '',
     phone: '',
     address: '',
@@ -605,7 +621,10 @@ export default function OrganizationsSection({
       return;
 
     try {
-      const res = await resetOrgPassword(editingOrg.id);
+      const res =
+        editingOrg.planType === 'ENTERPRISE'
+          ? await resetEnterprisePassword(editingOrg.id)
+          : await resetOrgPassword(editingOrg.id);
       setResetTempPassword(res.tempPassword);
       setResetPasswordCopied(false);
       setResetPasswordModalOpen(true);
@@ -796,6 +815,23 @@ export default function OrganizationsSection({
 
   const handleCreateOrg = async (e: React.FormEvent) => {
     e.preventDefault();
+    const password = createForm.password.trim();
+    if (!password) {
+      showToast('Password is required', 'error');
+      return;
+    }
+    if (!createConfirmPassword.trim()) {
+      showToast('Confirm password is required', 'error');
+      return;
+    }
+    if (password !== createConfirmPassword.trim()) {
+      showToast('Passwords do not match', 'error');
+      return;
+    }
+    if (!STRONG_PASSWORD_REGEX.test(password)) {
+      showToast(STRONG_PASSWORD_MESSAGE, 'error');
+      return;
+    }
     setCreating(true);
     try {
       const durationDays = resolveDurationDays({
@@ -805,6 +841,7 @@ export default function OrganizationsSection({
       const payload = {
         name: createForm.name,
         email: createForm.email,
+        password,
         website: createForm.website,
         phone: createForm.phone,
         address: createForm.address,
@@ -822,13 +859,13 @@ export default function OrganizationsSection({
             ? mapPriorityOverrideToValue(createForm.priorityOverride)
             : null,
       };
-      const res = await createOrganizationAdmin(payload);
-      setCreatedTempPassword(res.tempPassword || null);
+      await createOrganizationAdmin(payload);
       showToast('Organization created successfully', 'success');
       setCreateOpen(false);
       setCreateForm({
         name: '',
         email: '',
+        password: '',
         website: '',
         phone: '',
         address: '',
@@ -844,12 +881,10 @@ export default function OrganizationsSection({
         customDays: '',
         priorityOverride: 'HIGH',
       });
+      setShowCreatePassword(false);
+      setShowCreateConfirmPassword(false);
+      setCreateConfirmPassword('');
       loadOrgs();
-      if (res.tempPassword) {
-        alert(
-          `Temporary Password:\n\n${res.tempPassword}\n\nPlease share it securely. The user must change it on first login.`,
-        );
-      }
     } catch (err: any) {
       showToast(
         err.response?.data?.message || 'Failed to create organization',
@@ -1406,7 +1441,7 @@ export default function OrganizationsSection({
                         }
                       }}
                       placeholder='https://example.com/logo.png'
-                      className='w-full px-4 py-2 bg-transparent border border-[var(--app-border)] rounded-lg text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500'
+                      className={adminOrgFormControlClass}
                     />
                     <div className='flex items-center gap-4'>
                       <div className='text-sm text-slate-500 dark:text-slate-400'>
@@ -1442,7 +1477,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setEditForm({ ...editForm, email: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   />
                 </div>
                 <div className='space-y-2'>
@@ -1454,7 +1489,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setEditForm({ ...editForm, phone: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   />
                 </div>
               </div>
@@ -1469,7 +1504,7 @@ export default function OrganizationsSection({
                   onChange={(e) =>
                     setEditForm({ ...editForm, website: e.target.value })
                   }
-                  className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                  className={adminOrgFormControlClass}
                 />
               </div>
 
@@ -1483,7 +1518,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setEditForm({ ...editForm, countryId: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value=''>Select Country</option>
                     {countries.map((c) => (
@@ -1502,7 +1537,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setEditForm({ ...editForm, stateId: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                     disabled={!editForm.countryId}
                   >
                     <option value=''>Select State</option>
@@ -1525,7 +1560,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setEditForm({ ...editForm, categoryId: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value=''>Select Category</option>
                     {categories.map((c) => (
@@ -1544,7 +1579,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setEditForm({ ...editForm, type: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value='PUBLIC'>Public</option>
                     <option value='PRIVATE'>Private</option>
@@ -1562,7 +1597,7 @@ export default function OrganizationsSection({
                   onChange={(e) =>
                     setEditForm({ ...editForm, about: e.target.value })
                   }
-                  className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)] h-24'
+                  className={`${adminOrgFormControlClass} h-24`}
                   placeholder='Description...'
                 />
               </div>
@@ -1582,7 +1617,7 @@ export default function OrganizationsSection({
                       onChange={(e) =>
                         setPlanForm({ ...planForm, planType: e.target.value })
                       }
-                      className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                      className={adminOrgFormControlClass}
                     >
                       <option value='FREE'>FREE</option>
                       <option value='BASIC'>BASIC</option>
@@ -1600,7 +1635,7 @@ export default function OrganizationsSection({
                       onChange={(e) =>
                         setPlanForm({ ...planForm, planStatus: e.target.value })
                       }
-                      className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                      className={adminOrgFormControlClass}
                     >
                       <option value='ACTIVE'>ACTIVE</option>
                       <option value='EXPIRED'>EXPIRED</option>
@@ -1621,7 +1656,7 @@ export default function OrganizationsSection({
                           durationPreset: e.target.value,
                         })
                       }
-                      className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                      className={adminOrgFormControlClass}
                     >
                       <option value='7'>7 Days</option>
                       <option value='15'>15 Days</option>
@@ -1644,7 +1679,7 @@ export default function OrganizationsSection({
                             customDays: e.target.value,
                           })
                         }
-                        className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                        className={adminOrgFormControlClass}
                         placeholder='e.g. 45'
                       />
                     </div>
@@ -1664,7 +1699,7 @@ export default function OrganizationsSection({
                             priorityOverride: e.target.value,
                           })
                         }
-                        className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                        className={adminOrgFormControlClass}
                       >
                         <option value='HIGH'>HIGH</option>
                         <option value='MEDIUM'>MEDIUM</option>
@@ -1717,7 +1752,7 @@ export default function OrganizationsSection({
                                 enterpriseMaxWorkspaces: e.target.value,
                               })
                             }
-                            className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-3 py-2 text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 disabled:cursor-not-allowed'
+                            className={adminOrgCompactControlClass}
                             placeholder='Max workspaces'
                           />
                         </div>
@@ -1756,7 +1791,7 @@ export default function OrganizationsSection({
                                 enterpriseMaxLinkedOrgs: e.target.value,
                               })
                             }
-                            className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-3 py-2 text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 disabled:cursor-not-allowed'
+                            className={adminOrgCompactControlClass}
                             placeholder='Max linked organizations'
                           />
                         </div>
@@ -1795,7 +1830,7 @@ export default function OrganizationsSection({
                                 enterpriseMaxApiKeys: e.target.value,
                               })
                             }
-                            className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-3 py-2 text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 disabled:cursor-not-allowed'
+                            className={adminOrgCompactControlClass}
                             placeholder='Max API keys'
                           />
                         </div>
@@ -1834,7 +1869,7 @@ export default function OrganizationsSection({
                                 enterpriseMaxMembers: e.target.value,
                               })
                             }
-                            className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-3 py-2 text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500 dark:focus:border-blue-400 focus:ring-2 focus:ring-blue-500/20 disabled:opacity-60 disabled:cursor-not-allowed'
+                            className={adminOrgCompactControlClass}
                             placeholder='Max members'
                           />
                         </div>
@@ -2194,7 +2229,11 @@ export default function OrganizationsSection({
                 Create Organization
               </h2>
               <button
-                onClick={() => setCreateOpen(false)}
+                onClick={() => {
+                  setCreateOpen(false);
+                  setCreateConfirmPassword('');
+                  setShowCreateConfirmPassword(false);
+                }}
                 className='text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               >
                 <X className='w-5 h-5' />
@@ -2211,7 +2250,7 @@ export default function OrganizationsSection({
                   onChange={(e) =>
                     setCreateForm({ ...createForm, name: e.target.value })
                   }
-                  className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                  className={adminOrgFormControlClass}
                 />
               </div>
               <div className='grid grid-cols-2 gap-4'>
@@ -2226,7 +2265,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setCreateForm({ ...createForm, email: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   />
                 </div>
                 <div className='space-y-2'>
@@ -2239,9 +2278,73 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setCreateForm({ ...createForm, phone: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   />
                 </div>
+              </div>
+              <div className='space-y-2'>
+                <label className='text-sm text-slate-600 dark:text-slate-400'>
+                  Password
+                </label>
+                <div className='relative'>
+                  <input
+                    required
+                    type={showCreatePassword ? 'text' : 'password'}
+                    value={createForm.password}
+                    onChange={(e) =>
+                      setCreateForm({ ...createForm, password: e.target.value })
+                    }
+                    className={adminOrgFormControlIconClass}
+                  />
+                  <button
+                    type='button'
+                    onClick={() => setShowCreatePassword((prev) => !prev)}
+                    className='absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                    aria-label={showCreatePassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showCreatePassword ? (
+                      <EyeOff className='w-4 h-4' />
+                    ) : (
+                      <Eye className='w-4 h-4' />
+                    )}
+                  </button>
+                </div>
+                <p className='text-xs text-slate-500 dark:text-slate-500'>
+                  Min 8 chars, uppercase, lowercase, number, and special character.
+                </p>
+              </div>
+              <div className='space-y-2'>
+                <label className='text-sm text-slate-600 dark:text-slate-400'>
+                  Confirm Password
+                </label>
+                <div className='relative'>
+                  <input
+                    required
+                    type={showCreateConfirmPassword ? 'text' : 'password'}
+                    value={createConfirmPassword}
+                    onChange={(e) => setCreateConfirmPassword(e.target.value)}
+                    className={adminOrgFormControlIconClass}
+                  />
+                  <button
+                    type='button'
+                    onClick={() => setShowCreateConfirmPassword((prev) => !prev)}
+                    className='absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                    aria-label={showCreateConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  >
+                    {showCreateConfirmPassword ? (
+                      <EyeOff className='w-4 h-4' />
+                    ) : (
+                      <Eye className='w-4 h-4' />
+                    )}
+                  </button>
+                </div>
+                {createConfirmPassword &&
+                  createForm.password !== createConfirmPassword && (
+                    <p className='text-xs text-red-500'>
+                      Passwords do not match
+                    </p>
+                  )}
+                <PasswordStrengthChecklist password={createForm.password} />
               </div>
               <div className='space-y-2'>
                 <label className='text-sm text-slate-600 dark:text-slate-400'>
@@ -2253,7 +2356,7 @@ export default function OrganizationsSection({
                   onChange={(e) =>
                     setCreateForm({ ...createForm, website: e.target.value })
                   }
-                  className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                  className={adminOrgFormControlClass}
                 />
               </div>
               <div className='space-y-2'>
@@ -2266,7 +2369,7 @@ export default function OrganizationsSection({
                   onChange={(e) =>
                     setCreateForm({ ...createForm, address: e.target.value })
                   }
-                  className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                  className={adminOrgFormControlClass}
                 />
               </div>
               <div className='grid grid-cols-3 gap-4'>
@@ -2283,7 +2386,7 @@ export default function OrganizationsSection({
                         countryId: e.target.value,
                       })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value=''>Select</option>
                     {countries.map((c) => (
@@ -2302,7 +2405,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setCreateForm({ ...createForm, stateId: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                     disabled={!createForm.countryId}
                   >
                     <option value=''>Optional</option>
@@ -2326,7 +2429,7 @@ export default function OrganizationsSection({
                         categoryId: e.target.value,
                       })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value=''>Select</option>
                     {categories.map((cat) => (
@@ -2347,7 +2450,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setCreateForm({ ...createForm, type: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value='PUBLIC'>Public</option>
                     <option value='PRIVATE'>Private</option>
@@ -2363,7 +2466,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setCreateForm({ ...createForm, logo: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   />
                 </div>
               </div>
@@ -2377,7 +2480,7 @@ export default function OrganizationsSection({
                     onChange={(e) =>
                       setCreateForm({ ...createForm, planType: e.target.value })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value='FREE'>FREE</option>
                     <option value='BASIC'>BASIC</option>
@@ -2398,7 +2501,7 @@ export default function OrganizationsSection({
                         planStatus: e.target.value,
                       })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value='ACTIVE'>ACTIVE</option>
                     <option value='EXPIRED'>EXPIRED</option>
@@ -2419,7 +2522,7 @@ export default function OrganizationsSection({
                         durationPreset: e.target.value,
                       })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value='7'>7 Days</option>
                     <option value='15'>15 Days</option>
@@ -2442,7 +2545,7 @@ export default function OrganizationsSection({
                           customDays: e.target.value,
                         })
                       }
-                      className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                      className={adminOrgFormControlClass}
                     />
                   </div>
                 ) : (
@@ -2462,7 +2565,7 @@ export default function OrganizationsSection({
                         priorityOverride: e.target.value,
                       })
                     }
-                    className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)]'
+                    className={adminOrgFormControlClass}
                   >
                     <option value='HIGH'>HIGH</option>
                     <option value='MEDIUM'>MEDIUM</option>
@@ -2480,13 +2583,17 @@ export default function OrganizationsSection({
                   onChange={(e) =>
                     setCreateForm({ ...createForm, about: e.target.value })
                   }
-                  className='w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)] h-20'
+                  className={`${adminOrgFormControlClass} h-20`}
                 />
               </div>
               <div className='flex justify-end gap-3 pt-2'>
                 <button
                   type='button'
-                  onClick={() => setCreateOpen(false)}
+                  onClick={() => {
+                    setCreateOpen(false);
+                    setCreateConfirmPassword('');
+                    setShowCreateConfirmPassword(false);
+                  }}
                   className='px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 >
                   Cancel

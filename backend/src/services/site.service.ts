@@ -1,8 +1,9 @@
 import { prisma } from '../db/client';
-import { Site, VerificationStatus, Prisma, OrgStatus, AuditActionType, Organization } from '@prisma/client';
+import { Site, VerificationStatus, Prisma, AuditActionType, Organization } from '@prisma/client';
 import { autoVerifySite } from './verification.service';
 import { indexSite, removeSiteFromIndex } from './meilisearch.service';
 import { checkAndExpirePriorities } from './organization.service';
+import { buildVisibleSiteWhere, isOrganizationEffectivelyRestricted } from './organization-visibility.service';
 
 // Helper to extract hostname
 const extractHostname = (url: string): string => {
@@ -24,39 +25,27 @@ export const getAllSites = async (
 ): Promise<(Site & { organization: Organization | null })[]> => {
     await checkAndExpirePriorities().catch(console.error);
 
-    const where: Prisma.SiteWhereInput = {
-        // Exclude sites that belong to an organization that is NOT approved.
-        NOT: {
-            organization: {
-                status: {
-                    not: OrgStatus.APPROVED
-                }
-            }
-        },
-        deletedAt: null,
-        OR: [
-            { organizationId: null },
-            { organization: { deletedAt: null } }
-        ]
-    };
-    if (countryId) where.countryId = countryId;
-    if (stateId) where.stateId = stateId;
-    if (categoryId) where.categoryId = categoryId;
-    if (status) where.status = status;
-    if (organizationId) where.organizationId = organizationId;
+    const baseWhere: Prisma.SiteWhereInput = {};
+    if (countryId) baseWhere.countryId = countryId;
+    if (stateId) baseWhere.stateId = stateId;
+    if (categoryId) baseWhere.categoryId = categoryId;
+    if (status) baseWhere.status = status;
+    if (organizationId) baseWhere.organizationId = organizationId;
 
     if (search) {
-        where.name = {
+        baseWhere.name = {
             contains: search,
             mode: 'insensitive'
         };
     }
 
     if (type === 'independent') {
-        where.organizationId = null;
+        baseWhere.organizationId = null;
     } else if (type === 'organization') {
-        where.organizationId = { not: null };
+        baseWhere.organizationId = { not: null };
     }
+
+    const where = await buildVisibleSiteWhere(baseWhere);
 
     const sites = await prisma.site.findMany({
         where,
@@ -89,7 +78,7 @@ export const getAllSites = async (
 };
 
 export const getSiteById = async (id: string): Promise<Site | null> => {
-    return prisma.site.findUnique({
+    const site = await prisma.site.findUnique({
         where: { id },
         include: {
             country: true,
@@ -102,6 +91,15 @@ export const getSiteById = async (id: string): Promise<Site | null> => {
             },
         },
     });
+
+    if (!site) return null;
+    if ((site as any).deletedAt) return null;
+    if ((site as any).organizationId) {
+        const restricted = await isOrganizationEffectivelyRestricted((site as any).organizationId);
+        if (restricted) return null;
+    }
+
+    return site as Site;
 };
 
 export const createSite = async (data: {

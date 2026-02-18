@@ -120,6 +120,7 @@ const updatePlanSchema = zod_1.z.object({
 const adminCreateOrgSchema = zod_1.z.object({
     name: zod_1.z.string().min(1),
     email: zod_1.z.string().email(),
+    password: zod_1.z.string().regex(passwordPolicy_1.STRONG_PASSWORD_REGEX, passwordPolicy_1.STRONG_PASSWORD_MESSAGE),
     website: zod_1.z.string().url(),
     phone: zod_1.z.string().min(1),
     address: zod_1.z.string().min(1),
@@ -375,13 +376,15 @@ const adminCreateOrganization = async (req, res) => {
         const result = await orgService.adminCreateOrganization(payload, auditContext);
         res.status(201).json({
             organization: result.org,
-            user: { id: result.user.id, email: result.user.email },
-            tempPassword: result.tempPassword
+            user: { id: result.user.id, email: result.user.email }
         });
     }
     catch (error) {
         if (error instanceof zod_1.z.ZodError) {
-            res.status(400).json({ errors: error.issues });
+            res.status(400).json({
+                message: error.issues[0]?.message || 'Invalid organization payload',
+                errors: error.issues
+            });
             return;
         }
         res.status(400).json({ message: error.message || 'Error creating organization' });

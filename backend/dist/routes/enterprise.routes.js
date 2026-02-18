@@ -38,8 +38,12 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = require("express");
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const enterprise_entitlement_1 = require("../services/enterprise.entitlement");
 const workspace_service_1 = require("../services/workspace.service");
@@ -139,6 +143,62 @@ const resolveWorkspaceEnterpriseOrganizationId = async (workspaceId) => {
 };
 const resolveWorkspaceRole = async (workspaceId, userId) => (0, enterprise_entitlement_1.getUserWorkspaceRole)(workspaceId, userId);
 const respondWorkspaceForbidden = (res, message = "You don't have permission to do that.") => res.status(403).json({ message, code: 'WORKSPACE_FORBIDDEN' });
+const respondOrgRestricted = (res) => res.status(403).json({ code: 'ORG_RESTRICTED', message: 'Organization is restricted' });
+const getEnterpriseRestrictionContext = async (workspaceId) => {
+    const workspaceLinks = await client_2.prisma.workspaceOrganization.findMany({
+        where: { workspaceId },
+        select: { organizationId: true }
+    });
+    const linkedOrgIds = workspaceLinks.map((link) => link.organizationId);
+    if (linkedOrgIds.length === 0) {
+        return {
+            enterpriseOwnerOrgId: null,
+            enterpriseOwnerOrgIsRestricted: false
+        };
+    }
+    const enterpriseOwnerOrg = await client_2.prisma.organization.findFirst({
+        where: {
+            id: { in: linkedOrgIds },
+            deletedAt: null,
+            planType: client_1.PlanType.ENTERPRISE
+        },
+        select: { id: true, isRestricted: true }
+    });
+    return {
+        enterpriseOwnerOrgId: enterpriseOwnerOrg?.id || null,
+        enterpriseOwnerOrgIsRestricted: Boolean(enterpriseOwnerOrg?.isRestricted)
+    };
+};
+const isOrganizationRestricted = async (organizationId) => {
+    const org = await client_2.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { isRestricted: true }
+    });
+    return Boolean(org?.isRestricted);
+};
+const enforceWorkspaceEnterpriseNotRestricted = async (req, res, next) => {
+    try {
+        const workspaceId = req.params.id;
+        const userId = req.user?.id;
+        if (!workspaceId || !userId) {
+            return next();
+        }
+        // Only evaluate restriction for actual workspace members to avoid leaking workspace state.
+        const memberRole = await (0, enterprise_entitlement_1.getUserWorkspaceRole)(workspaceId, userId);
+        if (!memberRole) {
+            return next();
+        }
+        const restrictionContext = await getEnterpriseRestrictionContext(workspaceId);
+        if (restrictionContext.enterpriseOwnerOrgIsRestricted) {
+            return respondOrgRestricted(res);
+        }
+        return next();
+    }
+    catch (error) {
+        console.error('[Enterprise] Workspace restriction guard error:', error);
+        return res.status(500).json({ message: error.message || 'Failed to resolve workspace restriction state' });
+    }
+};
 const getAppBaseUrl = () => {
     return process.env.FRONTEND_URL
         || process.env.APP_URL
@@ -280,7 +340,7 @@ const resolveEnterpriseProfileContext = async (userId) => {
         canEdit
     };
 };
-const logEnterpriseAdminActionIfApplicable = async (req, action, entity, details, targetId) => {
+const logEnterpriseAdminActionIfApplicable = async (req, action, entity, details, targetId, snapshot) => {
     const userId = req.user?.id;
     if (!userId)
         return;
@@ -310,12 +370,18 @@ const logEnterpriseAdminActionIfApplicable = async (req, action, entity, details
     if (!admin)
         return;
     const workspaceId = extractWorkspaceIdFromDetails(details);
-    let actorWorkspaceRole = null;
-    if (workspaceId) {
+    const providedWorkspaceId = typeof snapshot?.actorWorkspaceId === 'string'
+        ? snapshot.actorWorkspaceId
+        : null;
+    const actorWorkspaceId = providedWorkspaceId || workspaceId;
+    let actorWorkspaceRole = typeof snapshot?.actorWorkspaceRole === 'string'
+        ? snapshot.actorWorkspaceRole
+        : null;
+    if (!actorWorkspaceRole && actorWorkspaceId) {
         const membership = await client_2.prisma.workspaceMember.findUnique({
             where: {
                 workspaceId_userId: {
-                    workspaceId,
+                    workspaceId: actorWorkspaceId,
                     userId
                 }
             },
@@ -326,9 +392,9 @@ const logEnterpriseAdminActionIfApplicable = async (req, action, entity, details
             : 'FORMER_MEMBER';
     }
     const actorSnapshot = {
-        actorType: 'USER',
-        actorUserId: userId,
-        actorWorkspaceId: workspaceId || null,
+        actorType: typeof snapshot?.actorType === 'string' ? snapshot.actorType : 'USER',
+        actorUserId: typeof snapshot?.actorUserId === 'string' ? snapshot.actorUserId : userId,
+        actorWorkspaceId: actorWorkspaceId || null,
         actorWorkspaceRole: actorWorkspaceRole || null
     };
     await auditService.logAction({
@@ -338,7 +404,7 @@ const logEnterpriseAdminActionIfApplicable = async (req, action, entity, details
         entity,
         targetId,
         details,
-        snapshot: actorSnapshot,
+        snapshot: snapshot ? { ...snapshot, ...actorSnapshot } : actorSnapshot,
         ipAddress: req.ip,
         userAgent: req.headers['user-agent']
     });
@@ -383,6 +449,50 @@ router.post('/workspaces', async (req, res) => {
         res.status(400).json({ message: error.message || 'Failed to create workspace' });
     }
 });
+// Workspace-level routes are blocked when the owning enterprise organization is restricted.
+router.use('/workspaces/:id', enforceWorkspaceEnterpriseNotRestricted);
+// Get current user's workspace membership context
+router.get('/workspaces/:id/me', async (req, res) => {
+    try {
+        const id = req.params.id;
+        const userId = req.user.id;
+        const role = await (0, enterprise_entitlement_1.getUserWorkspaceRole)(id, userId);
+        if (!role) {
+            return respondWorkspaceForbidden(res, 'No access to this workspace');
+        }
+        const workspace = await client_2.prisma.workspace.findUnique({
+            where: { id },
+            select: { id: true, name: true }
+        });
+        if (!workspace) {
+            return res.status(404).json({ message: 'Workspace not found' });
+        }
+        const normalizedRole = normalizeWorkspaceRoleForResponse(role) || role;
+        const permissions = {
+            canViewOverview: true,
+            canViewAnalytics: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'view_analytics'),
+            canViewUsage: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'view_usage_logs'),
+            canViewApiKeys: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'view_api_keys'),
+            canViewMembers: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'view_members'),
+            canViewOrganizations: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'view_organizations'),
+            canViewSecurity: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'view_compliance_logs'),
+            canManageMembers: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'manage_members'),
+            canManageOrganizations: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'manage_organizations'),
+            canManageApiKeys: (0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'create_api_key')
+        };
+        return res.json({
+            workspaceId: workspace.id,
+            workspaceName: workspace.name,
+            memberRole: normalizedRole,
+            permissions,
+            userId
+        });
+    }
+    catch (error) {
+        console.error('[Enterprise] Workspace me context error:', error);
+        return res.status(500).json({ message: error.message || 'Failed to resolve workspace access' });
+    }
+});
 // Get workspace details
 router.get('/workspaces/:id', async (req, res) => {
     try {
@@ -424,12 +534,33 @@ router.patch('/workspaces/:id', async (req, res) => {
 router.delete('/workspaces/:id', async (req, res) => {
     try {
         const id = req.params.id;
+        const password = typeof req.body?.password === 'string' ? req.body.password : '';
         const role = await (0, enterprise_entitlement_1.getUserWorkspaceRole)(id, req.user.id);
         if (!role || !(0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'delete_workspace')) {
             return respondWorkspaceForbidden(res, 'Only the owner can delete a workspace');
         }
-        await logEnterpriseAdminActionIfApplicable(req, client_1.AuditActionType.DELETE, 'Workspace', `WORKSPACE_DELETED workspaceId=${id}`, id);
-        await (0, workspace_service_1.deleteWorkspace)(id);
+        if (!password.trim()) {
+            return res.status(400).json({ message: 'Password is required to delete workspace' });
+        }
+        const actor = await client_2.prisma.user.findUnique({
+            where: { id: req.user.id },
+            select: { password: true }
+        });
+        if (!actor) {
+            return res.status(401).json({ message: 'Authentication required' });
+        }
+        const passwordMatches = await bcryptjs_1.default.compare(password, actor.password);
+        if (!passwordMatches) {
+            return res.status(401).json({ message: 'Invalid password' });
+        }
+        const deletionSummary = await (0, workspace_service_1.deleteWorkspace)(id);
+        await logEnterpriseAdminActionIfApplicable(req, client_1.AuditActionType.DELETE, 'Workspace', `WORKSPACE_DELETED workspaceId=${id} membersUnlinked=${deletionSummary.membersUnlinked} organizationsUnlinked=${deletionSummary.organizationsUnlinked} pendingInvitesCanceled=${deletionSummary.pendingInvitesCanceled} linkRequestsCanceled=${deletionSummary.linkRequestsCanceled}`, id, {
+            actorType: 'USER',
+            actorUserId: req.user.id,
+            actorWorkspaceId: id,
+            actorWorkspaceRole: (0, enterprise_entitlement_1.normalizeWorkspaceRole)(role) || role,
+            cleanup: deletionSummary
+        });
         res.json({ success: true });
     }
     catch (error) {
@@ -851,6 +982,10 @@ const createWorkspaceOrganizationHandler = async (req, res) => {
         }
         const enterpriseId = await resolveWorkspaceEnterpriseOrganizationId(id);
         if (!enterpriseId) {
+            const restrictionContext = await getEnterpriseRestrictionContext(id);
+            if (restrictionContext.enterpriseOwnerOrgIsRestricted) {
+                return respondOrgRestricted(res);
+            }
             return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
         }
         const payload = createEnterpriseOrganizationSchema.parse(req.body);
@@ -879,6 +1014,9 @@ const createWorkspaceOrganizationHandler = async (req, res) => {
     }
     catch (error) {
         console.error('[Enterprise] Create org for workspace error:', error);
+        if (error?.code === 'ORG_RESTRICTED') {
+            return respondOrgRestricted(res);
+        }
         if (error instanceof zod_1.z.ZodError) {
             return res.status(400).json({ errors: error.issues });
         }
@@ -901,6 +1039,10 @@ router.get('/workspaces/:id/link-requests', async (req, res) => {
         }
         const enterpriseId = await resolveWorkspaceEnterpriseOrganizationId(id);
         if (!enterpriseId) {
+            const restrictionContext = await getEnterpriseRestrictionContext(id);
+            if (restrictionContext.enterpriseOwnerOrgIsRestricted) {
+                return respondOrgRestricted(res);
+            }
             return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
         }
         const requests = await (0, enterprise_linking_service_1.listWorkspaceLinkRequests)(id, enterpriseId);
@@ -922,7 +1064,17 @@ router.post('/workspaces/:id/link-requests', async (req, res) => {
         }
         const enterpriseId = await resolveWorkspaceEnterpriseOrganizationId(id);
         if (!enterpriseId) {
+            const restrictionContext = await getEnterpriseRestrictionContext(id);
+            if (restrictionContext.enterpriseOwnerOrgIsRestricted) {
+                return respondOrgRestricted(res);
+            }
             return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
+        }
+        if ('organizationId' in payload && payload.organizationId) {
+            const restricted = await isOrganizationRestricted(payload.organizationId);
+            if (restricted) {
+                return respondOrgRestricted(res);
+            }
         }
         const request = await (0, enterprise_linking_service_1.createWorkspaceLinkRequest)({
             workspaceId: id,
@@ -938,6 +1090,9 @@ router.post('/workspaces/:id/link-requests', async (req, res) => {
     }
     catch (error) {
         console.error('[Enterprise] Create link request error:', error);
+        if (error?.code === 'ORG_RESTRICTED') {
+            return respondOrgRestricted(res);
+        }
         if (error instanceof zod_1.z.ZodError) {
             return res.status(400).json({ errors: error.issues });
         }
@@ -956,7 +1111,7 @@ router.post('/link-requests/:id/cancel', async (req, res) => {
         }
         const existingRequest = await linkRequestModel.findUnique({
             where: { id: requestId },
-            select: { id: true, workspaceId: true, enterpriseId: true }
+            select: { id: true, workspaceId: true, enterpriseId: true, organizationId: true }
         });
         if (!existingRequest) {
             return res.status(404).json({ message: 'Pending link request not found' });
@@ -968,6 +1123,12 @@ router.post('/link-requests/:id/cancel', async (req, res) => {
         if (!role || !(0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'manage_organizations')) {
             return respondWorkspaceForbidden(res);
         }
+        if (existingRequest.organizationId) {
+            const restricted = await isOrganizationRestricted(existingRequest.organizationId);
+            if (restricted) {
+                return respondOrgRestricted(res);
+            }
+        }
         await (0, enterprise_linking_service_1.cancelWorkspaceLinkRequest)({
             requestId,
             enterpriseId: existingRequest.enterpriseId,
@@ -978,6 +1139,9 @@ router.post('/link-requests/:id/cancel', async (req, res) => {
     }
     catch (error) {
         console.error('[Enterprise] Cancel link request error:', error);
+        if (error?.code === 'ORG_RESTRICTED') {
+            return respondOrgRestricted(res);
+        }
         res.status(400).json({ message: error.message || 'Failed to cancel link request' });
     }
 });
@@ -990,12 +1154,19 @@ router.delete('/workspaces/:id/organizations/:orgId', async (req, res) => {
         if (!role || !(0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'manage_organizations')) {
             return respondWorkspaceForbidden(res);
         }
+        const restricted = await isOrganizationRestricted(orgId);
+        if (restricted) {
+            return respondOrgRestricted(res);
+        }
         await (0, workspace_service_1.unlinkOrganization)(id, orgId);
         await logEnterpriseAdminActionIfApplicable(req, client_1.AuditActionType.DELETE, 'WorkspaceOrganization', `ENTERPRISE_ORG_UNLINKED workspace=${id} organization=${orgId}`, orgId);
         res.json({ success: true });
     }
     catch (error) {
         console.error('[Enterprise] Unlink org error:', error);
+        if (error?.code === 'ORG_RESTRICTED') {
+            return respondOrgRestricted(res);
+        }
         res.status(400).json({ message: error.message || 'Failed to unlink organization' });
     }
 });
@@ -1011,12 +1182,19 @@ router.post('/workspaces/:id/organizations/unlink', async (req, res) => {
         if (!role || !(0, enterprise_entitlement_1.canPerformWorkspaceAction)(role, 'manage_organizations')) {
             return respondWorkspaceForbidden(res);
         }
+        const restricted = await isOrganizationRestricted(organizationId);
+        if (restricted) {
+            return respondOrgRestricted(res);
+        }
         await (0, workspace_service_1.unlinkOrganization)(id, organizationId);
         await logEnterpriseAdminActionIfApplicable(req, client_1.AuditActionType.DELETE, 'WorkspaceOrganization', `ENTERPRISE_ORG_UNLINKED workspace=${id} organization=${organizationId}`, organizationId);
         res.json({ success: true });
     }
     catch (error) {
         console.error('[Enterprise] Unlink org alias error:', error);
+        if (error?.code === 'ORG_RESTRICTED') {
+            return respondOrgRestricted(res);
+        }
         res.status(400).json({ message: error.message || 'Failed to unlink organization' });
     }
 });

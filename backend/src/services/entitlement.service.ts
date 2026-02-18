@@ -10,6 +10,7 @@ import {
     TrialStatus
 } from '@prisma/client';
 import { getActiveTrialForOrganization } from './trial.service';
+import { isOrganizationEffectivelyRestricted } from './organization-visibility.service';
 
 export type AnalyticsLevel = 'NONE' | 'BASIC' | 'ADVANCED' | 'BUSINESS';
 
@@ -180,11 +181,16 @@ const applyPlanExpiryIfNeeded = async (org: Organization): Promise<{ organizatio
 
 export const resolveOrganizationEntitlements = async (org: Organization): Promise<{ entitlements: OrganizationEntitlements; organization: Organization; wasUpdated: boolean }> => {
     const { organization, wasUpdated } = await applyPlanExpiryIfNeeded(org);
-    const trial = await getActiveTrialForOrganization(organization.id);
+    const effectiveRestricted = await isOrganizationEffectivelyRestricted(organization.id);
+    const organizationWithEffectiveRestriction = effectiveRestricted && !organization.isRestricted
+        ? { ...organization, isRestricted: true }
+        : organization;
+    const trial = await getActiveTrialForOrganization(organizationWithEffectiveRestriction.id);
+
     return {
-        entitlements: getOrganizationEntitlements(organization, trial),
-        organization,
-        wasUpdated
+        entitlements: getOrganizationEntitlements(organizationWithEffectiveRestriction, trial),
+        organization: organizationWithEffectiveRestriction,
+        wasUpdated: wasUpdated || organizationWithEffectiveRestriction.isRestricted !== organization.isRestricted
     };
 };
 

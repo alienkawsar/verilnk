@@ -9,6 +9,10 @@ import { Response } from 'express';
 import { ApiKeyRequest } from '../middleware/apikey.middleware';
 import { prisma } from '../db/client';
 import { VerificationStatus, OrgStatus } from '@prisma/client';
+import {
+    buildVisibleSiteWhere,
+    isOrganizationEffectivelyRestricted
+} from '../services/organization-visibility.service';
 
 // ============================================
 // GET /api/v1/verify - Verify a URL
@@ -103,6 +107,15 @@ export const verifyUrl = async (req: ApiKeyRequest, res: Response): Promise<void
             return;
         }
 
+        if (site.organizationId && await isOrganizationEffectivelyRestricted(site.organizationId)) {
+            res.json({
+                verified: false,
+                url: normalizedUrl,
+                message: 'URL not found in VeriLnk directory'
+            });
+            return;
+        }
+
         const isVerified = site.status === VerificationStatus.SUCCESS;
         const orgApproved = site.organization?.status === OrgStatus.APPROVED;
 
@@ -155,13 +168,8 @@ export const getDirectory = async (req: ApiKeyRequest, res: Response): Promise<v
         const skip = (pageNum - 1) * limitNum;
 
         // Build where clause
-        const where: any = {
-            status: VerificationStatus.SUCCESS,
-            deletedAt: null,
-            organization: {
-                status: OrgStatus.APPROVED,
-                deletedAt: null
-            }
+        const baseWhere: any = {
+            status: VerificationStatus.SUCCESS
         };
 
         if (country && typeof country === 'string') {
@@ -169,7 +177,7 @@ export const getDirectory = async (req: ApiKeyRequest, res: Response): Promise<v
                 where: { code: country.toUpperCase() }
             });
             if (countryRecord) {
-                where.countryId = countryRecord.id;
+                baseWhere.countryId = countryRecord.id;
             }
         }
 
@@ -178,16 +186,18 @@ export const getDirectory = async (req: ApiKeyRequest, res: Response): Promise<v
                 where: { slug: category.toLowerCase() }
             });
             if (categoryRecord) {
-                where.categoryId = categoryRecord.id;
+                baseWhere.categoryId = categoryRecord.id;
             }
         }
 
         if (search && typeof search === 'string') {
-            where.OR = [
+            baseWhere.OR = [
                 { name: { contains: search, mode: 'insensitive' } },
                 { url: { contains: search, mode: 'insensitive' } }
             ];
         }
+
+        const where = await buildVisibleSiteWhere(baseWhere);
 
         const [sites, total] = await Promise.all([
             prisma.site.findMany({
@@ -296,6 +306,14 @@ export const getOrganizationProfile = async (req: ApiKeyRequest, res: Response):
         });
 
         if (!organization) {
+            res.status(404).json({
+                error: 'Not Found',
+                message: 'Organization not found or not verified'
+            });
+            return;
+        }
+
+        if (await isOrganizationEffectivelyRestricted(organization.id)) {
             res.status(404).json({
                 error: 'Not Found',
                 message: 'Organization not found or not verified'

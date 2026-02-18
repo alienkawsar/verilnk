@@ -9,14 +9,18 @@ import {
     SupportTier,
     Prisma
 } from '@prisma/client';
-import { indexSite, removeSiteFromIndex, reindexOrganizationSites } from './meilisearch.service';
+import { indexSite, removeSiteFromIndex, reindexEnterpriseManagedSites, reindexOrganizationSites } from './meilisearch.service';
 import bcrypt from 'bcryptjs';
 import { resolveOrganizationEntitlements } from './entitlement.service';
 import * as auditService from './audit.service';
 import { AuditActionType } from '@prisma/client';
 import { VerificationStatus } from '@prisma/client';
-import { generateStrongPassword, assertStrongPassword } from '../utils/passwordPolicy';
+import { assertStrongPassword } from '../utils/passwordPolicy';
 import { normalizeEnterpriseQuotaLimits } from './enterprise-quota.service';
+import {
+    getEffectivelyRestrictedOrganizationIds,
+    isOrganizationEffectivelyRestricted
+} from './organization-visibility.service';
 
 export const checkAndExpirePriorities = async () => {
     // 1. Find expired priorities
@@ -220,10 +224,6 @@ const generateUniqueSlug = async (name: string) => {
     }
 };
 
-const generateTempPassword = () => {
-    return generateStrongPassword();
-};
-
 const getEnterpriseLinkRequestModel = () => (prisma as any).enterpriseOrgLinkRequest;
 
 const activatePendingEnterpriseLinkIntents = async (
@@ -420,6 +420,7 @@ export const adminCreateOrganization = async (
     data: {
         name: string;
         email: string;
+        password: string;
         website: string;
         phone: string;
         address: string;
@@ -447,8 +448,8 @@ export const adminCreateOrganization = async (
         throw new Error('Email already in use');
     }
 
-    const tempPassword = generateTempPassword();
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
+    assertStrongPassword(data.password);
+    const hashedPassword = await bcrypt.hash(data.password, 10);
     const slug = await generateUniqueSlug(data.name);
 
     const planType = data.planType ?? PlanType.FREE;
@@ -525,7 +526,7 @@ export const adminCreateOrganization = async (
                 name: data.name,
                 country: data.countryId,
                 organizationId: org.id,
-                mustChangePassword: true
+                mustChangePassword: false
             }
         });
 
@@ -548,7 +549,7 @@ export const adminCreateOrganization = async (
                 action: AuditActionType.CREATE,
                 entity: 'Organization',
                 targetId: org.id,
-                details: `Admin created organization ${org.name}`,
+                details: `ORG_CREATED_BY_ADMIN orgId=${org.id} orgName="${org.name}"`,
                 snapshot: { org, user, site },
                 ipAddress: auditContext.ip,
                 userAgent: auditContext.userAgent
@@ -571,7 +572,7 @@ export const adminCreateOrganization = async (
         }
     }
 
-    return { ...result, tempPassword };
+    return result;
 };
 
 // Public Profile (Sanitized)
@@ -589,6 +590,26 @@ export const getPublicOrganization = async (id: string) => {
     if (org.deletedAt) return null;
     const { entitlements, organization, wasUpdated } = await resolveOrganizationEntitlements(org);
     const currentOrg = wasUpdated ? { ...org, ...organization } : org;
+    const effectiveRestricted = await isOrganizationEffectivelyRestricted(currentOrg.id);
+    if (effectiveRestricted) {
+        return {
+            id: currentOrg.id,
+            name: currentOrg.name,
+            website: currentOrg.website,
+            address: currentOrg.address,
+            phone: currentOrg.phone,
+            country: currentOrg.country,
+            state: currentOrg.state,
+            category: currentOrg.category,
+            isVerified: false,
+            createdAt: currentOrg.createdAt,
+            type: currentOrg.type,
+            about: currentOrg.about,
+            logo: currentOrg.logo,
+            isRestricted: true,
+            effectiveRestricted: true
+        };
+    }
     if (!entitlements.canAccessOrgPage) return null;
 
     return {
@@ -604,12 +625,15 @@ export const getPublicOrganization = async (id: string) => {
         createdAt: currentOrg.createdAt,
         type: currentOrg.type,
         about: currentOrg.about,
-        logo: currentOrg.logo
+        logo: currentOrg.logo,
+        isRestricted: false,
+        effectiveRestricted: false
     };
 };
 
 export const getPublicOrganizationSitemapEntries = async () => {
     const now = new Date();
+    const effectivelyRestrictedOrgIds = await getEffectivelyRestrictedOrganizationIds();
     const orgs = await prisma.organization.findMany({
         where: {
             status: OrgStatus.APPROVED,
@@ -617,6 +641,13 @@ export const getPublicOrganizationSitemapEntries = async () => {
             planType: { not: PlanType.FREE },
             planStatus: PlanStatus.ACTIVE,
             deletedAt: null,
+            ...(effectivelyRestrictedOrgIds.length > 0
+                ? {
+                    id: {
+                        notIn: effectivelyRestrictedOrgIds
+                    }
+                }
+                : {}),
             OR: [
                 { planEndAt: null },
                 { planEndAt: { gt: now } }
@@ -806,10 +837,17 @@ export const deleteOrganization = async (
 };
 
 export const restrictOrganization = async (id: string, restricted: boolean) => {
-    return await prisma.organization.update({
+    const updated = await prisma.organization.update({
         where: { id },
         data: { isRestricted: restricted }
     });
+
+    if (updated.planType === PlanType.ENTERPRISE) {
+        await reindexEnterpriseManagedSites(id);
+    } else {
+        await reindexOrganizationSites(id);
+    }
+    return updated;
 };
 
 const getDeleteRecoveryDays = () => {

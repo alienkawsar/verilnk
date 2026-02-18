@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.checkRestriction = void 0;
 const client_1 = require("../db/client");
+const organization_visibility_service_1 = require("../services/organization-visibility.service");
 const checkRestriction = async (req, res, next) => {
     const user = req.user;
     // Skip for Admins or GET requests (Read-Only allowed)
@@ -14,9 +15,9 @@ const checkRestriction = async (req, res, next) => {
     }
     try {
         if (user.organizationId) {
-            const org = await client_1.prisma.organization.findUnique({ where: { id: user.organizationId } });
-            if (org?.isRestricted) {
-                return res.status(403).json({ message: 'Account restricted. Contact support.' });
+            const restricted = await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(user.organizationId);
+            if (restricted) {
+                return res.status(403).json({ code: 'ORG_RESTRICTED', message: 'Organization is restricted' });
             }
         }
         else {

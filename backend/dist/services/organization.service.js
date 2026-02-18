@@ -47,6 +47,7 @@ const client_3 = require("@prisma/client");
 const client_4 = require("@prisma/client");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
 const enterprise_quota_service_1 = require("./enterprise-quota.service");
+const organization_visibility_service_1 = require("./organization-visibility.service");
 const checkAndExpirePriorities = async () => {
     // 1. Find expired priorities
     const expiredOrgs = await client_1.prisma.organization.findMany({
@@ -211,9 +212,6 @@ const generateUniqueSlug = async (name) => {
         suffix += 1;
     }
 };
-const generateTempPassword = () => {
-    return (0, passwordPolicy_1.generateStrongPassword)();
-};
 const getEnterpriseLinkRequestModel = () => client_1.prisma.enterpriseOrgLinkRequest;
 const activatePendingEnterpriseLinkIntents = async (organizationId, actorUserId) => {
     const linkRequestModel = getEnterpriseLinkRequestModel();
@@ -275,6 +273,9 @@ const activatePendingEnterpriseLinkIntents = async (organizationId, actorUserId)
             requestIds,
             workspaceIds: Array.from(workspaceIds)
         };
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
 };
 const denyPendingEnterpriseLinkIntents = async (organizationId, actorUserId) => {
@@ -371,6 +372,9 @@ const signupOrganization = async (data) => {
             }
         });
         return { user, org, site };
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
 };
 exports.signupOrganization = signupOrganization;
@@ -381,8 +385,8 @@ const adminCreateOrganization = async (data, auditContext) => {
     if (existingUser || existingAdmin || existingOrgEmail) {
         throw new Error('Email already in use');
     }
-    const tempPassword = generateTempPassword();
-    const hashedPassword = await bcryptjs_1.default.hash(tempPassword, 10);
+    (0, passwordPolicy_1.assertStrongPassword)(data.password);
+    const hashedPassword = await bcryptjs_1.default.hash(data.password, 10);
     const slug = await generateUniqueSlug(data.name);
     const planType = data.planType ?? client_2.PlanType.FREE;
     let planStatus = data.planStatus ?? client_2.PlanStatus.ACTIVE;
@@ -455,7 +459,7 @@ const adminCreateOrganization = async (data, auditContext) => {
                 name: data.name,
                 country: data.countryId,
                 organizationId: org.id,
-                mustChangePassword: true
+                mustChangePassword: false
             }
         });
         const site = await tx.site.create({
@@ -476,13 +480,16 @@ const adminCreateOrganization = async (data, auditContext) => {
                 action: client_3.AuditActionType.CREATE,
                 entity: 'Organization',
                 targetId: org.id,
-                details: `Admin created organization ${org.name}`,
+                details: `ORG_CREATED_BY_ADMIN orgId=${org.id} orgName="${org.name}"`,
                 snapshot: { org, user, site },
                 ipAddress: auditContext.ip,
                 userAgent: auditContext.userAgent
             });
         }
         return { org, user, site };
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
     if (result.org.status === client_2.OrgStatus.APPROVED) {
         const fullSite = await client_1.prisma.site.findUnique({
@@ -493,7 +500,7 @@ const adminCreateOrganization = async (data, auditContext) => {
             await (0, meilisearch_service_1.indexSite)(fullSite);
         }
     }
-    return { ...result, tempPassword };
+    return result;
 };
 exports.adminCreateOrganization = adminCreateOrganization;
 // Public Profile (Sanitized)
@@ -512,6 +519,26 @@ const getPublicOrganization = async (id) => {
         return null;
     const { entitlements, organization, wasUpdated } = await (0, entitlement_service_1.resolveOrganizationEntitlements)(org);
     const currentOrg = wasUpdated ? { ...org, ...organization } : org;
+    const effectiveRestricted = await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(currentOrg.id);
+    if (effectiveRestricted) {
+        return {
+            id: currentOrg.id,
+            name: currentOrg.name,
+            website: currentOrg.website,
+            address: currentOrg.address,
+            phone: currentOrg.phone,
+            country: currentOrg.country,
+            state: currentOrg.state,
+            category: currentOrg.category,
+            isVerified: false,
+            createdAt: currentOrg.createdAt,
+            type: currentOrg.type,
+            about: currentOrg.about,
+            logo: currentOrg.logo,
+            isRestricted: true,
+            effectiveRestricted: true
+        };
+    }
     if (!entitlements.canAccessOrgPage)
         return null;
     return {
@@ -527,12 +554,15 @@ const getPublicOrganization = async (id) => {
         createdAt: currentOrg.createdAt,
         type: currentOrg.type,
         about: currentOrg.about,
-        logo: currentOrg.logo
+        logo: currentOrg.logo,
+        isRestricted: false,
+        effectiveRestricted: false
     };
 };
 exports.getPublicOrganization = getPublicOrganization;
 const getPublicOrganizationSitemapEntries = async () => {
     const now = new Date();
+    const effectivelyRestrictedOrgIds = await (0, organization_visibility_service_1.getEffectivelyRestrictedOrganizationIds)();
     const orgs = await client_1.prisma.organization.findMany({
         where: {
             status: client_2.OrgStatus.APPROVED,
@@ -540,6 +570,13 @@ const getPublicOrganizationSitemapEntries = async () => {
             planType: { not: client_2.PlanType.FREE },
             planStatus: client_2.PlanStatus.ACTIVE,
             deletedAt: null,
+            ...(effectivelyRestrictedOrgIds.length > 0
+                ? {
+                    id: {
+                        notIn: effectivelyRestrictedOrgIds
+                    }
+                }
+                : {}),
             OR: [
                 { planEndAt: null },
                 { planEndAt: { gt: now } }
@@ -624,6 +661,9 @@ const updateOrganization = async (id, data, auditContext) => {
             });
         }
         return org;
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
     let activatedLinkIntents = { activated: 0, requestIds: [], workspaceIds: [] };
     let deniedLinkIntents = { denied: 0 };
@@ -708,10 +748,17 @@ const deleteOrganization = async (id, auditContext, deleteReason) => {
 };
 exports.deleteOrganization = deleteOrganization;
 const restrictOrganization = async (id, restricted) => {
-    return await client_1.prisma.organization.update({
+    const updated = await client_1.prisma.organization.update({
         where: { id },
         data: { isRestricted: restricted }
     });
+    if (updated.planType === client_2.PlanType.ENTERPRISE) {
+        await (0, meilisearch_service_1.reindexEnterpriseManagedSites)(id);
+    }
+    else {
+        await (0, meilisearch_service_1.reindexOrganizationSites)(id);
+    }
+    return updated;
 };
 exports.restrictOrganization = restrictOrganization;
 const getDeleteRecoveryDays = () => {
@@ -777,6 +824,9 @@ const softDeleteOrganization = async (id, auditContext, deleteReason) => {
             });
         }
         return updated;
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
     for (const site of sitesToRemove) {
         await (0, meilisearch_service_1.removeSiteFromIndex)(site.id);
@@ -831,6 +881,9 @@ const restoreOrganization = async (id, auditContext) => {
             });
         }
         return updated;
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
     if (restored.status === client_2.OrgStatus.APPROVED) {
         const sites = await client_1.prisma.site.findMany({
@@ -889,6 +942,9 @@ const permanentlyDeleteOrganization = async (id, auditContext) => {
             });
         }
         return deleted;
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
     for (const site of sitesToRemove) {
         await (0, meilisearch_service_1.removeSiteFromIndex)(site.id);
@@ -957,6 +1013,9 @@ const deleteOrganizations = async (ids, auditContext, deleteReason) => {
                 });
             }
         }
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
     for (const site of sitesToRemove) {
         await (0, meilisearch_service_1.removeSiteFromIndex)(site.id);
@@ -999,6 +1058,9 @@ const bulkUpdateOrganizationPriority = async (ids, priority, durationDays) => {
                 priorityExpiresAt: expiresAt
             }
         });
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
     // 2. Re-index only affected approved orgs with controlled concurrency.
     const approvedOrgs = await client_1.prisma.organization.findMany({

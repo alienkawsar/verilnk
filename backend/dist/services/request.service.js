@@ -260,6 +260,9 @@ const approveRequest = async (id, auditContext) => {
                 where: { id },
                 data: { status: client_2.RequestStatus.APPROVED }
             });
+        }, {
+            timeout: 10000,
+            maxWait: 5000
         });
     }
     // --- ORGANIZATION EDITS ---
@@ -332,6 +335,9 @@ const approveRequest = async (id, auditContext) => {
                 where: { id },
                 data: { status: client_2.RequestStatus.APPROVED }
             });
+        }, {
+            timeout: 10000,
+            maxWait: 5000
         });
         // 3. Post-Transaction Indexing
         if (siteIdToIndex) {
@@ -415,6 +421,9 @@ const approveRequest = async (id, auditContext) => {
                 where: { id },
                 data: { status: client_2.RequestStatus.APPROVED }
             });
+        }, {
+            timeout: 10000,
+            maxWait: 5000
         });
     }
     throw new Error('Unknown request type');

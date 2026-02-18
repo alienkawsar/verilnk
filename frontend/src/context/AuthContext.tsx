@@ -3,6 +3,11 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import axios from 'axios';
 import { usePathname, useRouter } from 'next/navigation';
+import {
+    buildForcePasswordChangeRoute,
+    getDefaultPostLoginRoute,
+    sanitizeReturnTo
+} from '@/lib/auth-redirect';
 
 interface User {
     id: string;
@@ -42,6 +47,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const JUST_LOGGED_OUT_FLAG = 'verilnk_just_logged_out';
 
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
@@ -87,7 +93,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
                 // Forced Password Change Redirect
                 if (data.user.mustChangePassword && window.location.pathname !== '/auth/change-password') {
-                    window.location.href = '/auth/change-password';
+                    const searchParams = new URLSearchParams(window.location.search);
+                    const queryReturnTo = sanitizeReturnTo(searchParams.get('returnTo'));
+                    const currentPathWithQuery = `${window.location.pathname}${window.location.search || ''}`;
+                    const currentPathReturnTo = sanitizeReturnTo(currentPathWithQuery);
+                    const fallbackReturnTo = getDefaultPostLoginRoute(data.user);
+                    const returnToTarget = queryReturnTo || currentPathReturnTo || fallbackReturnTo;
+
+                    window.location.href = buildForcePasswordChangeRoute(returnToTarget);
+                    return;
                 }
             } else {
                 // No public session found (Admin session ignored here)
@@ -118,7 +132,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             await axios.post(`${apiUrl}/auth/logout`, {}, { withCredentials: true });
             setUser(null);
             setSession(null);
-            router.push('/');
+            if (typeof window !== 'undefined') {
+                sessionStorage.setItem(JUST_LOGGED_OUT_FLAG, String(Date.now()));
+            }
+            router.replace('/');
         } catch (error) {
             console.error('Logout failed', error);
         }

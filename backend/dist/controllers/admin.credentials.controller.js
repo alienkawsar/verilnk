@@ -36,7 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.resetOrgPassword = exports.updateOrgLoginEmail = void 0;
+exports.resetEnterprisePassword = exports.resetOrgPassword = exports.updateOrgLoginEmail = void 0;
 const client_1 = require("../db/client");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const auditService = __importStar(require("../services/audit.service"));
@@ -143,6 +143,9 @@ const resetOrgPassword = async (req, res) => {
                     tokenVersion: { increment: 1 } // Invalidate existing sessions
                 }
             });
+        }, {
+            timeout: 10000,
+            maxWait: 5000
         });
         const actor = req.user;
         if (actor?.id) {
@@ -168,3 +171,67 @@ const resetOrgPassword = async (req, res) => {
     }
 };
 exports.resetOrgPassword = resetOrgPassword;
+// Reset Enterprise Organization Password (forces logout + must change password)
+const resetEnterprisePassword = async (req, res) => {
+    try {
+        const { orgId } = req.params;
+        // Verify org exists and is enterprise
+        const org = await client_1.prisma.organization.findUnique({
+            where: { id: orgId },
+            select: { id: true, name: true, planType: true }
+        });
+        if (!org) {
+            res.status(404).json({ message: 'Organization not found' });
+            return;
+        }
+        if (org.planType !== 'ENTERPRISE') {
+            res.status(400).json({ message: 'Organization is not an enterprise account' });
+            return;
+        }
+        const users = await client_1.prisma.user.findMany({ where: { organizationId: orgId } });
+        if (users.length === 0) {
+            res.status(404).json({ message: 'No user account found for this enterprise organization' });
+            return;
+        }
+        const targetUser = users[0];
+        // Generate Secure Temporary Password
+        const tempPassword = (0, passwordPolicy_1.generateStrongPassword)();
+        const hashedPassword = await bcryptjs_1.default.hash(tempPassword, 10);
+        // Transaction: Update Password + Set mustChangePassword + Invalidate Sessions
+        await client_1.prisma.$transaction(async (tx) => {
+            await tx.user.update({
+                where: { id: targetUser.id },
+                data: {
+                    password: hashedPassword,
+                    mustChangePassword: true,
+                    tokenVersion: { increment: 1 } // Invalidate all existing sessions
+                }
+            });
+        }, {
+            timeout: 10000,
+            maxWait: 5000
+        });
+        const actor = req.user;
+        if (actor?.id) {
+            auditService.logAction({
+                adminId: actor.id,
+                action: client_2.AuditActionType.UPDATE,
+                entity: 'EnterprisePasswordReset',
+                targetId: orgId,
+                details: `Reset enterprise password for organization ${org.name}`,
+                snapshot: { userId: targetUser.id, organizationId: org.id },
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent']
+            });
+        }
+        res.json({
+            message: 'Enterprise password reset successfully. User must change password on next login.',
+            tempPassword: tempPassword // Show ONCE
+        });
+    }
+    catch (error) {
+        console.error('Reset Enterprise Password Error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+exports.resetEnterprisePassword = resetEnterprisePassword;

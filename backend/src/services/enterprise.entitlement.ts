@@ -226,6 +226,8 @@ export const hasActiveEnterprisePlan = (org: {
  */
 export const getUserEnterpriseAccess = async (userId: string): Promise<{
     hasAccess: boolean;
+    code?: 'ORG_RESTRICTED' | 'ENTERPRISE_PLAN_REQUIRED';
+    message?: string;
     organizationId?: string;
     entitlements?: EnterpriseEntitlements;
     usage?: {
@@ -256,8 +258,22 @@ export const getUserEnterpriseAccess = async (userId: string): Promise<{
         return { hasAccess: false };
     }
 
+    if (user.organization.isRestricted) {
+        return {
+            hasAccess: false,
+            code: 'ORG_RESTRICTED',
+            message: 'Organization is restricted',
+            organizationId: user.organization.id
+        };
+    }
+
     if (!hasActiveEnterprisePlan(user.organization)) {
-        return { hasAccess: false };
+        return {
+            hasAccess: false,
+            code: 'ENTERPRISE_PLAN_REQUIRED',
+            message: 'Enterprise plan required',
+            organizationId: user.organization.id
+        };
     }
 
     const [snapshot, linkedWorkspaces] = await Promise.all([
@@ -425,7 +441,9 @@ export const canCreateWorkspace = async (userId: string): Promise<{
     if (!access.hasAccess) {
         return {
             allowed: false,
-            reason: 'Enterprise plan required to create workspaces'
+            reason: access.code === 'ORG_RESTRICTED'
+                ? 'Organization is restricted'
+                : 'Enterprise plan required to create workspaces'
         };
     }
 

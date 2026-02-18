@@ -9,6 +9,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getCountries = exports.getCategories = exports.getOrganizationProfile = exports.getDirectory = exports.verifyUrl = void 0;
 const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
+const organization_visibility_service_1 = require("../services/organization-visibility.service");
 // ============================================
 // GET /api/v1/verify - Verify a URL
 // ============================================
@@ -94,6 +95,14 @@ const verifyUrl = async (req, res) => {
             });
             return;
         }
+        if (site.organizationId && await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(site.organizationId)) {
+            res.json({
+                verified: false,
+                url: normalizedUrl,
+                message: 'URL not found in VeriLnk directory'
+            });
+            return;
+        }
         const isVerified = site.status === client_2.VerificationStatus.SUCCESS;
         const orgApproved = site.organization?.status === client_2.OrgStatus.APPROVED;
         res.json({
@@ -137,20 +146,15 @@ const getDirectory = async (req, res) => {
         const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
         const skip = (pageNum - 1) * limitNum;
         // Build where clause
-        const where = {
-            status: client_2.VerificationStatus.SUCCESS,
-            deletedAt: null,
-            organization: {
-                status: client_2.OrgStatus.APPROVED,
-                deletedAt: null
-            }
+        const baseWhere = {
+            status: client_2.VerificationStatus.SUCCESS
         };
         if (country && typeof country === 'string') {
             const countryRecord = await client_1.prisma.country.findFirst({
                 where: { code: country.toUpperCase() }
             });
             if (countryRecord) {
-                where.countryId = countryRecord.id;
+                baseWhere.countryId = countryRecord.id;
             }
         }
         if (category && typeof category === 'string') {
@@ -158,15 +162,16 @@ const getDirectory = async (req, res) => {
                 where: { slug: category.toLowerCase() }
             });
             if (categoryRecord) {
-                where.categoryId = categoryRecord.id;
+                baseWhere.categoryId = categoryRecord.id;
             }
         }
         if (search && typeof search === 'string') {
-            where.OR = [
+            baseWhere.OR = [
                 { name: { contains: search, mode: 'insensitive' } },
                 { url: { contains: search, mode: 'insensitive' } }
             ];
         }
+        const where = await (0, organization_visibility_service_1.buildVisibleSiteWhere)(baseWhere);
         const [sites, total] = await Promise.all([
             client_1.prisma.site.findMany({
                 where,
@@ -270,6 +275,13 @@ const getOrganizationProfile = async (req, res) => {
             }
         });
         if (!organization) {
+            res.status(404).json({
+                error: 'Not Found',
+                message: 'Organization not found or not verified'
+            });
+            return;
+        }
+        if (await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(organization.id)) {
             res.status(404).json({
                 error: 'Not Found',
                 message: 'Organization not found or not verified'

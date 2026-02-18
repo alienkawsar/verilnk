@@ -82,6 +82,27 @@ function OrgProfileContent({ initialData }: OrgProfileContentProps) {
         );
     }
 
+    if (org.isRestricted) {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                <NotFoundThemeImage
+                    alt="Organization restricted"
+                    className="h-28 w-28 sm:h-32 sm:w-32 object-contain mb-4"
+                />
+                <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Organization Restricted</h1>
+                <p className="text-slate-500 dark:text-slate-400 mt-2 text-center">
+                    Your organization is restricted. Please contact the admin.
+                </p>
+                <p className="text-slate-500 dark:text-slate-400 mt-1 text-center">
+                    If you are an admin, please contact support.
+                </p>
+                <Link href="/" className="mt-8 text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-2 font-medium">
+                    <ArrowLeft className="w-4 h-4" /> Return Home
+                </Link>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen pb-20 bg-app relative">
             {/* Background Effects (Absolute) */}

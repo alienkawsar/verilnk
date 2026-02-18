@@ -82,6 +82,17 @@ export interface WorkspaceInviteTargetInput {
     invitedUserId?: string;
 }
 
+export interface WorkspaceDeletionSummary {
+    membersUnlinked: number;
+    organizationsUnlinked: number;
+    pendingInvitesCanceled: number;
+    invitesRemoved: number;
+    linkRequestsCanceled: number;
+    linkRequestsDetached: number;
+    usageLogsRemoved: number;
+    apiKeysRemoved: number;
+}
+
 // ============================================
 // Workspace CRUD
 // ============================================
@@ -200,10 +211,79 @@ export const updateWorkspace = async (
 };
 
 /**
- * Delete workspace (OWNER only)
+ * Delete workspace (OWNER/admin path)
+ * Atomically removes members/org links, revokes pending workspace link intents,
+ * detaches historical link requests, and deletes workspace-scoped records.
  */
-export const deleteWorkspace = async (id: string): Promise<void> => {
-    await prisma.workspace.delete({ where: { id } });
+export const deleteWorkspace = async (id: string): Promise<WorkspaceDeletionSummary> => {
+    return prisma.$transaction(async (tx) => {
+        const now = new Date();
+        const linkRequestModel = (tx as any).enterpriseOrgLinkRequest;
+
+        const membersUnlinked = await tx.workspaceMember.count({ where: { workspaceId: id } });
+        const organizationsUnlinked = await tx.workspaceOrganization.count({ where: { workspaceId: id } });
+        const pendingInvitesCanceled = await tx.invite.count({
+            where: { workspaceId: id, status: InviteStatus.PENDING }
+        });
+
+        let linkRequestsCanceled = 0;
+        let linkRequestsDetached = 0;
+        if (linkRequestModel) {
+            const canceledResult = await linkRequestModel.updateMany({
+                where: {
+                    workspaceId: id,
+                    status: { in: ['PENDING', 'PENDING_APPROVAL'] }
+                },
+                data: {
+                    status: 'CANCELED',
+                    canceledAt: now,
+                    updatedAt: now
+                }
+            });
+            linkRequestsCanceled = Number(canceledResult?.count || 0);
+
+            const detachedResult = await linkRequestModel.updateMany({
+                where: { workspaceId: id },
+                data: { workspaceId: null, updatedAt: now }
+            });
+            linkRequestsDetached = Number(detachedResult?.count || 0);
+        }
+
+        // Remove all workspace members and linked organizations.
+        await tx.workspaceMember.deleteMany({ where: { workspaceId: id } });
+        await tx.workspaceOrganization.deleteMany({ where: { workspaceId: id } });
+
+        // Remove invites tied to the workspace.
+        const invitesRemoved = (await tx.invite.deleteMany({ where: { workspaceId: id } })).count;
+
+        // Remove API usage logs for workspace API keys before deleting keys.
+        const usageLogsRemoved = (await tx.apiUsageLog.deleteMany({
+            where: {
+                apiKey: {
+                    workspaceId: id
+                }
+            }
+        })).count;
+
+        const apiKeysRemoved = (await tx.apiKey.deleteMany({ where: { workspaceId: id } })).count;
+
+        // Delete workspace itself.
+        await tx.workspace.delete({ where: { id } });
+
+        return {
+            membersUnlinked,
+            organizationsUnlinked,
+            pendingInvitesCanceled,
+            invitesRemoved,
+            linkRequestsCanceled,
+            linkRequestsDetached,
+            usageLogsRemoved,
+            apiKeysRemoved
+        };
+    }, {
+        timeout: 10_000,
+        maxWait: 5_000
+    });
 };
 
 // ============================================
@@ -1137,6 +1217,7 @@ export const getLinkedOrganizations = async (workspaceId: string): Promise<Array
         slug: string | null;
         planType: PlanType;
         status: OrgStatus;
+        isRestricted: boolean;
     };
 }>> => {
     const links = await prisma.workspaceOrganization.findMany({
@@ -1147,7 +1228,7 @@ export const getLinkedOrganizations = async (workspaceId: string): Promise<Array
     const orgIds = links.map(l => l.organizationId);
     const orgs = await prisma.organization.findMany({
         where: { id: { in: orgIds } },
-        select: { id: true, name: true, slug: true, planType: true, status: true }
+        select: { id: true, name: true, slug: true, planType: true, status: true, isRestricted: true }
     });
     const orgMap = new Map(orgs.map(o => [o.id, o]));
 

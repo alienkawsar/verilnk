@@ -119,10 +119,70 @@ const updateWorkspace = async (id, data) => {
 };
 exports.updateWorkspace = updateWorkspace;
 /**
- * Delete workspace (OWNER only)
+ * Delete workspace (OWNER/admin path)
+ * Atomically removes members/org links, revokes pending workspace link intents,
+ * detaches historical link requests, and deletes workspace-scoped records.
  */
 const deleteWorkspace = async (id) => {
-    await client_1.prisma.workspace.delete({ where: { id } });
+    return client_1.prisma.$transaction(async (tx) => {
+        const now = new Date();
+        const linkRequestModel = tx.enterpriseOrgLinkRequest;
+        const membersUnlinked = await tx.workspaceMember.count({ where: { workspaceId: id } });
+        const organizationsUnlinked = await tx.workspaceOrganization.count({ where: { workspaceId: id } });
+        const pendingInvitesCanceled = await tx.invite.count({
+            where: { workspaceId: id, status: client_2.InviteStatus.PENDING }
+        });
+        let linkRequestsCanceled = 0;
+        let linkRequestsDetached = 0;
+        if (linkRequestModel) {
+            const canceledResult = await linkRequestModel.updateMany({
+                where: {
+                    workspaceId: id,
+                    status: { in: ['PENDING', 'PENDING_APPROVAL'] }
+                },
+                data: {
+                    status: 'CANCELED',
+                    canceledAt: now,
+                    updatedAt: now
+                }
+            });
+            linkRequestsCanceled = Number(canceledResult?.count || 0);
+            const detachedResult = await linkRequestModel.updateMany({
+                where: { workspaceId: id },
+                data: { workspaceId: null, updatedAt: now }
+            });
+            linkRequestsDetached = Number(detachedResult?.count || 0);
+        }
+        // Remove all workspace members and linked organizations.
+        await tx.workspaceMember.deleteMany({ where: { workspaceId: id } });
+        await tx.workspaceOrganization.deleteMany({ where: { workspaceId: id } });
+        // Remove invites tied to the workspace.
+        const invitesRemoved = (await tx.invite.deleteMany({ where: { workspaceId: id } })).count;
+        // Remove API usage logs for workspace API keys before deleting keys.
+        const usageLogsRemoved = (await tx.apiUsageLog.deleteMany({
+            where: {
+                apiKey: {
+                    workspaceId: id
+                }
+            }
+        })).count;
+        const apiKeysRemoved = (await tx.apiKey.deleteMany({ where: { workspaceId: id } })).count;
+        // Delete workspace itself.
+        await tx.workspace.delete({ where: { id } });
+        return {
+            membersUnlinked,
+            organizationsUnlinked,
+            pendingInvitesCanceled,
+            invitesRemoved,
+            linkRequestsCanceled,
+            linkRequestsDetached,
+            usageLogsRemoved,
+            apiKeysRemoved
+        };
+    }, {
+        timeout: 10000,
+        maxWait: 5000
+    });
 };
 exports.deleteWorkspace = deleteWorkspace;
 // ============================================
@@ -486,6 +546,9 @@ const acceptWorkspaceInvite = async (token, userId) => {
             }
         });
         return member;
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
 };
 exports.acceptWorkspaceInvite = acceptWorkspaceInvite;
@@ -685,6 +748,9 @@ const acceptWorkspaceInviteById = async (inviteId, userId) => {
             }
         });
         return member;
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
 };
 exports.acceptWorkspaceInviteById = acceptWorkspaceInviteById;
@@ -727,6 +793,9 @@ const declineWorkspaceInviteById = async (inviteId, userId) => {
                 status: client_2.InviteStatus.REVOKED
             }
         });
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
 };
 exports.declineWorkspaceInviteById = declineWorkspaceInviteById;
@@ -807,6 +876,9 @@ const linkOrganization = async (workspaceId, organizationId, linkedBy) => {
                 linkedBy
             }
         });
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
 };
 exports.linkOrganization = linkOrganization;
@@ -831,6 +903,9 @@ const unlinkOrganization = async (workspaceId, organizationId) => {
         await tx.workspaceOrganization.delete({
             where: { workspaceId_organizationId: { workspaceId, organizationId } }
         });
+    }, {
+        timeout: 10000,
+        maxWait: 5000
     });
 };
 exports.unlinkOrganization = unlinkOrganization;
@@ -845,7 +920,7 @@ const getLinkedOrganizations = async (workspaceId) => {
     const orgIds = links.map(l => l.organizationId);
     const orgs = await client_1.prisma.organization.findMany({
         where: { id: { in: orgIds } },
-        select: { id: true, name: true, slug: true, planType: true, status: true }
+        select: { id: true, name: true, slug: true, planType: true, status: true, isRestricted: true }
     });
     const orgMap = new Map(orgs.map(o => [o.id, o]));
     return links.map(l => ({

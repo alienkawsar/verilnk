@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
+  AlertTriangle,
   BarChart3,
   Building2,
   Boxes,
@@ -17,6 +18,8 @@ import {
   Clock,
   ExternalLink,
   Globe,
+  Eye,
+  EyeOff,
   Key,
   LayoutDashboard,
   Loader2,
@@ -25,6 +28,7 @@ import {
   MapPin,
   Plus,
   Settings,
+  Trash2,
   Upload,
   Users,
   X,
@@ -36,6 +40,7 @@ import {
   EnterpriseApiError,
   checkEnterpriseAccess,
   createWorkspace,
+  deleteWorkspace,
   downloadEnterpriseInvoice,
   formatLimitReachedMessage,
   getEnterpriseUsageSummary,
@@ -48,6 +53,7 @@ import {
   type EnterpriseUsageSummary,
   type Workspace,
 } from '@/lib/enterprise-api';
+import { buildForcePasswordChangeRoute } from '@/lib/auth-redirect';
 import {
   fetchCategories,
   fetchCountries,
@@ -58,7 +64,7 @@ import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/context/AuthContext';
 
 type DashboardTab = 'overview' | 'billing' | 'workspaces' | 'settings';
-type EnterpriseAccessGate = 'none' | 'normal-user' | 'org-upgrade';
+type EnterpriseAccessGate = 'none' | 'normal-user' | 'org-upgrade' | 'restricted';
 
 const DASHBOARD_TABS: DashboardTab[] = [
   'overview',
@@ -78,6 +84,8 @@ type ProfileForm = {
   categoryId: string;
   about: string;
 };
+
+const JUST_LOGGED_OUT_FLAG = 'verilnk_just_logged_out';
 
 const DEFAULT_PROFILE_FORM: ProfileForm = {
   name: '',
@@ -165,6 +173,19 @@ export default function EnterprisePage() {
   const [downloadingInvoiceId, setDownloadingInvoiceId] = useState<
     string | null
   >(null);
+  const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(
+    null,
+  );
+  const [deleteWorkspaceModalOpen, setDeleteWorkspaceModalOpen] = useState(false);
+  const [deleteWorkspaceTarget, setDeleteWorkspaceTarget] =
+    useState<Workspace | null>(null);
+  const [deleteWorkspaceStep, setDeleteWorkspaceStep] = useState<
+    'CONFIRM_TIMER' | 'PASSWORD_CONFIRM'
+  >('CONFIRM_TIMER');
+  const [deleteWorkspaceCountdown, setDeleteWorkspaceCountdown] = useState(10);
+  const [deleteWorkspacePassword, setDeleteWorkspacePassword] = useState('');
+  const [showDeleteWorkspacePassword, setShowDeleteWorkspacePassword] =
+    useState(false);
 
   const [hasAccess, setHasAccess] = useState(false);
   const [accessGate, setAccessGate] = useState<EnterpriseAccessGate>('none');
@@ -288,11 +309,28 @@ export default function EnterprisePage() {
     updateDashboardSection('workspaces');
   };
 
+  const consumeLogoutRedirectFlag = () => {
+    if (typeof window === 'undefined') return false;
+    const raw = sessionStorage.getItem(JUST_LOGGED_OUT_FLAG);
+    if (!raw) return false;
+    sessionStorage.removeItem(JUST_LOGGED_OUT_FLAG);
+    return true;
+  };
+
   useEffect(() => {
     if (authLoading) return;
 
+    if (user?.mustChangePassword) {
+      router.replace(buildForcePasswordChangeRoute('/enterprise'));
+      return;
+    }
+
     // Logged out = no user session in AuthContext.
     if (!user) {
+      if (consumeLogoutRedirectFlag()) {
+        router.replace('/');
+        return;
+      }
       router.replace('/signin?next=/enterprise');
       return;
     }
@@ -380,6 +418,10 @@ export default function EnterprisePage() {
       setHasAccess(accessResponse.hasAccess);
 
       if (!accessResponse.hasAccess) {
+        if (accessResponse.code === 'ORG_RESTRICTED') {
+          setAccessGate('restricted');
+          return;
+        }
         setAccessGate(
           currentUser?.organizationId ? 'org-upgrade' : 'normal-user',
         );
@@ -414,12 +456,24 @@ export default function EnterprisePage() {
       }
     } catch (err: any) {
       if (err instanceof EnterpriseApiError && err.status === 401) {
+        if (consumeLogoutRedirectFlag()) {
+          router.replace('/');
+          return;
+        }
         router.replace('/signin?next=/enterprise');
         return;
       }
 
       if (err instanceof EnterpriseApiError && err.status === 403) {
+        if (err.code === 'PASSWORD_CHANGE_REQUIRED') {
+          router.replace(buildForcePasswordChangeRoute('/enterprise'));
+          return;
+        }
         setHasAccess(false);
+        if (err.code === 'ORG_RESTRICTED') {
+          setAccessGate('restricted');
+          return;
+        }
         setAccessGate(
           currentUser?.organizationId ? 'org-upgrade' : 'normal-user',
         );
@@ -582,6 +636,78 @@ export default function EnterprisePage() {
     }
   };
 
+  const closeDeleteWorkspaceModal = () => {
+    if (deletingWorkspaceId) return;
+    setDeleteWorkspaceModalOpen(false);
+    setDeleteWorkspaceTarget(null);
+    setDeleteWorkspaceStep('CONFIRM_TIMER');
+    setDeleteWorkspaceCountdown(10);
+    setDeleteWorkspacePassword('');
+    setShowDeleteWorkspacePassword(false);
+  };
+
+  useEffect(() => {
+    if (!deleteWorkspaceModalOpen || deleteWorkspaceStep !== 'CONFIRM_TIMER') {
+      return;
+    }
+
+    setDeleteWorkspaceCountdown(10);
+    const intervalId = window.setInterval(() => {
+      setDeleteWorkspaceCountdown((previous) => {
+        if (previous <= 1) {
+          window.clearInterval(intervalId);
+          return 0;
+        }
+        return previous - 1;
+      });
+    }, 1000);
+
+    return () => window.clearInterval(intervalId);
+  }, [deleteWorkspaceModalOpen, deleteWorkspaceStep]);
+
+  const handleDeleteWorkspace = (workspace: Workspace) => {
+    const normalizedRole = normalizeWorkspaceRoleLabel(workspace.role);
+    if (normalizedRole !== 'OWNER') {
+      showToast("You don't have permission to do that.", 'error');
+      return;
+    }
+
+    setDeleteWorkspaceTarget(workspace);
+    setDeleteWorkspaceStep('CONFIRM_TIMER');
+    setDeleteWorkspacePassword('');
+    setShowDeleteWorkspacePassword(false);
+    setDeleteWorkspaceModalOpen(true);
+  };
+
+  const handleDeleteWorkspaceTimerConfirm = () => {
+    if (deleteWorkspaceCountdown > 0) return;
+    setDeleteWorkspaceStep('PASSWORD_CONFIRM');
+  };
+
+  const handleDeleteWorkspaceConfirmed = async () => {
+    if (!deleteWorkspaceTarget) return;
+    if (!deleteWorkspacePassword.trim()) {
+      showToast('Password is required', 'error');
+      return;
+    }
+
+    try {
+      setDeletingWorkspaceId(deleteWorkspaceTarget.id);
+      await deleteWorkspace(deleteWorkspaceTarget.id, {
+        password: deleteWorkspacePassword,
+      });
+      setWorkspaces((prev) =>
+        prev.filter((item) => item.id !== deleteWorkspaceTarget.id),
+      );
+      closeDeleteWorkspaceModal();
+      showToast('Workspace deleted', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to delete workspace', 'error');
+    } finally {
+      setDeletingWorkspaceId(null);
+    }
+  };
+
   if (authLoading || loading) {
     return (
       <main className='min-h-screen bg-app pb-20'>
@@ -632,6 +758,32 @@ export default function EnterprisePage() {
   }
 
   if (!hasAccess) {
+    if (accessGate === 'restricted') {
+      return (
+        <main className='min-h-screen bg-app pb-20'>
+          <div className='w-full px-4 py-20'>
+            <div className='surface-card rounded-2xl p-10 text-center max-w-3xl mx-auto border border-[var(--app-border)] shadow-lg'>
+              <div className='w-20 h-20 rounded-full surface-card flex items-center justify-center mx-auto mb-6'>
+                <Ban className='w-10 h-10 text-red-500' />
+              </div>
+              <h1 className='text-3xl font-bold text-slate-900 dark:text-white mb-4'>
+                Enterprise Dashboard Restricted
+              </h1>
+              <p className='text-slate-600 dark:text-slate-400 mb-8'>
+                This enterprise account is currently restricted. Workspace and management actions are view-only until the restriction is removed.
+              </p>
+              <button
+                onClick={() => router.push('/')}
+                className='px-6 py-3 btn-primary font-semibold rounded-lg'
+              >
+                Back to Home
+              </button>
+            </div>
+          </div>
+        </main>
+      );
+    }
+
     return (
       <main className='min-h-screen bg-app pb-20'>
         <div className='w-full px-4 py-20'>
@@ -1227,11 +1379,8 @@ export default function EnterprisePage() {
                     <div className='overflow-hidden rounded-xl border border-[var(--app-border)]'>
                       <div className='divide-y divide-slate-200 dark:divide-slate-700'>
                         {workspaces.map((workspace) => (
-                          <button
+                          <div
                             key={workspace.id}
-                            onClick={() =>
-                              router.push(`/enterprise/${workspace.id}`)
-                            }
                             className='w-full text-left px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3 surface-card hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors'
                           >
                             <div className='min-w-0'>
@@ -1254,10 +1403,37 @@ export default function EnterprisePage() {
                                 <span>Status: {workspace.status}</span>
                               </div>
                             </div>
-                            <span className='text-sm text-blue-600 dark:text-blue-400 font-medium'>
-                              Open Workspace
-                            </span>
-                          </button>
+                            <div className='flex items-center gap-2 self-start md:self-center'>
+                              {normalizeWorkspaceRoleLabel(workspace.role) ===
+                                'OWNER' && (
+                                <button
+                                  type='button'
+                                  onClick={() =>
+                                    handleDeleteWorkspace(workspace)
+                                  }
+                                  disabled={deletingWorkspaceId === workspace.id}
+                                  title='Delete workspace'
+                                  aria-label='Delete workspace'
+                                  className='inline-flex items-center justify-center w-8 h-8 rounded-md text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed'
+                                >
+                                  {deletingWorkspaceId === workspace.id ? (
+                                    <Loader2 className='w-4 h-4 animate-spin' />
+                                  ) : (
+                                    <Trash2 className='w-4 h-4' />
+                                  )}
+                                </button>
+                              )}
+                              <button
+                                type='button'
+                                onClick={() =>
+                                  router.push(`/enterprise/${workspace.id}`)
+                                }
+                                className='text-sm text-blue-600 dark:text-blue-400 font-medium hover:underline'
+                              >
+                                Open Workspace
+                              </button>
+                            </div>
+                          </div>
                         ))}
                       </div>
                     </div>
@@ -1544,6 +1720,121 @@ export default function EnterprisePage() {
                   'Create Workspace'
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteWorkspaceModalOpen && deleteWorkspaceTarget && (
+        <div className='fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4'>
+          <div className='w-full max-w-lg bg-white dark:bg-slate-900 border border-[var(--app-border)] rounded-2xl shadow-2xl overflow-hidden'>
+            <div className='px-6 py-4 border-b border-[var(--app-border)]'>
+              <h2 className='text-lg font-semibold text-slate-900 dark:text-white'>
+                Delete workspace
+              </h2>
+              <p className='mt-1 text-sm text-slate-600 dark:text-slate-400'>
+                This will permanently remove the workspace and unlink all members
+                and organizations.
+              </p>
+            </div>
+
+            <div className='px-6 py-5 space-y-5'>
+              {deleteWorkspaceStep === 'CONFIRM_TIMER' ? (
+                <div className='rounded-xl border border-amber-200 dark:border-amber-900/50 bg-amber-50/70 dark:bg-amber-900/20 p-4 flex gap-3'>
+                  <AlertTriangle className='w-5 h-5 text-amber-600 dark:text-amber-400 mt-0.5 shrink-0' />
+                  <p className='text-sm text-amber-800 dark:text-amber-200'>
+                    You are about to delete{' '}
+                    <span className='font-semibold'>
+                      {deleteWorkspaceTarget.name}
+                    </span>
+                    . Wait 10 seconds before continuing.
+                  </p>
+                </div>
+              ) : (
+                <div className='space-y-2'>
+                  <label className='block text-sm font-medium text-slate-700 dark:text-slate-300'>
+                    Password
+                  </label>
+                  <div className='relative'>
+                    <input
+                      type={showDeleteWorkspacePassword ? 'text' : 'password'}
+                      value={deleteWorkspacePassword}
+                      onChange={(event) =>
+                        setDeleteWorkspacePassword(event.target.value)
+                      }
+                      placeholder='Enter your password'
+                      className='w-full px-4 py-2.5 pr-12 rounded-lg border border-[var(--app-border)] bg-transparent text-[var(--app-text-primary)] focus:ring-2 focus:ring-red-500/30 focus:border-red-500/40'
+                      autoFocus
+                    />
+                    <button
+                      type='button'
+                      onClick={() =>
+                        setShowDeleteWorkspacePassword((previous) => !previous)
+                      }
+                      className='absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800'
+                      aria-label={
+                        showDeleteWorkspacePassword
+                          ? 'Hide password'
+                          : 'Show password'
+                      }
+                    >
+                      {showDeleteWorkspacePassword ? (
+                        <EyeOff className='w-4 h-4' />
+                      ) : (
+                        <Eye className='w-4 h-4' />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className='flex items-center justify-end gap-2'>
+                {deleteWorkspaceStep === 'PASSWORD_CONFIRM' && (
+                  <button
+                    type='button'
+                    onClick={() => setDeleteWorkspaceStep('CONFIRM_TIMER')}
+                    disabled={Boolean(deletingWorkspaceId)}
+                    className='px-4 py-2 text-sm rounded-lg border border-[var(--app-border)] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50'
+                  >
+                    Back
+                  </button>
+                )}
+                <button
+                  type='button'
+                  onClick={closeDeleteWorkspaceModal}
+                  disabled={Boolean(deletingWorkspaceId)}
+                  className='px-4 py-2 text-sm rounded-lg border border-[var(--app-border)] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50'
+                >
+                  Cancel
+                </button>
+                {deleteWorkspaceStep === 'CONFIRM_TIMER' ? (
+                  <button
+                    type='button'
+                    onClick={handleDeleteWorkspaceTimerConfirm}
+                    disabled={deleteWorkspaceCountdown > 0}
+                    className='inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 disabled:cursor-not-allowed'
+                  >
+                    {deleteWorkspaceCountdown > 0
+                      ? `Confirm (${deleteWorkspaceCountdown}s)`
+                      : 'Continue'}
+                  </button>
+                ) : (
+                  <button
+                    type='button'
+                    onClick={handleDeleteWorkspaceConfirmed}
+                    disabled={
+                      Boolean(deletingWorkspaceId) ||
+                      deleteWorkspacePassword.trim().length === 0
+                    }
+                    className='inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 disabled:cursor-not-allowed'
+                  >
+                    {Boolean(deletingWorkspaceId) && (
+                      <Loader2 className='w-4 h-4 animate-spin' />
+                    )}
+                    Delete Workspace
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>

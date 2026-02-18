@@ -153,8 +153,21 @@ const getUserEnterpriseAccess = async (userId) => {
     if (!user?.organization) {
         return { hasAccess: false };
     }
+    if (user.organization.isRestricted) {
+        return {
+            hasAccess: false,
+            code: 'ORG_RESTRICTED',
+            message: 'Organization is restricted',
+            organizationId: user.organization.id
+        };
+    }
     if (!(0, exports.hasActiveEnterprisePlan)(user.organization)) {
-        return { hasAccess: false };
+        return {
+            hasAccess: false,
+            code: 'ENTERPRISE_PLAN_REQUIRED',
+            message: 'Enterprise plan required',
+            organizationId: user.organization.id
+        };
     }
     const [snapshot, linkedWorkspaces] = await Promise.all([
         (0, enterprise_quota_service_1.getEnterpriseQuotaSnapshotByOrganizationId)(user.organization.id),
@@ -286,7 +299,9 @@ const canCreateWorkspace = async (userId) => {
     if (!access.hasAccess) {
         return {
             allowed: false,
-            reason: 'Enterprise plan required to create workspaces'
+            reason: access.code === 'ORG_RESTRICTED'
+                ? 'Organization is restricted'
+                : 'Enterprise plan required to create workspaces'
         };
     }
     const workspacesCount = access.usage?.workspaces ?? 0;

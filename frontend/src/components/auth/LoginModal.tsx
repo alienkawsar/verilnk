@@ -6,8 +6,8 @@ import { loginSchema } from '@/lib/validation';
 import { z } from 'zod';
 import { useGoogleReCaptcha } from 'react-google-recaptcha-v3';
 import { signIn, useSession } from 'next-auth/react';
-import { useSearchParams } from 'next/navigation';
 import Image from 'next/image';
+import { resolvePostLoginDestination } from '@/lib/auth-redirect';
 
 interface LoginModalProps {
     isOpen: boolean;
@@ -41,18 +41,7 @@ export default function LoginModal({ isOpen, onClose, onSwitchToSignup }: LoginM
 
                         const user = res.data.user;
                         const returnTo = new URLSearchParams(window.location.search).get('returnTo');
-
-                        if (user.role === 'SUPER_ADMIN') {
-                            window.location.href = '/admin/dashboard';
-                        } else if (returnTo && returnTo.startsWith('/')) {
-                            window.location.href = returnTo;
-                        } else if (user.organizationId && user.planType === 'ENTERPRISE') {
-                            window.location.href = '/enterprise';
-                        } else if (user.organizationId) {
-                            window.location.href = '/org/dashboard';
-                        } else {
-                            window.location.href = '/dashboard';
-                        }
+                        window.location.href = resolvePostLoginDestination(user, returnTo);
 
                         onClose();
                     }
@@ -141,21 +130,8 @@ export default function LoginModal({ isOpen, onClose, onSwitchToSignup }: LoginM
             const user = res.data.user;
             login(user);
 
-            // Redirect Logic
-            // Redirect Logic
             const returnTo = new URLSearchParams(window.location.search).get('returnTo');
-
-            if (user.role === 'SUPER_ADMIN') {
-                window.location.href = '/admin/dashboard';
-            } else if (returnTo && returnTo.startsWith('/')) {
-                window.location.href = returnTo;
-            } else if (user.organizationId && user.planType === 'ENTERPRISE') {
-                window.location.href = '/enterprise';
-            } else if (user.organizationId) {
-                window.location.href = '/org/dashboard';
-            } else {
-                window.location.href = '/dashboard';
-            }
+            window.location.href = resolvePostLoginDestination(user, returnTo);
 
             onClose();
         } catch (err: any) {

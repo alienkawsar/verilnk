@@ -4,7 +4,6 @@ exports.handleReport = exports.autoVerifySite = exports.verifySite = void 0;
 const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const verification_rules_1 = require("./verification.rules");
-// const prisma = new PrismaClient();
 const verifySite = async (siteId, status, adminId, notes) => {
     const log = await client_1.prisma.verificationLog.create({
         data: {

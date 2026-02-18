@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import Image from 'next/image';
 import { X, Upload, Loader2, Image as ImageIcon } from 'lucide-react';
 import { uploadFile } from '@/lib/api';
 import { getImageUrl } from '@/lib/utils';
@@ -276,12 +277,14 @@ export default function CountryForm({ initialData, onSubmit, onCancel, isLoading
                                 />
                                 <div className="flex items-center gap-4">
                                     <div className="text-sm text-slate-600 dark:text-slate-400">Preview:</div>
-                                    <div className="w-10 h-7 bg-transparent rounded overflow-hidden border border-[var(--app-border)] flex items-center justify-center">
+                                    <div className="relative w-10 h-7 bg-transparent rounded overflow-hidden border border-[var(--app-border)] flex items-center justify-center">
                                         {previewUrl && !urlPreviewError ? (
-                                            <img
+                                            <Image
                                                 src={previewUrl}
                                                 alt="Preview"
-                                                className="w-full h-full object-cover"
+                                                fill
+                                                className="object-cover"
+                                                sizes="40px"
                                                 onError={() => setUrlPreviewError(true)}
                                             />
                                         ) : (

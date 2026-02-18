@@ -10,14 +10,24 @@
   --app-bg: #ffffff;
   --app-bg-secondary: #F4F4F4;
   --app-surface: rgba(255, 255, 255, 0.90);
+  --app-surface-elevated: #FFFFFF;
+  --app-surface-hover: rgba(0, 0, 0, 0.04);
+  --app-accent-glow: rgba(24, 125, 233, 0.08);
   --app-border: rgba(0, 0, 0, 0.10);
   --app-text-primary: #101627;
   --app-text-secondary: rgba(16, 22, 39, 0.70);
+  --app-success: #10b981;
+  --app-warning: #f59e0b;
+  --app-danger: #ef4444;
 
   --btn-primary: #187DE9;
   --btn-secondary-bg: transparent;
   --btn-secondary-border: rgba(0, 0, 0, 0.10);
   --btn-secondary-text: rgba(16, 22, 39, 0.70);
+  --chart-primary: #187DE9;
+  --chart-secondary: #1E90FF;
+  --chart-tertiary: #60a5fa;
+  --chart-grid: rgba(0, 0, 0, 0.06);
 }
 
 .dark {
@@ -29,9 +39,13 @@
   --app-bg-secondary: #0f172a;
   /* slate-900 */
   --app-surface: rgba(16, 22, 39, 0.70);
+  --app-surface-elevated: rgba(30, 41, 68, 0.85);
+  --app-surface-hover: rgba(255, 255, 255, 0.06);
+  --app-accent-glow: rgba(24, 125, 233, 0.15);
   --app-border: rgba(255, 255, 255, 0.10);
   --app-text-primary: #f8fafc;
   --app-text-secondary: rgba(234, 240, 255, 0.70);
+  --chart-grid: rgba(255, 255, 255, 0.06);
 
   --btn-secondary-bg: transparent;
   --btn-secondary-border: rgba(255, 255, 255, 0.10);

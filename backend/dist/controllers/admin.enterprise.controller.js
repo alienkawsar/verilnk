@@ -42,6 +42,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createWorkspaceApiKeyAdmin = exports.updateWorkspaceApiKeyRateLimitAdmin = exports.updateWorkspaceRateLimits = exports.getGlobalUsageLogsAdmin = exports.getWorkspaceUsageLogsAdmin = exports.rotateWorkspaceApiKeyAdmin = exports.revokeWorkspaceApiKey = exports.listWorkspaceApiKeys = exports.getWorkspaceDetails = exports.deleteEnterpriseWorkspaceAdmin = exports.updateEnterpriseWorkspaceAdmin = exports.createEnterpriseWorkspaceAdmin = exports.listEnterpriseWorkspaces = exports.getEnterpriseUsageAdmin = exports.updateEnterpriseRateLimitsAdmin = exports.createEnterpriseApiKeyAdmin = exports.addEnterpriseWorkspaceMemberAdmin = exports.getEnterpriseWorkspaceDetailAdmin = exports.createEnterpriseWorkspaceForOrganizationAdmin = exports.listEnterpriseWorkspacesAdmin = exports.getEnterpriseDetailAdmin = exports.setEnterpriseAccessStatusAdmin = exports.listEnterprisesAdmin = void 0;
 const client_1 = require("../db/client");
 const apikey_service_1 = require("../services/apikey.service");
+const workspace_service_1 = require("../services/workspace.service");
+const meilisearch_service_1 = require("../services/meilisearch.service");
 const client_2 = require("@prisma/client");
 const auditService = __importStar(require("../services/audit.service"));
 const enterprise_entitlement_1 = require("../services/enterprise.entitlement");
@@ -381,6 +383,7 @@ const setEnterpriseAccessStatusAdmin = async (req, res) => {
                 updatedAt: true
             }
         });
+        await (0, meilisearch_service_1.reindexEnterpriseManagedSites)(orgId);
         await logAdminEnterpriseAction(req, client_2.AuditActionType.UPDATE, 'Organization', `${statusInput === 'SUSPENDED' ? 'Suspended' : 'Activated'} enterprise access`, orgId, {
             previousStatus: resolveEnterpriseAccessStatus(organization),
             nextStatus: resolveEnterpriseAccessStatus(updated)
@@ -747,6 +750,9 @@ const createEnterpriseWorkspaceForOrganizationAdmin = async (req, res) => {
                 }
             });
             return created;
+        }, {
+            timeout: 10000,
+            maxWait: 5000
         });
         await logAdminEnterpriseAction(req, client_2.AuditActionType.CREATE, 'Workspace', `Created workspace "${workspace.name}" for enterprise "${enterprise.name}"`, workspace.id, { organizationId: orgId, ownerId: owner.id });
         res.status(201).json({
@@ -1124,6 +1130,9 @@ const updateEnterpriseRateLimitsAdmin = async (req, res) => {
                 `;
                 keyOverrideCount += 1;
             }
+        }, {
+            timeout: 10000,
+            maxWait: 5000
         });
         await logAdminEnterpriseAction(req, client_2.AuditActionType.UPDATE, 'EnterpriseRateLimit', `Updated enterprise rate limits for "${enterprise.name}"`, orgId, {
             defaultApiRateLimitRpm: defaultApiRateLimitRpm ?? null,
@@ -1443,21 +1452,8 @@ const deleteEnterpriseWorkspaceAdmin = async (req, res) => {
             res.status(404).json({ message: 'Workspace not found' });
             return;
         }
-        await client_1.prisma.$transaction(async (tx) => {
-            await tx.workspaceMember.deleteMany({ where: { workspaceId: id } });
-            await tx.$executeRaw `DELETE FROM "Invite" WHERE "workspaceId" = ${id}`;
-            await tx.workspaceOrganization.deleteMany({ where: { workspaceId: id } });
-            await tx.apiUsageLog.deleteMany({
-                where: {
-                    apiKey: {
-                        workspaceId: id
-                    }
-                }
-            });
-            await tx.apiKey.deleteMany({ where: { workspaceId: id } });
-            await tx.workspace.delete({ where: { id } });
-        });
-        await logAdminEnterpriseAction(req, client_2.AuditActionType.DELETE, 'Workspace', `Deleted workspace "${workspace.name}"`, id);
+        const deletionSummary = await (0, workspace_service_1.deleteWorkspace)(id);
+        await logAdminEnterpriseAction(req, client_2.AuditActionType.DELETE, 'Workspace', `WORKSPACE_DELETED workspaceId=${id} workspaceName="${workspace.name}" membersUnlinked=${deletionSummary.membersUnlinked} organizationsUnlinked=${deletionSummary.organizationsUnlinked} pendingInvitesCanceled=${deletionSummary.pendingInvitesCanceled} linkRequestsCanceled=${deletionSummary.linkRequestsCanceled}`, id, { cleanup: deletionSummary });
         res.json({ success: true });
     }
     catch (error) {

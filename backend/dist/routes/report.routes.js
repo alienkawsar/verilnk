@@ -5,11 +5,10 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const zod_1 = require("zod");
-const client_1 = require("@prisma/client");
+const client_1 = require("../db/client");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const role_guard_1 = require("../middleware/role.guard");
 const router = express_1.default.Router();
-const prisma = new client_1.PrismaClient();
 const reportSchema = zod_1.z.object({
     siteId: zod_1.z.string().uuid('Invalid Site ID'),
     reason: zod_1.z.string().trim().min(1, 'Report message is required.'),
@@ -20,12 +19,12 @@ router.post('/', auth_middleware_1.authenticateUser, async (req, res) => {
         const { siteId, reason } = reportSchema.parse(req.body);
         const userId = req.user.id;
         // Check if site exists
-        const site = await prisma.site.findUnique({ where: { id: siteId } });
+        const site = await client_1.prisma.site.findUnique({ where: { id: siteId } });
         if (!site || site.deletedAt) {
             return res.status(404).json({ message: 'Site not found' });
         }
         // Check for duplicate report
-        const existingReport = await prisma.report.findFirst({
+        const existingReport = await client_1.prisma.report.findFirst({
             where: {
                 siteId,
                 userId,
@@ -35,7 +34,7 @@ router.post('/', auth_middleware_1.authenticateUser, async (req, res) => {
         if (existingReport) {
             return res.status(400).json({ message: 'You have already reported this site' });
         }
-        const report = await prisma.report.create({
+        const report = await client_1.prisma.report.create({
             data: {
                 siteId,
                 userId,
@@ -78,7 +77,7 @@ router.post('/', auth_middleware_1.authenticateUser, async (req, res) => {
 router.get('/', auth_middleware_1.authenticateAdmin, async (req, res) => {
     // TODO: Add Admin Authentication Middleware
     try {
-        const reports = await prisma.report.findMany({
+        const reports = await client_1.prisma.report.findMany({
             where: { deletedAt: null },
             include: {
                 site: true,
@@ -105,11 +104,11 @@ router.delete('/:id', auth_middleware_1.authenticateAdmin, (0, role_guard_1.auth
     try {
         const { id } = req.params;
         // Check if report exists
-        const report = await prisma.report.findUnique({ where: { id: id } });
+        const report = await client_1.prisma.report.findUnique({ where: { id: id } });
         if (!report) {
             return res.status(404).json({ message: 'Report not found' });
         }
-        await prisma.report.update({
+        await client_1.prisma.report.update({
             where: { id: id },
             data: { deletedAt: new Date() }
         });

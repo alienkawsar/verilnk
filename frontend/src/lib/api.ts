@@ -689,6 +689,11 @@ export const resetOrgPassword = async (orgId: string) => {
     return response.data;
 };
 
+export const resetEnterprisePassword = async (orgId: string) => {
+    const response = await api.post(`/admin/enterprise/${orgId}/credentials/reset-password`);
+    return response.data;
+};
+
 // Admin Billing
 export const createManualInvoice = async (data: { organizationId: string; amountCents: number; currency?: string; planType: string; durationDays?: number; notes?: string }) => {
     const response = await api.post('/admin/billing/invoices', data);

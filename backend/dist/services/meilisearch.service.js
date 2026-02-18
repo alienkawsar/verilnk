@@ -1,10 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.reindexAllSites = exports.searchSites = exports.reindexOrganizationSites = exports.removeSiteFromIndex = exports.indexSite = exports.initializeMeilisearch = exports.resolveStateCode = exports.resolveCountryIso = exports.ORG_PRIORITY_RANK_MAP = void 0;
+exports.reindexAllSites = exports.searchSites = exports.reindexEnterpriseManagedSites = exports.reindexOrganizationSites = exports.removeSiteFromIndex = exports.indexSite = exports.initializeMeilisearch = exports.resolveStateCode = exports.resolveCountryIso = exports.ORG_PRIORITY_RANK_MAP = void 0;
 const meilisearch_client_1 = require("../meilisearch/meilisearch.client");
 const client_1 = require("@prisma/client");
 const client_2 = require("../db/client");
 const entitlement_service_1 = require("./entitlement.service");
+const organization_visibility_service_1 = require("./organization-visibility.service");
 const LEGACY_PRIORITY_SCORE_MAP = {
     HIGH: 3,
     MEDIUM: 2,
@@ -19,6 +20,7 @@ exports.ORG_PRIORITY_RANK_MAP = {
 };
 const CATEGORY_DETECTION_TTL_MS = 5 * 60 * 1000;
 const FETCH_BATCH_SIZE = 250;
+const REINDEX_BATCH_SIZE = 500;
 const MAX_EXACT_ID_SCAN = 5000;
 const MAX_CATEGORY_SCAN = 5000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -96,7 +98,7 @@ const getHitRankingScore = (hit) => {
     const score = Number(hit?._rankingScore ?? 0);
     return Number.isFinite(score) ? score : 0;
 };
-const shouldBeIndexed = (site) => {
+const shouldBeIndexed = (site, effectivelyRestrictedOrgIds) => {
     if (site.deletedAt)
         return false;
     if (site.status !== client_1.VerificationStatus.SUCCESS)
@@ -107,6 +109,10 @@ const shouldBeIndexed = (site) => {
     if (org.deletedAt)
         return false;
     if (org.status !== client_1.OrgStatus.APPROVED)
+        return false;
+    if (org.isRestricted)
+        return false;
+    if (effectivelyRestrictedOrgIds?.has(org.id))
         return false;
     return true;
 };
@@ -149,6 +155,7 @@ const buildSiteDocument = (site) => {
         organization_public: org ? orgEntitlements?.canAccessOrgPage === true : false,
         organizationWebsite: org?.website ?? null,
         organization_website: org?.website ?? null,
+        isVisible: true,
         orgPriority,
         orgPriorityRank: toOrgPriorityRank(org),
         organization_priority: toLegacyPriorityScore(org),
@@ -309,6 +316,7 @@ const buildScopeFilter = (filters) => {
     const countryIso = escapeFilterValue(filters.countryIso);
     parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
     parts.push(`isApproved = ${filters.isApproved}`);
+    parts.push('isVisible = true');
     if (filters.categoryId) {
         const categoryId = escapeFilterValue(filters.categoryId);
         parts.push(`(categoryId = \"${categoryId}\" OR category_id = \"${categoryId}\")`);
@@ -326,6 +334,7 @@ const buildCategoryExpansionFilter = (filters, detectedCategory) => {
     const categorySlug = escapeFilterValue(detectedCategory.slug);
     parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
     parts.push(`isApproved = ${filters.isApproved}`);
+    parts.push('isVisible = true');
     parts.push(`((categoryId = \"${categoryId}\" OR category_id = \"${categoryId}\") OR (categorySlug = \"${categorySlug}\" OR category_slug = \"${categorySlug}\"))`);
     if (filters.stateId) {
         const stateId = escapeFilterValue(filters.stateId);
@@ -378,6 +387,7 @@ const initializeMeilisearch = async () => {
             'categoryId',
             'categorySlug',
             'orgId',
+            'isVisible',
             // legacy support
             'country_code',
             'state_id',
@@ -452,7 +462,8 @@ const initializeMeilisearch = async () => {
         if (sample &&
             (sample.orgPriorityRank === undefined ||
                 sample.countryIso === undefined ||
-                sample.organization_website === undefined)) {
+                sample.organization_website === undefined ||
+                sample.isVisible === undefined)) {
             console.log('Detected legacy MeiliSearch document schema; triggering safe full reindex.');
             await (0, exports.reindexAllSites)();
         }
@@ -465,7 +476,13 @@ const initializeMeilisearch = async () => {
 exports.initializeMeilisearch = initializeMeilisearch;
 const indexSite = async (site) => {
     try {
-        if (!shouldBeIndexed(site)) {
+        const effectivelyRestricted = site.organizationId
+            ? await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(site.organizationId)
+            : false;
+        const restrictedIds = effectivelyRestricted && site.organizationId
+            ? new Set([site.organizationId])
+            : undefined;
+        if (!shouldBeIndexed(site, restrictedIds)) {
             await (0, exports.removeSiteFromIndex)(site.id);
             return;
         }
@@ -487,6 +504,10 @@ const removeSiteFromIndex = async (siteId) => {
 };
 exports.removeSiteFromIndex = removeSiteFromIndex;
 const reindexOrganizationSites = async (organizationId) => {
+    const organizationEffectivelyRestricted = await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(organizationId);
+    const restrictedOrgIdSet = organizationEffectivelyRestricted
+        ? new Set([organizationId])
+        : undefined;
     const sites = await client_2.prisma.site.findMany({
         where: { organizationId },
         include: {
@@ -504,7 +525,7 @@ const reindexOrganizationSites = async (organizationId) => {
     const removeIds = [];
     for (const site of sites) {
         const typedSite = site;
-        if (shouldBeIndexed(typedSite)) {
+        if (shouldBeIndexed(typedSite, restrictedOrgIdSet)) {
             documents.push(buildSiteDocument(typedSite));
         }
         else {
@@ -525,6 +546,24 @@ const reindexOrganizationSites = async (organizationId) => {
     };
 };
 exports.reindexOrganizationSites = reindexOrganizationSites;
+const reindexEnterpriseManagedSites = async (enterpriseId) => {
+    const organizationIds = await (0, organization_visibility_service_1.getEnterpriseManagedOrganizationIds)(enterpriseId);
+    if (organizationIds.length === 0) {
+        return { enterpriseId, organizations: 0, indexed: 0, removed: 0 };
+    }
+    const results = await Promise.all(organizationIds.map((organizationId) => (0, exports.reindexOrganizationSites)(organizationId).catch(() => ({
+        organizationId,
+        indexed: 0,
+        removed: 0
+    }))));
+    return {
+        enterpriseId,
+        organizations: organizationIds.length,
+        indexed: results.reduce((sum, row) => sum + (row.indexed || 0), 0),
+        removed: results.reduce((sum, row) => sum + (row.removed || 0), 0)
+    };
+};
+exports.reindexEnterpriseManagedSites = reindexEnterpriseManagedSites;
 const searchSites = async (query, filters, pagination) => {
     const limit = pagination?.limit || 20;
     const offset = pagination?.offset || 0;
@@ -602,38 +641,61 @@ const reindexAllSites = async () => {
         const index = meilisearch_client_1.meiliClient.index(meilisearch_client_1.SITES_INDEX);
         await index.deleteAllDocuments();
         console.log('Cleared existing Meilisearch documents.');
-        const sites = await client_2.prisma.site.findMany({
-            where: {
-                status: client_1.VerificationStatus.SUCCESS,
-                deletedAt: null,
-                OR: [
-                    { organizationId: null },
-                    { organization: { status: client_1.OrgStatus.APPROVED, deletedAt: null } }
-                ]
-            },
-            include: {
-                country: true,
-                category: true,
-                state: true,
-                organization: true,
-                siteTags: { include: { tag: true } }
-            }
-        });
-        if (sites.length === 0) {
+        let lastCursor = null;
+        let foundSites = false;
+        let totalDocuments = 0;
+        let lastTaskUid;
+        const effectivelyRestrictedOrgIdSet = new Set(await (0, organization_visibility_service_1.getEffectivelyRestrictedOrganizationIds)());
+        while (true) {
+            const sites = await client_2.prisma.site.findMany({
+                take: REINDEX_BATCH_SIZE,
+                ...(lastCursor
+                    ? {
+                        skip: 1,
+                        cursor: { id: lastCursor }
+                    }
+                    : {}),
+                where: {
+                    status: client_1.VerificationStatus.SUCCESS,
+                    deletedAt: null,
+                    OR: [
+                        { organizationId: null },
+                        { organization: { status: client_1.OrgStatus.APPROVED, deletedAt: null } }
+                    ]
+                },
+                include: {
+                    country: true,
+                    category: true,
+                    state: true,
+                    organization: true,
+                    siteTags: { include: { tag: true } }
+                },
+                orderBy: { id: 'asc' }
+            });
+            if (sites.length === 0)
+                break;
+            foundSites = true;
+            lastCursor = sites[sites.length - 1].id;
+            const documents = sites
+                .map((site) => site)
+                .filter((site) => shouldBeIndexed(site, effectivelyRestrictedOrgIdSet))
+                .map((site) => buildSiteDocument(site));
+            if (documents.length === 0)
+                continue;
+            const task = await index.addDocuments(documents);
+            lastTaskUid = task.taskUid;
+            totalDocuments += documents.length;
+            console.log(`Enqueued indexing task for ${documents.length} documents. Task params:`, task);
+        }
+        if (!foundSites) {
             console.log('No approved sites to index.');
             return;
         }
-        const documents = sites
-            .map((site) => site)
-            .filter((site) => shouldBeIndexed(site))
-            .map((site) => buildSiteDocument(site));
-        if (documents.length === 0) {
+        if (totalDocuments === 0) {
             console.log('No eligible sites to index after filtering.');
             return;
         }
-        const task = await index.addDocuments(documents);
-        console.log(`Enqueued indexing task for ${documents.length} documents. Task params:`, task);
-        return { count: documents.length, taskUid: task.taskUid };
+        return { count: totalDocuments, taskUid: lastTaskUid };
     }
     catch (error) {
         console.error('Re-indexing failed:', error);

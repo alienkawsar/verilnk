@@ -1,13 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { updateUserProfile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { Lock, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
-import Image from 'next/image';
+import { getDefaultPostLoginRoute, sanitizeReturnTo } from '@/lib/auth-redirect';
 
 export default function ChangePasswordPage() {
     const [formData, setFormData] = useState({
@@ -17,8 +17,9 @@ export default function ChangePasswordPage() {
 
     const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
-    const { user, login } = useAuth(); // We need to re-login or update user state after change
+    const { user, checkAuth } = useAuth();
     const router = useRouter();
+    const searchParams = useSearchParams();
     const { showToast } = useToast();
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -36,27 +37,17 @@ export default function ChangePasswordPage() {
 
         setLoading(true);
         try {
-            // We use updateUserProfile which calls PATCH /auth/me
-            // Ensure backend handles `mustChangePassword` reset when password is changed.
-            // Wait, does PATCH /auth/me reset `mustChangePassword`?
-            // I haven't explicitly added that logic to `auth.controller`.
-            // The prompt says "On successful change: Set mustChangePassword = false".
-            // I need to verify/update backend Auth Controller logic for `updateProfile`.
-            // But checking `admin.routes.ts`, it points to `adminController.updateProfile` for `/me/profile` (Admin)
-            // AND `auth.routes.ts` has `router.patch('/me', ...)` for Users.
-            // I checked `auth.routes.ts` (Step 1553 view was partial, Step 1453 view was partial).
-            // I need to ensure the backend logic handles this. 
-            // Assuming for now I might need to update backend too. 
-            // Let's implement Frontend first.
-
             await updateUserProfile({
                 password: formData.newPassword
             });
+            await checkAuth();
 
-            showToast('Password updated successfully. You can now access your dashboard.', 'success');
+            const queryReturnTo = sanitizeReturnTo(searchParams.get('returnTo'));
+            const fallbackRoute = getDefaultPostLoginRoute(user || {});
+            const destination = queryReturnTo || fallbackRoute;
 
-            // Force reload to refresh user state (and clear mustChangePassword flag in context)
-            window.location.href = '/dashboard';
+            showToast('Password updated successfully.', 'success');
+            router.replace(destination);
 
         } catch (error: any) {
             console.error('Change Password Error:', error);

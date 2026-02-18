@@ -43,7 +43,6 @@ const client_2 = require("@prisma/client");
 const bcryptjs_1 = __importDefault(require("bcryptjs"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const jwt_1 = require("../config/jwt");
-// const prisma = new PrismaClient();
 const COOKIE_OPTIONS = {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production', // False in dev (allows http://localhost)

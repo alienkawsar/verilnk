@@ -22,6 +22,9 @@ const { prismaMock, signupOrganizationMock } = vitest_1.vi.hoisted(() => ({
         workspaceMember: {
             count: vitest_1.vi.fn()
         },
+        invite: {
+            count: vitest_1.vi.fn()
+        },
         enterpriseOrgLinkRequest: {
             findFirst: vitest_1.vi.fn(),
             findMany: vitest_1.vi.fn(),
@@ -55,6 +58,7 @@ const enterprise_linking_service_1 = require("../services/enterprise-linking.ser
         prismaMock.workspaceOrganization.findMany.mockResolvedValue([{ workspaceId: 'ws-1' }]);
         prismaMock.apiKey.count.mockResolvedValue(0);
         prismaMock.workspaceMember.count.mockResolvedValue(0);
+        prismaMock.invite.count.mockResolvedValue(0);
         prismaMock.$queryRaw.mockResolvedValue([{ count: 0 }]);
         prismaMock.enterpriseOrgLinkRequest.findMany.mockResolvedValue([]);
     });

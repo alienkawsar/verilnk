@@ -4,6 +4,7 @@ exports.resolveOrganizationEntitlementsById = exports.resolveOrganizationEntitle
 const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const trial_service_1 = require("./trial.service");
+const organization_visibility_service_1 = require("./organization-visibility.service");
 const PLAN_SUPPORT_TIER = {
     FREE: 'NONE',
     BASIC: 'EMAIL',
@@ -149,11 +150,15 @@ const applyPlanExpiryIfNeeded = async (org) => {
 };
 const resolveOrganizationEntitlements = async (org) => {
     const { organization, wasUpdated } = await applyPlanExpiryIfNeeded(org);
-    const trial = await (0, trial_service_1.getActiveTrialForOrganization)(organization.id);
+    const effectiveRestricted = await (0, organization_visibility_service_1.isOrganizationEffectivelyRestricted)(organization.id);
+    const organizationWithEffectiveRestriction = effectiveRestricted && !organization.isRestricted
+        ? { ...organization, isRestricted: true }
+        : organization;
+    const trial = await (0, trial_service_1.getActiveTrialForOrganization)(organizationWithEffectiveRestriction.id);
     return {
-        entitlements: (0, exports.getOrganizationEntitlements)(organization, trial),
-        organization,
-        wasUpdated
+        entitlements: (0, exports.getOrganizationEntitlements)(organizationWithEffectiveRestriction, trial),
+        organization: organizationWithEffectiveRestriction,
+        wasUpdated: wasUpdated || organizationWithEffectiveRestriction.isRestricted !== organization.isRestricted
     };
 };
 exports.resolveOrganizationEntitlements = resolveOrganizationEntitlements;

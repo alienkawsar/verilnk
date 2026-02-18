@@ -78,4 +78,7 @@ router.post('/enterprise/:orgId/api-keys', authenticateAdmin, authorizeRole(['SU
 router.patch('/enterprise/:orgId/rate-limits', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminEnterpriseController.updateEnterpriseRateLimitsAdmin);
 router.get('/enterprise/:orgId/usage', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminEnterpriseController.getEnterpriseUsageAdmin);
 
+// Enterprise Credential Management (Super Admin Only)
+router.post('/enterprise/:orgId/credentials/reset-password', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminCredController.resetEnterprisePassword);
+
 export default router;

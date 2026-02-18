@@ -17,6 +17,8 @@ import {
     getWorkspaceUsageLogs,
     getGlobalUsageLogs
 } from '../services/apikey.service';
+import { deleteWorkspace } from '../services/workspace.service';
+import { reindexEnterpriseManagedSites } from '../services/meilisearch.service';
 import {
     AuditActionType,
     PlanStatus,
@@ -425,6 +427,8 @@ export const setEnterpriseAccessStatusAdmin = async (req: Request, res: Response
                 updatedAt: true
             }
         });
+
+        await reindexEnterpriseManagedSites(orgId);
 
         await logAdminEnterpriseAction(
             req,
@@ -1651,30 +1655,15 @@ export const deleteEnterpriseWorkspaceAdmin = async (req: Request, res: Response
             return;
         }
 
-        await prisma.$transaction(async (tx) => {
-            await tx.workspaceMember.deleteMany({ where: { workspaceId: id } });
-            await tx.$executeRaw`DELETE FROM "Invite" WHERE "workspaceId" = ${id}`;
-            await tx.workspaceOrganization.deleteMany({ where: { workspaceId: id } });
-            await tx.apiUsageLog.deleteMany({
-                where: {
-                    apiKey: {
-                        workspaceId: id
-                    }
-                }
-            });
-            await tx.apiKey.deleteMany({ where: { workspaceId: id } });
-            await tx.workspace.delete({ where: { id } });
-        }, {
-            timeout: 10_000,
-            maxWait: 5_000
-        });
+        const deletionSummary = await deleteWorkspace(id);
 
         await logAdminEnterpriseAction(
             req,
             AuditActionType.DELETE,
             'Workspace',
-            `Deleted workspace "${workspace.name}"`,
-            id
+            `WORKSPACE_DELETED workspaceId=${id} workspaceName="${workspace.name}" membersUnlinked=${deletionSummary.membersUnlinked} organizationsUnlinked=${deletionSummary.organizationsUnlinked} pendingInvitesCanceled=${deletionSummary.pendingInvitesCanceled} linkRequestsCanceled=${deletionSummary.linkRequestsCanceled}`,
+            id,
+            { cleanup: deletionSummary }
         );
 
         res.json({ success: true });

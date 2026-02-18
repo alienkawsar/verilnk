@@ -84,6 +84,12 @@ const parseDomain = (input: string): string | null => {
     }
 };
 
+const createOrgRestrictedError = () => {
+    const error = new Error('Organization is restricted') as Error & { code?: string };
+    error.code = 'ORG_RESTRICTED';
+    return error;
+};
+
 const ensureWorkspaceScopedToEnterprise = async (workspaceId: string, enterpriseId: string) => {
     const link = await prisma.workspaceOrganization.findUnique({
         where: {
@@ -117,9 +123,25 @@ const resolveOrganizationByIdentifier = async (identifier: string): Promise<Safe
         throw new Error('Organization identifier is required');
     }
 
+    const restrictedWhereBase = {
+        deletedAt: null,
+        isRestricted: true
+    } as const;
+
     const candidates: SafeOrganization[] = [];
 
     if (normalized.includes('@')) {
+        const restrictedByEmail = await prisma.organization.findFirst({
+            where: {
+                ...restrictedWhereBase,
+                email: normalized
+            },
+            select: { id: true }
+        });
+        if (restrictedByEmail) {
+            throw createOrgRestrictedError();
+        }
+
         const byEmail = await prisma.organization.findFirst({
             where: {
                 ...ELIGIBLE_ORGANIZATION_WHERE,
@@ -132,6 +154,17 @@ const resolveOrganizationByIdentifier = async (identifier: string): Promise<Safe
 
     const slugCandidate = normalized.replace(/^\/+|\/+$/g, '');
     if (/^[a-z0-9-]{2,}$/i.test(slugCandidate)) {
+        const restrictedBySlug = await prisma.organization.findFirst({
+            where: {
+                ...restrictedWhereBase,
+                slug: slugCandidate
+            },
+            select: { id: true }
+        });
+        if (restrictedBySlug) {
+            throw createOrgRestrictedError();
+        }
+
         const bySlug = await prisma.organization.findFirst({
             where: {
                 ...ELIGIBLE_ORGANIZATION_WHERE,
@@ -144,6 +177,22 @@ const resolveOrganizationByIdentifier = async (identifier: string): Promise<Safe
 
     const domain = parseDomain(normalized);
     if (domain) {
+        const restrictedDomainCandidates = await prisma.organization.findMany({
+            where: {
+                ...restrictedWhereBase,
+                website: { contains: domain, mode: 'insensitive' }
+            },
+            select: { id: true, website: true },
+            take: 20
+        });
+        const hasRestrictedDomainMatch = restrictedDomainCandidates.some((org) => {
+            const orgDomain = parseDomain(org.website || '');
+            return Boolean(orgDomain && orgDomain === domain);
+        });
+        if (hasRestrictedDomainMatch) {
+            throw createOrgRestrictedError();
+        }
+
         const domainCandidates = await prisma.organization.findMany({
             where: {
                 ...ELIGIBLE_ORGANIZATION_WHERE,
@@ -186,6 +235,18 @@ const resolveOrganizationById = async (organizationId: string): Promise<SafeOrga
         throw new Error('Organization identifier is required');
     }
 
+    const restrictedOrganization = await prisma.organization.findFirst({
+        where: {
+            id: normalized,
+            deletedAt: null,
+            isRestricted: true
+        },
+        select: { id: true }
+    });
+    if (restrictedOrganization) {
+        throw createOrgRestrictedError();
+    }
+
     const organization = await prisma.organization.findFirst({
         where: {
             ...ELIGIBLE_ORGANIZATION_WHERE,
@@ -211,7 +272,7 @@ export const listWorkspaceLinkRequests = async (workspaceId: string, enterpriseI
         orderBy: { createdAt: 'desc' },
         include: {
             organization: {
-                select: { id: true, name: true, slug: true, website: true }
+                select: { id: true, name: true, slug: true, website: true, isRestricted: true }
             },
             workspace: {
                 select: { id: true, name: true, status: true }
@@ -303,7 +364,7 @@ export const createWorkspaceLinkRequest = async (input: {
         },
         include: {
             organization: {
-                select: { id: true, name: true, slug: true, website: true }
+                select: { id: true, name: true, slug: true, website: true, isRestricted: true }
             },
             workspace: {
                 select: { id: true, name: true, status: true }
@@ -356,6 +417,9 @@ export const listOrganizationPendingLinkRequests = async (organizationId: string
         include: {
             enterprise: {
                 select: { id: true, name: true, slug: true, website: true }
+            },
+            organization: {
+                select: { id: true, name: true, slug: true, website: true, isRestricted: true }
             },
             workspace: {
                 select: { id: true, name: true, status: true }
@@ -525,7 +589,7 @@ export const createEnterpriseOrganizationAndLink = async (
         },
         include: {
             organization: {
-                select: { id: true, name: true, slug: true, website: true }
+                select: { id: true, name: true, slug: true, website: true, isRestricted: true }
             },
             workspace: {
                 select: { id: true, name: true, status: true }

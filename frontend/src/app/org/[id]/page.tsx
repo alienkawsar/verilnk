@@ -18,6 +18,7 @@ type OrgPublic = {
     type?: string;
     about?: string;
     logo?: string;
+    isRestricted?: boolean;
 };
 
 const getApiBase = () => {
@@ -52,6 +53,14 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
         };
     }
 
+    if (org.isRestricted) {
+        return {
+            title: { absolute: 'Organization Restricted | VeriLnk' },
+            description: 'This organization is currently restricted.',
+            robots: { index: false, follow: false },
+        };
+    }
+
     return {
         title: { absolute: `${org.name} | VeriLnk` },
         description,
@@ -77,7 +86,7 @@ export default async function OrgProfilePage({ params }: { params: { id: string 
     const resolvedParams = await params;
     const org = await fetchPublicOrg(resolvedParams.id);
 
-    const jsonLd = org ? JSON.stringify({
+    const jsonLd = org && !org.isRestricted ? JSON.stringify({
         "@context": "https://schema.org",
         "@type": "Organization",
         "name": org.name,

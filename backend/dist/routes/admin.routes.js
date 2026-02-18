@@ -102,4 +102,6 @@ router.post('/enterprise/:orgId/workspaces/:workspaceId/members', auth_middlewar
 router.post('/enterprise/:orgId/api-keys', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminEnterpriseController.createEnterpriseApiKeyAdmin);
 router.patch('/enterprise/:orgId/rate-limits', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminEnterpriseController.updateEnterpriseRateLimitsAdmin);
 router.get('/enterprise/:orgId/usage', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminEnterpriseController.getEnterpriseUsageAdmin);
+// Enterprise Credential Management (Super Admin Only)
+router.post('/enterprise/:orgId/credentials/reset-password', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminCredController.resetEnterprisePassword);
 exports.default = router;

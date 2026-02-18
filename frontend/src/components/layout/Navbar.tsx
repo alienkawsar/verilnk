@@ -210,15 +210,12 @@ function NavbarContent() {
 
           {/* Right Side: Auth */}
           <div className='flex-1 flex justify-end items-center gap-4 relative z-20'>
-            {/* Theme toggle behavior contract:
-               - >= md: always visible in navbar for all auth states
-               - < md: only visible in mobile menu panel */}
-            <div className='hidden md:flex items-center'>
-              <ThemeToggle />
-            </div>
             {user ? (
               <>
-                <div className='hidden md:block relative' ref={dropdownRef}>
+                <div className='hidden lg:flex items-center'>
+                  <ThemeToggle />
+                </div>
+                <div className='relative' ref={dropdownRef}>
                   <button
                     onClick={() => setDropdownOpen(!dropdownOpen)}
                     className='focus:outline-none transition-transform hover:scale-105'
@@ -276,6 +273,13 @@ function NavbarContent() {
                             Dashboard
                           </Link>
 
+                          <div className='lg:hidden flex items-center justify-between px-3 py-2 text-sm text-slate-700 dark:text-slate-300'>
+                            <span className='font-medium'>Theme</span>
+                            <ThemeToggle onToggle={() => setDropdownOpen(false)} />
+                          </div>
+
+                          <div className='lg:hidden h-px bg-slate-200 dark:bg-white/10 my-1' />
+
                           <button
                             onClick={() => {
                               logout();
@@ -293,54 +297,12 @@ function NavbarContent() {
                     </>
                   )}
                 </div>
-
-                <div className='md:hidden relative' ref={mobileMenuRef}>
-                  <button
-                    onClick={() => setMobileMenuOpen((prev) => !prev)}
-                    aria-label='Open menu'
-                    aria-expanded={mobileMenuOpen}
-                    aria-haspopup='menu'
-                    className='w-9 h-9 rounded-full flex items-center justify-center bg-slate-100/90 dark:bg-white/10 border border-slate-200 dark:border-white/10 text-slate-700 dark:text-slate-100 shadow-sm transition-colors hover:bg-slate-200 dark:hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-blue-500/50'
-                  >
-                    <Menu className='w-4 h-4' />
-                  </button>
-
-                  {mobileMenuOpen && (
-                    <div className='absolute top-full right-0 mt-2 w-60 p-3 space-y-2 rounded-xl border border-slate-200/70 dark:border-white/10 bg-white/90 dark:bg-[#101627]/90 backdrop-blur-xl shadow-xl z-50'>
-                      <div className='flex items-center justify-between'>
-                        <span className='text-sm font-medium text-slate-700 dark:text-slate-200'>
-                          Theme
-                        </span>
-                        <ThemeToggle onToggle={() => setMobileMenuOpen(false)} />
-                      </div>
-
-                      <div className='h-px bg-slate-200 dark:bg-white/10' />
-
-                      <Link
-                        href={dashboardHref}
-                        onClick={() => setMobileMenuOpen(false)}
-                        className='w-full h-10 rounded-lg border border-slate-200 dark:border-white/10 bg-white/80 dark:bg-white/5 text-slate-700 dark:text-slate-200 text-sm font-semibold tracking-wide hover:bg-slate-100 dark:hover:bg-white/10 transition-colors flex items-center justify-center gap-2'
-                      >
-                        <UserIcon className='w-4 h-4' />
-                        Dashboard
-                      </Link>
-
-                      <button
-                        onClick={() => {
-                          logout();
-                          setMobileMenuOpen(false);
-                        }}
-                        className='w-full h-10 rounded-lg bg-red-500/10 border border-red-200 dark:border-red-500/30 text-red-600 dark:text-red-300 text-sm font-semibold tracking-wide hover:bg-red-500/20 transition-colors flex items-center justify-center gap-2'
-                      >
-                        <LogOut className='w-4 h-4' />
-                        Sign Out
-                      </button>
-                    </div>
-                  )}
-                </div>
               </>
             ) : (
               <>
+                <div className='hidden md:flex items-center'>
+                  <ThemeToggle />
+                </div>
                 <button
                   onClick={openLogin}
                   className='hidden md:flex h-10 px-6 rounded-full bg-black/5 dark:bg-white/10 backdrop-blur-md border border-black/10 dark:border-white/10 text-slate-700 dark:text-white text-sm font-medium transition-all shadow-sm hover:shadow-md hover:bg-black/10 dark:hover:bg-white/20 active:translate-y-0.5 focus-visible:ring-2 focus-visible:ring-slate-400 items-center gap-2 group'

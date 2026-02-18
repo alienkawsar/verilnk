@@ -5,6 +5,7 @@ import { useToast } from '@/components/ui/Toast';
 import { TableSkeleton } from '@/components/ui/Loading';
 import { useDebounce } from '@/hooks/useDebounce';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
+import PasswordStrengthChecklist from '@/components/ui/PasswordStrengthChecklist';
 
 interface User {
     id: string;
@@ -350,6 +351,8 @@ function UserFormModal({ isOpen, onClose, initialData, onSave }: any) {
     const { showToast } = useToast();
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
+    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+    const [confirmPassword, setConfirmPassword] = useState('');
     const [formData, setFormData] = useState({
         firstName: initialData?.firstName || '',
         lastName: initialData?.lastName || '',
@@ -363,6 +366,15 @@ function UserFormModal({ isOpen, onClose, initialData, onSave }: any) {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        const shouldValidatePassword = !initialData || Boolean(formData.password);
+        if (shouldValidatePassword && !confirmPassword) {
+            showToast('Confirm password is required', 'error');
+            return;
+        }
+        if (shouldValidatePassword && formData.password !== confirmPassword) {
+            showToast('Passwords do not match', 'error');
+            return;
+        }
         setLoading(true);
         try {
             const payload: any = { ...formData };
@@ -476,8 +488,36 @@ function UserFormModal({ isOpen, onClose, initialData, onSave }: any) {
                             </button>
                         </div>
                         <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                            Min 8 chars with uppercase, lowercase, number, special character.
+                            Min 8 chars with uppercase, lowercase, number, and special character.
                         </p>
+                    </div>
+                    <div>
+                        <label className="text-sm text-slate-600 dark:text-slate-400 block mb-1">
+                            Confirm Password
+                        </label>
+                        <div className="relative">
+                            <input
+                                type={showConfirmPassword ? 'text' : 'password'}
+                                required={!initialData || Boolean(formData.password)}
+                                className="w-full bg-transparent border border-[var(--app-border)] rounded p-2 pr-10 text-[var(--app-text-primary)]"
+                                value={confirmPassword}
+                                onChange={e => setConfirmPassword(e.target.value)}
+                                placeholder={initialData ? 'Re-enter new password' : 'Re-enter password'}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+                            >
+                                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                            </button>
+                        </div>
+                        {confirmPassword && formData.password !== confirmPassword && (
+                            <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
+                        )}
+                        {(!initialData || formData.password) && (
+                            <PasswordStrengthChecklist password={formData.password} className="mt-2" />
+                        )}
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>

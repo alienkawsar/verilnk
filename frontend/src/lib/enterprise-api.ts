@@ -58,6 +58,25 @@ export interface Workspace {
     createdAt: string;
 }
 
+export interface WorkspaceMembershipContext {
+    workspaceId: string;
+    workspaceName: string;
+    memberRole: WorkspaceRole;
+    userId: string;
+    permissions: {
+        canViewOverview: boolean;
+        canViewAnalytics: boolean;
+        canViewUsage: boolean;
+        canViewApiKeys: boolean;
+        canViewMembers: boolean;
+        canViewOrganizations: boolean;
+        canViewSecurity: boolean;
+        canManageMembers: boolean;
+        canManageOrganizations: boolean;
+        canManageApiKeys: boolean;
+    };
+}
+
 export interface WorkspaceMember {
     id: string;
     userId: string;
@@ -81,6 +100,7 @@ export interface LinkedOrganization {
         slug: string | null;
         planType: string;
         status: string;
+        isRestricted: boolean;
     };
 }
 
@@ -134,6 +154,7 @@ export interface EnterpriseLinkRequest {
         name: string;
         slug: string | null;
         website?: string;
+        isRestricted?: boolean;
     } | null;
     workspace?: {
         id: string;
@@ -250,6 +271,8 @@ export interface EnterpriseUsageSummary {
 
 export interface EnterpriseAccess {
     hasAccess: boolean;
+    code?: 'ORG_RESTRICTED' | 'ENTERPRISE_PLAN_REQUIRED' | string;
+    message?: string;
     organizationId?: string;
     entitlements?: {
         apiAccess: boolean;
@@ -374,11 +397,14 @@ async function apiRequest<T>(
 
     if (!response.ok) {
         const errorPayload = await response.json().catch(() => null) as Record<string, any> | null;
+        const errorCode = typeof errorPayload?.code === 'string'
+            ? errorPayload.code
+            : (typeof errorPayload?.error === 'string' ? errorPayload.error : undefined);
         throw new EnterpriseApiError(
             errorPayload?.message || `Request failed with status ${response.status}`,
             {
                 status: response.status,
-                code: typeof errorPayload?.error === 'string' ? errorPayload.error : undefined,
+                code: errorCode,
                 resource: typeof errorPayload?.resource === 'string'
                     ? errorPayload.resource as EnterpriseQuotaResource
                     : undefined,
@@ -457,6 +483,13 @@ export async function getWorkspace(
     return apiRequest(`/enterprise/workspaces/${id}`, requestOptions);
 }
 
+export async function getWorkspaceMembership(
+    id: string,
+    requestOptions: RequestInit = {}
+): Promise<WorkspaceMembershipContext> {
+    return apiRequest(`/enterprise/workspaces/${id}/me`, requestOptions);
+}
+
 export async function createWorkspace(name: string): Promise<{ workspace: any }> {
     return apiRequest('/enterprise/workspaces', {
         method: 'POST',
@@ -471,9 +504,15 @@ export async function updateWorkspace(id: string, name: string): Promise<{ works
     });
 }
 
-export async function deleteWorkspace(id: string): Promise<{ success: boolean }> {
+export async function deleteWorkspace(
+    id: string,
+    options: { password?: string } = {}
+): Promise<{ success: boolean }> {
     return apiRequest(`/enterprise/workspaces/${id}`, {
         method: 'DELETE',
+        body: JSON.stringify({
+            password: options.password
+        }),
     });
 }
 

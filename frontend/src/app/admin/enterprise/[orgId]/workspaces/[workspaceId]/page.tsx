@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Loader2, Users, Building2, Key, Activity, Plus } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Loader2, Users, Building2, Key, Activity, Plus, Trash2 } from 'lucide-react';
 import {
     AdminApiKey,
     AdminLinkedOrg,
@@ -12,6 +12,7 @@ import {
     AdminWorkspaceDetail,
     AdminWorkspaceMember,
     addAdminEnterpriseWorkspaceMember,
+    deleteAdminWorkspace,
     fetchAdminEnterpriseWorkspaceDetail,
     revokeAdminWorkspaceApiKey
 } from '@/lib/admin-enterprise-api';
@@ -41,6 +42,9 @@ export default function AdminEnterpriseWorkspaceDetailPage() {
     const [usageLogs, setUsageLogs] = useState<AdminUsageLog[]>([]);
     const [usageTotal, setUsageTotal] = useState(0);
     const [showAddMemberForm, setShowAddMemberForm] = useState(false);
+    const [showDeleteModal, setShowDeleteModal] = useState(false);
+    const [deleteConfirmName, setDeleteConfirmName] = useState('');
+    const [deletingWorkspace, setDeletingWorkspace] = useState(false);
     const [addingMember, setAddingMember] = useState(false);
     const [memberEmail, setMemberEmail] = useState('');
     const [memberRole, setMemberRole] = useState<AdminWorkspaceMemberRole>('VIEWER');
@@ -119,6 +123,26 @@ export default function AdminEnterpriseWorkspaceDetailPage() {
         }
     };
 
+    const handleDeleteWorkspace = async () => {
+        if (!workspace) return;
+        if (deleteConfirmName.trim() !== workspace.name) {
+            showToast(`Type "${workspace.name}" to confirm deletion`, 'error');
+            return;
+        }
+
+        setDeletingWorkspace(true);
+        try {
+            await deleteAdminWorkspace(workspace.id);
+            showToast('Workspace deleted', 'success');
+            router.push(`/admin/enterprise/${orgId}`);
+            router.refresh();
+        } catch (error: any) {
+            showToast(error?.response?.data?.message || 'Failed to delete workspace', 'error');
+        } finally {
+            setDeletingWorkspace(false);
+        }
+    };
+
     if (loading || !workspace) {
         return (
             <div className="p-6">
@@ -144,12 +168,14 @@ export default function AdminEnterpriseWorkspaceDetailPage() {
                         </p>
                     </div>
                 </div>
-                <Link
-                    href={`/admin/enterprise/${orgId}`}
-                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                    Back to enterprise
-                </Link>
+                <div className="flex items-center gap-2">
+                    <Link
+                        href={`/admin/enterprise/${orgId}`}
+                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                    >
+                        Back to enterprise
+                    </Link>
+                </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -405,6 +431,73 @@ export default function AdminEnterpriseWorkspaceDetailPage() {
                     </div>
                 )}
             </div>
+
+            <div className="rounded-xl border border-red-200 dark:border-red-900/50 surface-card p-4">
+                <div className="flex items-start gap-3">
+                    <div className="mt-0.5 rounded-lg bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-2">
+                        <AlertTriangle className="w-4 h-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                        <h2 className="text-sm font-semibold text-red-600 dark:text-red-400">Danger Zone</h2>
+                        <p className="mt-1 text-xs text-slate-600 dark:text-slate-400">
+                            Deleting this workspace unlinks all members and organizations and removes workspace resources.
+                            This action cannot be undone.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setDeleteConfirmName('');
+                            setShowDeleteModal(true);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-red-600 text-white hover:bg-red-700"
+                    >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete
+                    </button>
+                </div>
+            </div>
+
+            {showDeleteModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                    <div className="w-full max-w-lg rounded-xl border border-[var(--app-border)] surface-card shadow-2xl overflow-hidden">
+                        <div className="px-6 py-4 border-b border-[var(--app-border)]">
+                            <h3 className="text-lg font-semibold text-slate-900 dark:text-white">Delete workspace</h3>
+                            <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
+                                Type <span className="font-semibold text-slate-900 dark:text-white">{workspace.name}</span> to confirm deletion.
+                            </p>
+                        </div>
+                        <div className="px-6 py-4 space-y-4">
+                            <input
+                                type="text"
+                                value={deleteConfirmName}
+                                onChange={(event) => setDeleteConfirmName(event.target.value)}
+                                placeholder={workspace.name}
+                                className="w-full px-3 py-2.5 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-red-500/30"
+                            />
+                            <div className="flex items-center justify-end gap-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowDeleteModal(false)}
+                                    disabled={deletingWorkspace}
+                                    className="px-4 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={handleDeleteWorkspace}
+                                    disabled={deletingWorkspace || deleteConfirmName.trim() !== workspace.name}
+                                    className="inline-flex items-center gap-2 px-4 py-2 text-sm rounded-lg bg-red-600 hover:bg-red-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    {deletingWorkspace && <Loader2 className="w-4 h-4 animate-spin" />}
+                                    Confirm Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

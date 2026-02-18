@@ -3,7 +3,6 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAllReports = exports.createReport = void 0;
 const client_1 = require("../db/client");
 const verification_service_1 = require("./verification.service");
-// const prisma = new PrismaClient();
 const createReport = async (siteId, userId, reason, ipAddress) => {
     // Basic validation
     if (!reason || reason.trim().length === 0) {

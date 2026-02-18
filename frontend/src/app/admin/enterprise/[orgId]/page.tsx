@@ -13,6 +13,7 @@ import {
     Plus,
     Settings,
     ShieldAlert,
+    Trash2,
     Users
 } from 'lucide-react';
 import {
@@ -21,6 +22,7 @@ import {
     AdminUsageLog,
     createAdminEnterpriseApiKey,
     createAdminEnterpriseWorkspace,
+    deleteAdminWorkspace,
     fetchAdminEnterpriseDetail,
     fetchAdminEnterpriseUsage,
     fetchAdminEnterpriseWorkspaces,
@@ -54,6 +56,7 @@ export default function AdminEnterpriseDetailPage() {
     const [workspaceRows, setWorkspaceRows] = useState<AdminWorkspace[]>([]);
     const [workspaceTotalPages, setWorkspaceTotalPages] = useState(1);
     const [workspaceLoading, setWorkspaceLoading] = useState(false);
+    const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(null);
 
     const [usageRange, setUsageRange] = useState<7 | 30>(30);
     const [usagePage, setUsagePage] = useState(1);
@@ -180,6 +183,45 @@ export default function AdminEnterpriseDetailPage() {
             showToast(error?.response?.data?.message || 'Failed to create workspace', 'error');
         } finally {
             setSubmitting(false);
+        }
+    };
+
+    const handleDeleteWorkspace = async (workspace: AdminWorkspace) => {
+        const confirmed = window.confirm(
+            `Delete workspace "${workspace.name}"?\n\nThis will unlink members and organizations and remove workspace resources. This action cannot be undone.`
+        );
+        if (!confirmed) return;
+
+        setDeletingWorkspaceId(workspace.id);
+        try {
+            await deleteAdminWorkspace(workspace.id);
+            showToast('Workspace deleted', 'success');
+
+            setWorkspaceRows((prev) => prev.filter((row) => row.id !== workspace.id));
+            setDetail((prev) => {
+                if (!prev) return prev;
+                const remainingWorkspaces = prev.workspaces.filter((row) => row.id !== workspace.id);
+                return {
+                    ...prev,
+                    workspaces: remainingWorkspaces,
+                    apiKeys: prev.apiKeys.filter((key) => key.workspaceId !== workspace.id),
+                    members: prev.members.filter((member) => member.workspaceId !== workspace.id),
+                    stats: {
+                        ...prev.stats,
+                        workspaceCount: Math.max(0, prev.stats.workspaceCount - 1),
+                        apiKeyCount: Math.max(0, prev.stats.apiKeyCount - (workspace.apiKeyCount || 0)),
+                        memberCount: Math.max(0, prev.stats.memberCount - (workspace.memberCount || 0)),
+                        linkedOrganizationCount: Math.max(0, prev.stats.linkedOrganizationCount - (workspace.orgCount || 0)),
+                    }
+                };
+            });
+
+            setNewKeyWorkspaceId((prev) => (prev === workspace.id ? '' : prev));
+            setRateWorkspaceId((prev) => (prev === workspace.id ? '' : prev));
+        } catch (error: any) {
+            showToast(error?.response?.data?.message || 'Failed to delete workspace', 'error');
+        } finally {
+            setDeletingWorkspaceId(null);
         }
     };
 
@@ -489,12 +531,28 @@ export default function AdminEnterpriseDetailPage() {
                                                 </span>
                                             </td>
                                             <td className="px-4 py-3">
-                                                <Link
-                                                    href={`/admin/enterprise/${orgId}/workspaces/${workspace.id}`}
-                                                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
-                                                >
-                                                    Open Workspace
-                                                </Link>
+                                                <div className="flex items-center justify-end gap-2">
+                                                    <Link
+                                                        href={`/admin/enterprise/${orgId}/workspaces/${workspace.id}`}
+                                                        className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                                                    >
+                                                        Open Workspace
+                                                    </Link>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleDeleteWorkspace(workspace)}
+                                                        disabled={deletingWorkspaceId === workspace.id}
+                                                        title="Delete workspace"
+                                                        aria-label="Delete workspace"
+                                                        className="inline-flex items-center justify-center w-7 h-7 rounded-md text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                    >
+                                                        {deletingWorkspaceId === workspace.id ? (
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        ) : (
+                                                            <Trash2 className="w-3.5 h-3.5" />
+                                                        )}
+                                                    </button>
+                                                </div>
                                             </td>
                                         </tr>
                                     ))}

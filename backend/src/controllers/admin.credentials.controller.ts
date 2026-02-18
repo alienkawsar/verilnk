@@ -150,3 +150,75 @@ export const resetOrgPassword = async (req: Request, res: Response): Promise<voi
         res.status(500).json({ message: 'Internal server error' });
     }
 };
+
+// Reset Enterprise Organization Password (forces logout + must change password)
+export const resetEnterprisePassword = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { orgId } = req.params;
+
+        // Verify org exists and is enterprise
+        const org = await prisma.organization.findUnique({
+            where: { id: orgId as string },
+            select: { id: true, name: true, planType: true }
+        });
+
+        if (!org) {
+            res.status(404).json({ message: 'Organization not found' });
+            return;
+        }
+
+        if (org.planType !== 'ENTERPRISE') {
+            res.status(400).json({ message: 'Organization is not an enterprise account' });
+            return;
+        }
+
+        const users = await prisma.user.findMany({ where: { organizationId: orgId as string } });
+        if (users.length === 0) {
+            res.status(404).json({ message: 'No user account found for this enterprise organization' });
+            return;
+        }
+        const targetUser = users[0];
+
+        // Generate Secure Temporary Password
+        const tempPassword = generateStrongPassword();
+        const hashedPassword = await bcrypt.hash(tempPassword, 10);
+
+        // Transaction: Update Password + Set mustChangePassword + Invalidate Sessions
+        await prisma.$transaction(async (tx) => {
+            await tx.user.update({
+                where: { id: targetUser.id },
+                data: {
+                    password: hashedPassword,
+                    mustChangePassword: true,
+                    tokenVersion: { increment: 1 } // Invalidate all existing sessions
+                }
+            });
+        }, {
+            timeout: 10_000,
+            maxWait: 5_000
+        });
+
+        const actor = (req as any).user;
+        if (actor?.id) {
+            auditService.logAction({
+                adminId: actor.id,
+                action: AuditActionType.UPDATE,
+                entity: 'EnterprisePasswordReset',
+                targetId: orgId as string,
+                details: `Reset enterprise password for organization ${org.name}`,
+                snapshot: { userId: targetUser.id, organizationId: org.id },
+                ipAddress: req.ip,
+                userAgent: req.headers['user-agent']
+            });
+        }
+
+        res.json({
+            message: 'Enterprise password reset successfully. User must change password on next login.',
+            tempPassword: tempPassword // Show ONCE
+        });
+
+    } catch (error: any) {
+        console.error('Reset Enterprise Password Error:', error);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};

@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../db/client';
+import { isOrganizationEffectivelyRestricted } from '../services/organization-visibility.service';
 
 export const checkRestriction = async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
@@ -16,9 +17,9 @@ export const checkRestriction = async (req: Request, res: Response, next: NextFu
 
     try {
         if (user.organizationId) {
-            const org = await prisma.organization.findUnique({ where: { id: user.organizationId } });
-            if (org?.isRestricted) {
-                return res.status(403).json({ message: 'Account restricted. Contact support.' });
+            const restricted = await isOrganizationEffectivelyRestricted(user.organizationId);
+            if (restricted) {
+                return res.status(403).json({ code: 'ORG_RESTRICTED', message: 'Organization is restricted' });
             }
         } else {
             // Check individual user restriction (if loaded in user obj, otherwise fetch)

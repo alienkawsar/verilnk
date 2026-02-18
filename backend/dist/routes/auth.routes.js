@@ -10,7 +10,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const client_1 = require("@prisma/client");
 const session_service_1 = require("../services/session.service");
 const zod_1 = require("zod");
-const client_2 = require("@prisma/client");
+const client_2 = require("../db/client");
 const auth_middleware_1 = require("../middleware/auth.middleware");
 const restriction_middleware_1 = require("../middleware/restriction.middleware");
 const request_service_1 = require("../services/request.service");
@@ -19,7 +19,6 @@ const recaptcha_service_1 = require("../services/recaptcha.service");
 const jwt_1 = require("../config/jwt");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
 const router = express_1.default.Router();
-const prisma = new client_2.PrismaClient();
 const ADMIN_SESSION_HOURS = 8;
 const ORG_SESSION_HOURS = 8;
 const USER_SESSION_HOURS = 24;
@@ -42,7 +41,7 @@ const buildSessionResponse = (decoded) => ({
 });
 // Helper: fetch an org user's planType in a single lightweight query
 const getOrgPlanType = async (userId) => {
-    const row = await prisma.user.findUnique({
+    const row = await client_2.prisma.user.findUnique({
         where: { id: userId },
         select: { organization: { select: { planType: true } } }
     });
@@ -78,13 +77,13 @@ router.post('/signup', rateLimit_middleware_1.strictRateLimiter, async (req, res
             // Enforce in production
             return res.status(400).json({ message: 'CAPTCHA required' });
         }
-        const existingUser = await prisma.user.findUnique({ where: { email } });
+        const existingUser = await client_2.prisma.user.findUnique({ where: { email } });
         if (existingUser) {
             return res.status(400).json({ message: 'User already exists' });
         }
         const hashedPassword = await bcryptjs_1.default.hash(password, 10);
         const name = `${firstName} ${lastName}`;
-        const user = await prisma.user.create({
+        const user = await client_2.prisma.user.create({
             data: {
                 firstName,
                 lastName,
@@ -147,7 +146,7 @@ router.post('/login', rateLimit_middleware_1.strictRateLimiter, async (req, res)
         else if (process.env.NODE_ENV === 'production') {
             return res.status(400).json({ message: 'CAPTCHA required' });
         }
-        const user = await prisma.user.findUnique({ where: { email } });
+        const user = await client_2.prisma.user.findUnique({ where: { email } });
         if (!user) {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
@@ -213,7 +212,7 @@ router.post('/login', rateLimit_middleware_1.strictRateLimiter, async (req, res)
             });
             if (isOrg) {
                 // Suspicious login: new device or new IP
-                const recent = await prisma.authSession.findFirst({
+                const recent = await client_2.prisma.authSession.findFirst({
                     where: {
                         actorType: client_1.SessionActorType.ORG,
                         actorId: user.id,
@@ -242,7 +241,7 @@ router.post('/login', rateLimit_middleware_1.strictRateLimiter, async (req, res)
                         userAgent: req.headers['user-agent']
                     });
                 }
-                const activeCount = await prisma.authSession.count({
+                const activeCount = await client_2.prisma.authSession.count({
                     where: {
                         actorType: client_1.SessionActorType.ORG,
                         actorId: user.id,
@@ -296,13 +295,13 @@ router.post('/google', async (req, res) => {
         const { email, firstName, lastName, photoUrl } = req.body;
         if (!email)
             return res.status(400).json({ message: 'Email required' });
-        let user = await prisma.user.findUnique({ where: { email } });
+        let user = await client_2.prisma.user.findUnique({ where: { email } });
         if (!user) {
             // Create new user with random password
             const randomPassword = (0, passwordPolicy_1.generateStrongPassword)();
             const hashedPassword = await bcryptjs_1.default.hash(randomPassword, 10);
             const name = `${firstName} ${lastName}`;
-            user = await prisma.user.create({
+            user = await client_2.prisma.user.create({
                 data: {
                     firstName: firstName || 'Google',
                     lastName: lastName || 'User',
@@ -362,7 +361,7 @@ router.post('/admin/login', rateLimit_middleware_1.strictRateLimiter, async (req
         }
         // Note: Admin login might not strict enforce captcha in dev, or at all if not passed from frontend?
         // But plan said enforce. Assuming standard policy.
-        const admin = await prisma.admin.findUnique({ where: { email } });
+        const admin = await client_2.prisma.admin.findUnique({ where: { email } });
         if (!admin) {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
@@ -423,7 +422,7 @@ router.post('/admin/login', rateLimit_middleware_1.strictRateLimiter, async (req
                 ipAddress: req.ip,
                 userAgent: req.headers['user-agent']
             });
-            const recent = await prisma.authSession.findFirst({
+            const recent = await client_2.prisma.authSession.findFirst({
                 where: {
                     actorType: client_1.SessionActorType.ADMIN,
                     actorId: admin.id,
@@ -452,7 +451,7 @@ router.post('/admin/login', rateLimit_middleware_1.strictRateLimiter, async (req
                     userAgent: req.headers['user-agent']
                 });
             }
-            const activeCount = await prisma.authSession.count({
+            const activeCount = await client_2.prisma.authSession.count({
                 where: {
                     actorType: client_1.SessionActorType.ADMIN,
                     actorId: admin.id,
@@ -517,7 +516,7 @@ router.post('/refresh', auth_middleware_1.authenticateAny, async (req, res) => {
         const decoded = req.user;
         const isAdmin = Boolean(decoded?.role);
         if (isAdmin) {
-            const admin = await prisma.admin.findUnique({ where: { id: decoded.id } });
+            const admin = await client_2.prisma.admin.findUnique({ where: { id: decoded.id } });
             if (!admin)
                 return res.status(401).json({ message: 'Not authenticated' });
             const sessionHours = getSessionHours({ isAdmin: true });
@@ -556,7 +555,7 @@ router.post('/refresh', auth_middleware_1.authenticateAny, async (req, res) => {
             });
             return res.json({ message: 'Session refreshed', ...buildSessionResponse(decodedNew) });
         }
-        const user = await prisma.user.findUnique({ where: { id: decoded.id } });
+        const user = await client_2.prisma.user.findUnique({ where: { id: decoded.id } });
         if (!user)
             return res.status(401).json({ message: 'Not authenticated' });
         const isOrg = Boolean(user.organizationId);
@@ -606,7 +605,7 @@ router.post('/refresh', auth_middleware_1.authenticateAny, async (req, res) => {
 router.get('/admin/me', auth_middleware_1.authenticateAdmin, async (req, res) => {
     try {
         const userId = req.user.id;
-        const admin = await prisma.admin.findUnique({ where: { id: userId } });
+        const admin = await client_2.prisma.admin.findUnique({ where: { id: userId } });
         if (!admin)
             return res.status(401).json({ message: 'Admin not found' });
         return res.json({
@@ -631,7 +630,7 @@ router.get('/admin/me', auth_middleware_1.authenticateAdmin, async (req, res) =>
 router.get('/org/me', auth_middleware_1.authenticateUser, async (req, res) => {
     try {
         const userId = req.user.id;
-        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const user = await client_2.prisma.user.findUnique({ where: { id: userId } });
         if (!user)
             return res.status(401).json({ message: 'User not found' });
         if (!user.organizationId)
@@ -665,7 +664,7 @@ router.get('/org/me', auth_middleware_1.authenticateUser, async (req, res) => {
 router.get('/user/me', auth_middleware_1.authenticateUser, async (req, res) => {
     try {
         const userId = req.user.id;
-        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const user = await client_2.prisma.user.findUnique({ where: { id: userId } });
         if (!user)
             return res.status(401).json({ message: 'User not found' });
         // NOTE: We do NOT exclude org users here necessarily, as org users are also users.
@@ -703,7 +702,7 @@ router.get('/me', auth_middleware_1.authenticateAny, async (req, res) => {
     try {
         const userId = req.user.id;
         // 1. Try to find as Admin first
-        const admin = await prisma.admin.findUnique({ where: { id: userId } });
+        const admin = await client_2.prisma.admin.findUnique({ where: { id: userId } });
         if (admin) {
             return res.json({
                 user: {
@@ -718,7 +717,7 @@ router.get('/me', auth_middleware_1.authenticateAny, async (req, res) => {
             });
         }
         // 2. Try to find as Regular User
-        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const user = await client_2.prisma.user.findUnique({ where: { id: userId } });
         if (user) {
             const legacyPlanType = user.organizationId ? await getOrgPlanType(user.id) : undefined;
             return res.json({
@@ -762,7 +761,7 @@ router.patch('/me', auth_middleware_1.authenticateUser, restriction_middleware_1
         const { firstName, lastName, email, password } = updateProfileSchema.parse(req.body);
         const userId = req.user.id;
         // Ensure user exists
-        const user = await prisma.user.findUnique({ where: { id: userId } });
+        const user = await client_2.prisma.user.findUnique({ where: { id: userId } });
         if (!user) {
             return res.status(404).json({ message: 'User not found' });
         }
@@ -775,7 +774,7 @@ router.patch('/me', auth_middleware_1.authenticateUser, restriction_middleware_1
         if (firstName || lastName)
             data.name = `${firstName || user.firstName} ${lastName || user.lastName}`;
         if (email && email !== user.email) {
-            const exists = await prisma.user.findUnique({ where: { email } });
+            const exists = await client_2.prisma.user.findUnique({ where: { email } });
             if (exists) {
                 return res.status(400).json({ message: 'Email already in use' });
             }
@@ -785,7 +784,7 @@ router.patch('/me', auth_middleware_1.authenticateUser, restriction_middleware_1
             data.password = await bcryptjs_1.default.hash(password, 10);
             data.mustChangePassword = false; // Reset the mandatory change flag
         }
-        const updatedUser = await prisma.user.update({
+        const updatedUser = await client_2.prisma.user.update({
             where: { id: userId },
             data,
         });
