@@ -10,4 +10,4 @@
 ./dumps
 ./data.ms
 ./frontend/test-results
-./backend/modules
+./backend/models
