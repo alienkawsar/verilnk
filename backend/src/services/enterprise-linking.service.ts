@@ -4,12 +4,12 @@ import {
     OrgType,
     PlanStatus,
     PlanType,
-    SupportTier,
-    WorkspaceStatus
+    SupportTier
 } from '@prisma/client';
 import { prisma } from '../db/client';
 import { signupOrganization } from './organization.service';
 import { assertEnterpriseQuotaByOrganizationId } from './enterprise-quota.service';
+import { assertWorkspaceActive } from './workspace-lifecycle.service';
 
 type SafeOrganization = {
     id: string;
@@ -458,14 +458,7 @@ export const approveOrganizationLinkRequest = async (input: {
             linkedOrganizationId: request.organizationId
         });
 
-        const workspace = await tx.workspace.findUnique({
-            where: { id: request.workspaceId },
-            select: { id: true, status: true }
-        });
-
-        if (!workspace || workspace.status !== WorkspaceStatus.ACTIVE) {
-            throw new Error('Workspace is unavailable');
-        }
+        await assertWorkspaceActive(request.workspaceId);
 
         const existingLink = await tx.workspaceOrganization.findUnique({
             where: {

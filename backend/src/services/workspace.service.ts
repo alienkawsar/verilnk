@@ -25,6 +25,7 @@ import {
     assertEnterpriseQuotaByWorkspaceId,
     EnterpriseLimitReachedError
 } from './enterprise-quota.service';
+import { assertWorkspaceActive } from './workspace-lifecycle.service';
 import crypto from 'crypto';
 
 // ============================================
@@ -169,7 +170,12 @@ export const getWorkspaceById = async (id: string): Promise<WorkspaceWithDetails
  */
 export const getUserWorkspaces = async (userId: string): Promise<WorkspaceSummary[]> => {
     const memberships = await prisma.workspaceMember.findMany({
-        where: { userId },
+        where: {
+            userId,
+            workspace: {
+                status: { not: WorkspaceStatus.DELETED }
+            }
+        },
         include: {
             workspace: {
                 include: {
@@ -704,6 +710,8 @@ export const acceptWorkspaceInvite = async (
             throw new Error('Invite is no longer active');
         }
 
+        await assertWorkspaceActive(invite.workspaceId);
+
         if (invite.expiresAt.getTime() < Date.now()) {
             await tx.invite.update({
                 where: { id: invite.id },
@@ -958,6 +966,8 @@ export const acceptWorkspaceInviteById = async (
             throw new Error('Invite has already been processed');
         }
 
+        await assertWorkspaceActive(invite.workspaceId);
+
         if (invite.expiresAt.getTime() < Date.now()) {
             await tx.invite.update({
                 where: { id: invite.id },
@@ -1027,6 +1037,7 @@ export const declineWorkspaceInviteById = async (
             where: { id: inviteId },
             select: {
                 id: true,
+                workspaceId: true,
                 invitedEmail: true,
                 invitedUserId: true,
                 status: true,
@@ -1043,6 +1054,8 @@ export const declineWorkspaceInviteById = async (
         if (invite.status !== InviteStatus.PENDING) {
             throw new Error('Invite has already been processed');
         }
+
+        await assertWorkspaceActive(invite.workspaceId);
 
         if (invite.expiresAt.getTime() < Date.now()) {
             await tx.invite.update({

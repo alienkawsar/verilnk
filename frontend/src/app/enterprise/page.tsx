@@ -11,6 +11,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   AlertTriangle,
+  Archive,
   BarChart3,
   Building2,
   Boxes,
@@ -26,8 +27,11 @@ import {
   Lock,
   Mail,
   MapPin,
+  PauseCircle,
+  PlayCircle,
   Plus,
   Settings,
+  Shield,
   Trash2,
   Upload,
   Users,
@@ -42,12 +46,19 @@ import {
   createWorkspace,
   deleteWorkspace,
   downloadEnterpriseInvoice,
+  archiveWorkspace,
   formatLimitReachedMessage,
+  getEnterpriseCompliancePolicy,
   getEnterpriseUsageSummary,
   getEnterpriseProfile,
   getWorkspaces,
   isLimitReachedError,
+  restoreWorkspace,
+  suspendWorkspace,
+  unsuspendWorkspace,
+  updateEnterpriseCompliancePolicy,
   updateEnterpriseProfile,
+  type EnterpriseCompliancePolicy,
   type EnterpriseAccess,
   type EnterpriseProfile,
   type EnterpriseUsageSummary,
@@ -62,14 +73,21 @@ import {
 } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/context/AuthContext';
+import SecuritySection from '@/components/enterprise/sections/SecuritySection';
 
-type DashboardTab = 'overview' | 'billing' | 'workspaces' | 'settings';
+type DashboardTab =
+  | 'overview'
+  | 'billing'
+  | 'workspaces'
+  | 'compliance'
+  | 'settings';
 type EnterpriseAccessGate = 'none' | 'normal-user' | 'org-upgrade' | 'restricted';
 
 const DASHBOARD_TABS: DashboardTab[] = [
   'overview',
   'billing',
   'workspaces',
+  'compliance',
   'settings',
 ];
 
@@ -176,6 +194,9 @@ export default function EnterprisePage() {
   const [deletingWorkspaceId, setDeletingWorkspaceId] = useState<string | null>(
     null,
   );
+  const [workspaceActionTargetId, setWorkspaceActionTargetId] = useState<
+    string | null
+  >(null);
   const [deleteWorkspaceModalOpen, setDeleteWorkspaceModalOpen] = useState(false);
   const [deleteWorkspaceTarget, setDeleteWorkspaceTarget] =
     useState<Workspace | null>(null);
@@ -211,8 +232,18 @@ export default function EnterprisePage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [compliancePolicy, setCompliancePolicy] =
+    useState<EnterpriseCompliancePolicy | null>(null);
+  const [compliancePolicySaving, setCompliancePolicySaving] = useState(false);
+  const [complianceWorkspaceId, setComplianceWorkspaceId] = useState('');
 
   const canEditProfile = Boolean(profile?.canEdit);
+  const canEditCompliancePolicy = useMemo(() => {
+    const actorRole = String(profile?.role || user?.role || '')
+      .trim()
+      .toUpperCase();
+    return actorRole === 'OWNER' || actorRole === 'SUPER_ADMIN';
+  }, [profile?.role, user?.role]);
   const activeWorkspaceCount = useMemo(
     () =>
       workspaces.filter((workspace) => workspace.status === 'ACTIVE').length,
@@ -268,6 +299,10 @@ export default function EnterprisePage() {
     ? `API Limit: ${effectiveApiRateLimit.toLocaleString()}/min`
     : null;
   const primaryWorkspaceId = workspaces[0]?.id || null;
+  const complianceWorkspace = useMemo(() => {
+    if (!complianceWorkspaceId) return null;
+    return workspaces.find((workspace) => workspace.id === complianceWorkspaceId) || null;
+  }, [complianceWorkspaceId, workspaces]);
   const recentWorkspaces = useMemo(
     () =>
       [...workspaces]
@@ -278,6 +313,25 @@ export default function EnterprisePage() {
         .slice(0, 10),
     [workspaces],
   );
+
+  useEffect(() => {
+    if (workspaces.length === 0) {
+      if (complianceWorkspaceId) {
+        setComplianceWorkspaceId('');
+      }
+      return;
+    }
+
+    if (complianceWorkspaceId && workspaces.some((workspace) => workspace.id === complianceWorkspaceId)) {
+      return;
+    }
+
+    const nextWorkspaceId =
+      workspaces.find((workspace) => workspace.status !== 'DELETED')?.id || '';
+    if (nextWorkspaceId !== complianceWorkspaceId) {
+      setComplianceWorkspaceId(nextWorkspaceId);
+    }
+  }, [workspaces, complianceWorkspaceId]);
 
   const updateDashboardSection = (tab: DashboardTab) => {
     setActiveTab(tab);
@@ -418,6 +472,9 @@ export default function EnterprisePage() {
       setHasAccess(accessResponse.hasAccess);
 
       if (!accessResponse.hasAccess) {
+        setWorkspaces([]);
+        setCompliancePolicy(null);
+        setComplianceWorkspaceId('');
         if (accessResponse.code === 'ORG_RESTRICTED') {
           setAccessGate('restricted');
           return;
@@ -433,15 +490,25 @@ export default function EnterprisePage() {
         profileResponse,
         countriesResponse,
         categoriesResponse,
+        complianceResponse,
       ] = await Promise.all([
         getWorkspaces(),
         getEnterpriseProfile(),
         fetchCountries(),
         fetchCategories(),
+        getEnterpriseCompliancePolicy().catch(() => null),
       ]);
 
       setWorkspaces(workspaceResponse.workspaces || []);
+      setComplianceWorkspaceId((previous) => {
+        const nextWorkspaces = workspaceResponse.workspaces || [];
+        if (previous && nextWorkspaces.some((workspace) => workspace.id === previous)) {
+          return previous;
+        }
+        return nextWorkspaces.find((workspace) => workspace.status !== 'DELETED')?.id || '';
+      });
       setProfile(profileResponse);
+      setCompliancePolicy(complianceResponse?.policy || null);
       setCountries(countriesResponse || []);
       setCategories(categoriesResponse || []);
       setFormData(toProfileForm(profileResponse));
@@ -517,6 +584,115 @@ export default function EnterprisePage() {
       showToast(err.message || 'Failed to create workspace', 'error');
     } finally {
       setCreatingWorkspace(false);
+    }
+  };
+
+  const canManageWorkspaceLifecycle = (workspace: Workspace) => {
+    const normalizedRole = normalizeWorkspaceRoleLabel(workspace.role);
+    return normalizedRole === 'OWNER' || normalizedRole === 'ADMIN';
+  };
+
+  const setWorkspaceStatusLocally = (
+    workspaceId: string,
+    status: Workspace['status'],
+  ) => {
+    setWorkspaces((previous) =>
+      previous.map((workspace) =>
+        workspace.id === workspaceId ? { ...workspace, status } : workspace,
+      ),
+    );
+  };
+
+  const handleSuspendWorkspace = async (workspace: Workspace) => {
+    if (!canManageWorkspaceLifecycle(workspace)) {
+      showToast("You don't have permission to do that.", 'error');
+      return;
+    }
+    try {
+      setWorkspaceActionTargetId(workspace.id);
+      await suspendWorkspace(workspace.id);
+      setWorkspaceStatusLocally(workspace.id, 'SUSPENDED');
+      showToast('Workspace suspended', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to suspend workspace', 'error');
+    } finally {
+      setWorkspaceActionTargetId(null);
+    }
+  };
+
+  const handleUnsuspendWorkspace = async (workspace: Workspace) => {
+    if (!canManageWorkspaceLifecycle(workspace)) {
+      showToast("You don't have permission to do that.", 'error');
+      return;
+    }
+    try {
+      setWorkspaceActionTargetId(workspace.id);
+      await unsuspendWorkspace(workspace.id);
+      setWorkspaceStatusLocally(workspace.id, 'ACTIVE');
+      showToast('Workspace unsuspended', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to unsuspend workspace', 'error');
+    } finally {
+      setWorkspaceActionTargetId(null);
+    }
+  };
+
+  const handleArchiveWorkspace = async (workspace: Workspace) => {
+    if (!canManageWorkspaceLifecycle(workspace)) {
+      showToast("You don't have permission to do that.", 'error');
+      return;
+    }
+    try {
+      setWorkspaceActionTargetId(workspace.id);
+      await archiveWorkspace(workspace.id);
+      setWorkspaceStatusLocally(workspace.id, 'ARCHIVED');
+      showToast('Workspace archived', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to archive workspace', 'error');
+    } finally {
+      setWorkspaceActionTargetId(null);
+    }
+  };
+
+  const handleRestoreWorkspace = async (workspace: Workspace) => {
+    if (!canManageWorkspaceLifecycle(workspace)) {
+      showToast("You don't have permission to do that.", 'error');
+      return;
+    }
+    try {
+      setWorkspaceActionTargetId(workspace.id);
+      await restoreWorkspace(workspace.id);
+      setWorkspaceStatusLocally(workspace.id, 'ACTIVE');
+      showToast('Workspace restored', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to restore workspace', 'error');
+    } finally {
+      setWorkspaceActionTargetId(null);
+    }
+  };
+
+  const handleCompliancePolicySave = async () => {
+    if (!compliancePolicy) {
+      showToast('Compliance policy is unavailable', 'error');
+      return;
+    }
+    if (!canEditCompliancePolicy) {
+      showToast("You don't have permission to do that.", 'error');
+      return;
+    }
+
+    try {
+      setCompliancePolicySaving(true);
+      const response = await updateEnterpriseCompliancePolicy({
+        logRetentionDays: compliancePolicy.logRetentionDays,
+        requireStrongPasswords: compliancePolicy.requireStrongPasswords,
+      });
+      setCompliancePolicy(response.policy);
+      showToast('Compliance policy updated', 'success');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to update compliance policy', 'error');
+    } finally {
+      setCompliancePolicySaving(false);
     }
   };
 
@@ -951,6 +1127,17 @@ export default function EnterprisePage() {
             >
               <Key className='w-5 h-5' />
               <span className='font-medium'>API Keys</span>
+            </button>
+            <button
+              onClick={() => updateDashboardSection('compliance')}
+              className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
+                activeTab === 'compliance'
+                  ? 'btn-primary shadow-md'
+                  : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white'
+              }`}
+            >
+              <Shield className='w-5 h-5' />
+              <span className='font-medium'>Compliance</span>
             </button>
             <button
               onClick={() => updateDashboardSection('settings')}
@@ -1404,6 +1591,85 @@ export default function EnterprisePage() {
                               </div>
                             </div>
                             <div className='flex items-center gap-2 self-start md:self-center'>
+                              {canManageWorkspaceLifecycle(workspace) &&
+                                workspace.status === 'ACTIVE' && (
+                                  <>
+                                    <button
+                                      type='button'
+                                      onClick={() =>
+                                        handleSuspendWorkspace(workspace)
+                                      }
+                                      disabled={
+                                        workspaceActionTargetId === workspace.id
+                                      }
+                                      title='Suspend workspace'
+                                      aria-label='Suspend workspace'
+                                      className='inline-flex items-center justify-center w-8 h-8 rounded-md text-amber-700 dark:text-amber-300 hover:bg-amber-50 dark:hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed'
+                                    >
+                                      {workspaceActionTargetId === workspace.id ? (
+                                        <Loader2 className='w-4 h-4 animate-spin' />
+                                      ) : (
+                                        <PauseCircle className='w-4 h-4' />
+                                      )}
+                                    </button>
+                                    <button
+                                      type='button'
+                                      onClick={() =>
+                                        handleArchiveWorkspace(workspace)
+                                      }
+                                      disabled={
+                                        workspaceActionTargetId === workspace.id
+                                      }
+                                      title='Archive workspace'
+                                      aria-label='Archive workspace'
+                                      className='inline-flex items-center justify-center w-8 h-8 rounded-md text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/50 disabled:opacity-50 disabled:cursor-not-allowed'
+                                    >
+                                      {workspaceActionTargetId === workspace.id ? (
+                                        <Loader2 className='w-4 h-4 animate-spin' />
+                                      ) : (
+                                        <Archive className='w-4 h-4' />
+                                      )}
+                                    </button>
+                                  </>
+                                )}
+                              {canManageWorkspaceLifecycle(workspace) &&
+                                workspace.status === 'SUSPENDED' && (
+                                  <button
+                                    type='button'
+                                    onClick={() =>
+                                      handleUnsuspendWorkspace(workspace)
+                                    }
+                                    disabled={workspaceActionTargetId === workspace.id}
+                                    title='Unsuspend workspace'
+                                    aria-label='Unsuspend workspace'
+                                    className='inline-flex items-center justify-center w-8 h-8 rounded-md text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed'
+                                  >
+                                    {workspaceActionTargetId === workspace.id ? (
+                                      <Loader2 className='w-4 h-4 animate-spin' />
+                                    ) : (
+                                      <PlayCircle className='w-4 h-4' />
+                                    )}
+                                  </button>
+                                )}
+                              {canManageWorkspaceLifecycle(workspace) &&
+                                workspace.status === 'ARCHIVED' && (
+                                  <button
+                                    type='button'
+                                    onClick={() =>
+                                      handleRestoreWorkspace(workspace)
+                                    }
+                                    disabled={workspaceActionTargetId === workspace.id}
+                                    title='Restore workspace'
+                                    aria-label='Restore workspace'
+                                    className='inline-flex items-center justify-center w-8 h-8 rounded-md text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-500/10 disabled:opacity-50 disabled:cursor-not-allowed'
+                                  >
+                                    {workspaceActionTargetId === workspace.id ? (
+                                      <Loader2 className='w-4 h-4 animate-spin' />
+                                    ) : (
+                                      <PlayCircle className='w-4 h-4' />
+                                    )}
+                                  </button>
+                                )}
                               {normalizeWorkspaceRoleLabel(workspace.role) ===
                                 'OWNER' && (
                                 <button
@@ -1437,6 +1703,136 @@ export default function EnterprisePage() {
                         ))}
                       </div>
                     </div>
+                  )}
+                </section>
+              </div>
+            )}
+
+            {activeTab === 'compliance' && (
+              <div className='space-y-8'>
+                <section className='surface-card rounded-xl p-6 border border-[var(--app-border)]'>
+                  <div className='flex items-start justify-between gap-3 mb-4'>
+                    <div>
+                      <h2 className='text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2'>
+                        <Shield className='w-5 h-5 text-blue-500' />
+                        Compliance Policy
+                      </h2>
+                      <p className='text-sm text-slate-500 dark:text-slate-400 mt-1'>
+                        Configure enterprise compliance defaults and retention.
+                      </p>
+                    </div>
+                  </div>
+
+                  {!canEditCompliancePolicy && (
+                    <div className='mb-4 bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 rounded-lg p-3 text-sm text-amber-800 dark:text-amber-200'>
+                      Policy settings are editable by workspace OWNER and Super Admin only.
+                    </div>
+                  )}
+
+                  {compliancePolicy ? (
+                    <div className='space-y-4'>
+                      <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
+                        <label className='space-y-1'>
+                          <span className='text-sm font-medium text-slate-700 dark:text-slate-300'>
+                            Log Retention (days)
+                          </span>
+                          <input
+                            type='number'
+                            min={7}
+                            max={3650}
+                            value={compliancePolicy.logRetentionDays}
+                            onChange={(event) =>
+                              setCompliancePolicy((previous) =>
+                                previous
+                                  ? {
+                                      ...previous,
+                                      logRetentionDays: Number(event.target.value || 90),
+                                    }
+                                  : previous,
+                              )
+                            }
+                            disabled={!canEditCompliancePolicy || compliancePolicySaving}
+                            className='w-full rounded-lg border border-[var(--app-border)] bg-transparent px-3 py-2 text-sm text-[var(--app-text-primary)] disabled:opacity-60 disabled:cursor-not-allowed'
+                          />
+                        </label>
+                        <label className='rounded-lg border border-[var(--app-border)] p-3 flex items-center justify-between gap-3'>
+                          <span className='text-sm font-medium text-slate-700 dark:text-slate-300'>
+                            Require Strong Passwords
+                          </span>
+                          <input
+                            type='checkbox'
+                            checked={compliancePolicy.requireStrongPasswords}
+                            onChange={(event) =>
+                              setCompliancePolicy((previous) =>
+                                previous
+                                  ? {
+                                      ...previous,
+                                      requireStrongPasswords: event.target.checked,
+                                    }
+                                  : previous,
+                              )
+                            }
+                            disabled={!canEditCompliancePolicy || compliancePolicySaving}
+                            className='h-4 w-4 accent-blue-600 disabled:opacity-60 disabled:cursor-not-allowed'
+                          />
+                        </label>
+                      </div>
+
+                      <div className='flex justify-end'>
+                        <button
+                          type='button'
+                          onClick={handleCompliancePolicySave}
+                          disabled={!canEditCompliancePolicy || compliancePolicySaving}
+                          className='inline-flex items-center gap-2 px-4 py-2 text-sm font-medium btn-primary rounded-lg disabled:opacity-50 disabled:cursor-not-allowed'
+                        >
+                          {compliancePolicySaving && (
+                            <Loader2 className='w-4 h-4 animate-spin' />
+                          )}
+                          Save Policy
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className='text-sm text-slate-500 dark:text-slate-400'>
+                      Compliance policy is currently unavailable.
+                    </p>
+                  )}
+                </section>
+
+                <section>
+                  <div className='flex items-center justify-between gap-3 mb-4'>
+                    <h3 className='text-lg font-semibold text-slate-900 dark:text-white'>
+                      Workspace Audit Logs
+                    </h3>
+                    {workspaces.length > 0 && (
+                      <select
+                        value={complianceWorkspaceId}
+                        onChange={(event) => setComplianceWorkspaceId(event.target.value)}
+                        className='rounded-lg border border-[var(--app-border)] bg-transparent px-3 py-2 text-sm text-[var(--app-text-primary)]'
+                      >
+                        {workspaces
+                          .filter((workspace) => workspace.status !== 'DELETED')
+                          .map((workspace) => (
+                            <option key={workspace.id} value={workspace.id}>
+                              {workspace.name}
+                            </option>
+                          ))}
+                      </select>
+                    )}
+                  </div>
+
+                  {!complianceWorkspace ? (
+                    <div className='surface-card rounded-xl p-6 border border-[var(--app-border)] text-sm text-slate-500 dark:text-slate-400'>
+                      Create or select a workspace to review compliance audit logs.
+                    </div>
+                  ) : (
+                    <SecuritySection
+                      workspaceId={complianceWorkspace.id}
+                      workspace={complianceWorkspace}
+                      userRole={normalizeWorkspaceRoleLabel(complianceWorkspace.role) || complianceWorkspace.role}
+                      enterpriseAccess={access}
+                      showToast={showToast}
+                    />
                   )}
                 </section>
               </div>

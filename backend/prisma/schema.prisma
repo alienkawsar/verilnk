@@ -336,6 +336,7 @@ model Organization {
   analyticsEvents OrgAnalyticsEvent[] @relation("OrgAnalyticsEvents")
   changeRequests ChangeRequest[]
   billingAccount BillingAccount?
+  enterpriseCompliancePolicy EnterpriseCompliancePolicy?
   enterpriseLinkRequestsAsEnterprise EnterpriseOrgLinkRequest[] @relation("EnterpriseLinkRequestEnterprise")
   enterpriseLinkRequestsAsTarget     EnterpriseOrgLinkRequest[] @relation("EnterpriseLinkRequestTarget")
 
@@ -785,6 +786,7 @@ enum WorkspaceStatus {
   ACTIVE
   SUSPENDED
   ARCHIVED
+  DELETED
 }
 
 enum WorkspaceMemberRole {
@@ -813,6 +815,18 @@ enum EnterpriseOrgLinkRequestStatus {
 enum EnterpriseOrgLinkIntentType {
   LINK_EXISTING
   CREATE_UNDER_ENTERPRISE
+}
+
+model EnterpriseCompliancePolicy {
+  id                     String       @id @default(uuid())
+  enterpriseId           String       @unique
+  enterprise             Organization @relation(fields: [enterpriseId], references: [id], onDelete: Cascade)
+  logRetentionDays       Int          @default(90)
+  requireStrongPasswords Boolean      @default(false)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+
+  @@index([enterpriseId])
 }
 
 model Workspace {
