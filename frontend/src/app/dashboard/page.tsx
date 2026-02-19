@@ -43,7 +43,8 @@ import {
 } from 'lucide-react';
 import { getInitials } from '@/lib/utils';
 import Image from 'next/image';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
+import PasswordFields from '@/components/auth/PasswordFields';
+import { validatePassword } from '@/lib/passwordPolicy';
 
 // --- Shared Components ---
 
@@ -103,6 +104,7 @@ const UserDashboard = () => {
     lastName: '',
     email: '',
     password: '',
+    confirmPassword: '',
   });
 
   // Lookups
@@ -147,6 +149,7 @@ const UserDashboard = () => {
         lastName: user.lastName || '',
         email: user.email || '',
         password: '',
+        confirmPassword: '',
       });
     }
   }, [user]);
@@ -301,11 +304,23 @@ const UserDashboard = () => {
     e.preventDefault();
     try {
       const payload = { ...accountForm };
-      if (payload.password && !STRONG_PASSWORD_REGEX.test(payload.password)) {
-        showToast(STRONG_PASSWORD_MESSAGE, 'error');
-        return;
+      if (payload.password) {
+        if (!payload.confirmPassword) {
+          showToast('Confirm password is required', 'error');
+          return;
+        }
+        if (payload.password !== payload.confirmPassword) {
+          showToast('Passwords do not match', 'error');
+          return;
+        }
+        const passwordValidation = validatePassword(payload.password);
+        if (!passwordValidation.ok) {
+          showToast(passwordValidation.message || 'Password is invalid', 'error');
+          return;
+        }
       }
       if (!payload.password) delete (payload as any).password;
+      delete (payload as any).confirmPassword;
 
       await updateUserProfile(payload);
       showToast('Profile updated successfully', 'success');
@@ -695,29 +710,29 @@ const UserDashboard = () => {
                       </div>
                     </div>
 
-                    <div className='space-y-2'>
-                      <label className='text-sm font-medium text-slate-700 dark:text-slate-300'>
-                        New Password (Optional)
-                      </label>
-                      <div className='relative'>
-                        <Lock className='absolute left-3 top-2.5 w-4 h-4 text-slate-400 dark:text-slate-500' />
-                        <input
-                          type='password'
-                          placeholder='Leave blank to keep current'
-                          value={accountForm.password}
-                          onChange={(e) =>
-                            setAccountForm({
-                              ...accountForm,
-                              password: e.target.value,
-                            })
-                          }
-                          className='w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg pl-10 pr-4 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all'
-                        />
-                      </div>
-                      <p className='text-[11px] text-slate-500 dark:text-slate-400'>
-                        Min 8 chars with uppercase, lowercase, number, special character.
-                      </p>
-                    </div>
+                    <PasswordFields
+                      password={accountForm.password}
+                      setPassword={(value) =>
+                        setAccountForm({
+                          ...accountForm,
+                          password: value,
+                        })
+                      }
+                      confirmPassword={accountForm.confirmPassword}
+                      setConfirmPassword={(value) =>
+                        setAccountForm({
+                          ...accountForm,
+                          confirmPassword: value,
+                        })
+                      }
+                      required={false}
+                      labelPassword='New Password (Optional)'
+                      labelConfirm='Confirm New Password'
+                      passwordPlaceholder='Leave blank to keep current'
+                      confirmPlaceholder='Re-enter password'
+                      labelClassName='text-sm font-medium text-slate-700 dark:text-slate-300'
+                      inputClassName='w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all'
+                    />
 
                     <button
                       type='submit'

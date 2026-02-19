@@ -12,6 +12,7 @@ import {
     getWorkspaceMembership,
     type EnterpriseAccess
 } from '@/lib/enterprise-api';
+import { buildForcePasswordChangeRoute } from '@/lib/auth-redirect';
 import WorkspaceDashboardShell from '@/components/enterprise/WorkspaceDashboardShell';
 import OverviewSection from '@/components/enterprise/sections/OverviewSection';
 import AnalyticsSection from '@/components/enterprise/sections/AnalyticsSection';
@@ -100,6 +101,11 @@ export default function WorkspacePage() {
     useEffect(() => {
         let mounted = true;
         const loadWorkspace = async () => {
+            if (user?.mustChangePassword) {
+                router.replace(buildForcePasswordChangeRoute(`/enterprise/${workspaceId}`));
+                return;
+            }
+
             try {
                 setLoading(true);
                 setError(null);
@@ -135,6 +141,10 @@ export default function WorkspacePage() {
                 }
 
                 if (err instanceof EnterpriseApiError && err.status === 403) {
+                    if (err.code === 'PASSWORD_CHANGE_REQUIRED') {
+                        router.replace(buildForcePasswordChangeRoute(`/enterprise/${workspaceId}`));
+                        return;
+                    }
                     if (err.code === 'ORG_RESTRICTED') {
                         setWorkspaceRestricted(true);
                         setWorkspaceAccessDenied(false);
@@ -161,7 +171,7 @@ export default function WorkspacePage() {
         return () => {
             mounted = false;
         };
-    }, [workspaceId, router]);
+    }, [workspaceId, router, user?.mustChangePassword]);
 
     useEffect(() => {
         if (!workspace || accessibleSections.length === 0) return;

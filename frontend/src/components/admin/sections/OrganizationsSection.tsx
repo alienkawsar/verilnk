@@ -1,4 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import {
+  useState,
+  useEffect,
+  useRef,
+  type ChangeEvent,
+  type KeyboardEvent,
+  type RefObject,
+} from 'react';
 import Image from 'next/image';
 import {
   Shield,
@@ -12,8 +19,6 @@ import {
   Loader2,
   Ban,
   Upload,
-  Eye,
-  EyeOff,
   Lock,
   Mail,
   Key,
@@ -45,8 +50,8 @@ import { useToast } from '@/components/ui/Toast';
 import { TableSkeleton } from '@/components/ui/Loading';
 import { useDebounce } from '@/hooks/useDebounce';
 import { toProxyImageUrl } from '@/lib/imageProxy';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
-import PasswordStrengthChecklist from '@/components/ui/PasswordStrengthChecklist';
+import PasswordFields from '@/components/auth/PasswordFields';
+import { validatePassword } from '@/lib/passwordPolicy';
 
 interface Organization {
   id: string;
@@ -87,11 +92,167 @@ interface Organization {
 const adminOrgFormControlClass =
   'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 transition-colors';
 
-const adminOrgFormControlIconClass =
-  'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 pl-4 pr-10 py-2 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 transition-colors';
-
 const adminOrgCompactControlClass =
   'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 disabled:opacity-60 disabled:cursor-not-allowed transition-colors';
+
+interface AdminOrgLogoPickerProps {
+  fileInputId: string;
+  fileInputRef: RefObject<HTMLInputElement | null>;
+  mode: 'upload' | 'external';
+  onModeChange: (mode: 'upload' | 'external') => void;
+  previewSrc: string;
+  uploading: boolean;
+  uploadLabel: string;
+  helperText: string;
+  urlValue: string;
+  urlPlaceholder?: string;
+  onFileChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  onUrlChange: (value: string) => void;
+  onClear: () => void;
+  onPreviewError?: () => void;
+  errorText?: string;
+}
+
+function AdminOrgLogoPicker({
+  fileInputId,
+  fileInputRef,
+  mode,
+  onModeChange,
+  previewSrc,
+  uploading,
+  uploadLabel,
+  helperText,
+  urlValue,
+  urlPlaceholder = 'https://example.com/logo.png',
+  onFileChange,
+  onUrlChange,
+  onClear,
+  onPreviewError,
+  errorText,
+}: AdminOrgLogoPickerProps) {
+  const triggerFileDialog = () => {
+    if (mode !== 'upload') return;
+    fileInputRef.current?.click();
+  };
+
+  const handleAvatarKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      triggerFileDialog();
+    }
+  };
+
+  return (
+    <div className='space-y-3'>
+      <label className='block text-sm font-medium text-slate-600 dark:text-slate-400'>
+        Organization Logo
+      </label>
+      <div className='flex justify-center'>
+        <button
+          type='button'
+          onClick={triggerFileDialog}
+          onKeyDown={handleAvatarKeyDown}
+          className='relative h-28 w-28 rounded-full border-2 border-dashed border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/70 overflow-hidden flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-[#187DE9]/40'
+          aria-label='Upload organization logo'
+        >
+          {uploading ? (
+            <Loader2 className='w-6 h-6 text-[#187DE9] animate-spin' />
+          ) : previewSrc ? (
+            <img
+              src={previewSrc}
+              alt='Organization logo preview'
+              className='h-full w-full object-cover'
+              onError={onPreviewError}
+            />
+          ) : (
+            <Building2 className='w-8 h-8 text-slate-400 dark:text-slate-500' />
+          )}
+
+          <span
+            className={`pointer-events-none absolute -bottom-1 -right-1 h-8 w-8 rounded-full text-white flex items-center justify-center shadow-lg ${mode === 'upload' ? 'bg-[#187DE9] shadow-blue-500/30' : 'bg-slate-400 shadow-slate-400/20 dark:bg-slate-600 dark:shadow-slate-700/20'}`}
+          >
+            <Upload className='w-4 h-4' />
+          </span>
+        </button>
+      </div>
+
+      <div className='flex justify-center'>
+        <div className='inline-flex items-center rounded-lg border border-slate-300 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 p-1'>
+          <button
+            type='button'
+            onClick={() => onModeChange('upload')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'upload' ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
+          >
+            Upload
+          </button>
+          <button
+            type='button'
+            onClick={() => onModeChange('external')}
+            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${mode === 'external' ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
+          >
+            External Link
+          </button>
+        </div>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        id={fileInputId}
+        type='file'
+        accept='image/*,.svg'
+        onChange={onFileChange}
+        className='hidden'
+      />
+
+      {mode === 'upload' ? (
+        <div className='space-y-2'>
+          <label
+            htmlFor={fileInputId}
+            className={`flex w-full items-center justify-center gap-2 px-3 py-2 rounded-lg border border-dashed border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800/70 transition-colors cursor-pointer ${uploading ? 'opacity-50 pointer-events-none' : ''}`}
+          >
+            <Upload className='w-4 h-4' />
+            {uploadLabel}
+          </label>
+          {previewSrc ? (
+            <button
+              type='button'
+              onClick={onClear}
+              className='text-xs text-red-500 hover:text-red-400 transition-colors'
+            >
+              Remove
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className='space-y-2'>
+          <input
+            type='url'
+            value={urlValue}
+            onChange={(event) => onUrlChange(event.target.value)}
+            placeholder={urlPlaceholder}
+            className={adminOrgFormControlClass}
+          />
+          {previewSrc ? (
+            <div className='flex justify-start'>
+              <button
+                type='button'
+                onClick={onClear}
+                className='text-xs text-red-500 hover:text-red-400 transition-colors whitespace-nowrap'
+              >
+                Remove
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
+
+      <p className='text-xs text-slate-500 dark:text-slate-400'>{helperText}</p>
+      {errorText ? (
+        <p className='text-xs text-red-500 dark:text-red-400'>{errorText}</p>
+      ) : null}
+    </div>
+  );
+}
 
 export default function OrganizationsSection({
   currentUser,
@@ -120,10 +281,14 @@ export default function OrganizationsSection({
   const [editingOrg, setEditingOrg] = useState<Organization | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [showCreatePassword, setShowCreatePassword] = useState(false);
-  const [showCreateConfirmPassword, setShowCreateConfirmPassword] =
-    useState(false);
+  const [createLogoMode, setCreateLogoMode] = useState<'upload' | 'external'>(
+    'upload',
+  );
   const [createConfirmPassword, setCreateConfirmPassword] = useState('');
+  const [createLogoPreviewUrl, setCreateLogoPreviewUrl] = useState<
+    string | null
+  >(null);
+  const [createLogoError, setCreateLogoError] = useState('');
   const [createForm, setCreateForm] = useState({
     name: '',
     email: '',
@@ -160,8 +325,13 @@ export default function OrganizationsSection({
   const [saving, setSaving] = useState(false);
   const [uploadingLogo, setUploadingLogo] = useState(false);
   const [logoError, setLogoError] = useState(false);
+  const [editLogoPreviewUrl, setEditLogoPreviewUrl] = useState<string | null>(
+    null,
+  );
   const requestIdRef = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
+  const createLogoInputRef = useRef<HTMLInputElement | null>(null);
+  const editLogoInputRef = useRef<HTMLInputElement | null>(null);
 
   // Priority Modal State
   const [priorityModalOpen, setPriorityModalOpen] = useState(false);
@@ -292,6 +462,22 @@ export default function OrganizationsSection({
     }
   }, [editForm.countryId]);
 
+  useEffect(() => {
+    return () => {
+      if (createLogoPreviewUrl) {
+        URL.revokeObjectURL(createLogoPreviewUrl);
+      }
+    };
+  }, [createLogoPreviewUrl]);
+
+  useEffect(() => {
+    return () => {
+      if (editLogoPreviewUrl) {
+        URL.revokeObjectURL(editLogoPreviewUrl);
+      }
+    };
+  }, [editLogoPreviewUrl]);
+
   const handleStatusChange = async (
     id: string,
     status: 'APPROVED' | 'REJECTED',
@@ -412,7 +598,7 @@ export default function OrganizationsSection({
     }
   };
 
-  const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleSelectAll = (e: ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
       setSelectedIds(filteredOrgs.map((org) => org.id));
     } else {
@@ -450,6 +636,10 @@ export default function OrganizationsSection({
 
   const startEdit = (org: Organization) => {
     setEditingOrg(org);
+    if (editLogoPreviewUrl) {
+      URL.revokeObjectURL(editLogoPreviewUrl);
+    }
+    setEditLogoPreviewUrl(null);
 
     // Initialize Logo State
     const hasLogo = !!org.logo;
@@ -506,7 +696,7 @@ export default function OrganizationsSection({
     });
   };
 
-  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleLogoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
@@ -515,6 +705,11 @@ export default function OrganizationsSection({
       return;
     }
 
+    if (editLogoPreviewUrl) {
+      URL.revokeObjectURL(editLogoPreviewUrl);
+    }
+    setEditLogoPreviewUrl(URL.createObjectURL(file));
+    setLogoError(false);
     setUploadingLogo(true);
     try {
       const { url } = await uploadOrgLogo(file);
@@ -530,6 +725,72 @@ export default function OrganizationsSection({
       setUploadingLogo(false);
       e.target.value = ''; // Reset input
     }
+  };
+
+  const resetCreateLogoSelection = () => {
+    if (createLogoPreviewUrl) {
+      URL.revokeObjectURL(createLogoPreviewUrl);
+    }
+    setCreateLogoPreviewUrl(null);
+    setCreateLogoError('');
+    setCreateForm((prev) => ({ ...prev, logo: '' }));
+  };
+
+  const handleCreateLogoUpload = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setCreateLogoMode('upload');
+
+    const isValidType =
+      /\.(jpg|jpeg|png|webp|svg)$/i.test(file.name) ||
+      file.type.startsWith('image/');
+
+    if (!isValidType) {
+      setCreateLogoError('Invalid file type (png/jpg/jpeg/webp/svg)');
+      e.target.value = '';
+      return;
+    }
+
+    if (file.size > 1 * 1024 * 1024) {
+      setCreateLogoError('File too large (max 1MB)');
+      e.target.value = '';
+      return;
+    }
+
+    if (createLogoPreviewUrl) {
+      URL.revokeObjectURL(createLogoPreviewUrl);
+    }
+    setCreateLogoPreviewUrl(URL.createObjectURL(file));
+    setCreateLogoError('');
+    setUploadingLogo(true);
+
+    try {
+      const res = await uploadOrgLogo(file);
+      const finalUrl = res?.path || res?.url;
+      if (!finalUrl) {
+        throw new Error('Logo upload response missing URL');
+      }
+      setCreateForm((prev) => ({ ...prev, logo: finalUrl }));
+      showToast('Logo uploaded successfully', 'success');
+    } catch {
+      setCreateLogoError('Failed to upload logo');
+      showToast('Failed to upload logo', 'error');
+    } finally {
+      setUploadingLogo(false);
+      e.target.value = '';
+    }
+  };
+
+  const resetEditLogoSelection = () => {
+    if (editLogoPreviewUrl) {
+      URL.revokeObjectURL(editLogoPreviewUrl);
+    }
+    setEditLogoPreviewUrl(null);
+    setLogoError(false);
+    setUseLogoUrl(false);
+    setLogoPathInput('');
+    setLogoUrlInput('');
+    setEditForm((prev) => ({ ...prev, logo: '' }));
   };
 
   const submitEdit = async (e: React.FormEvent) => {
@@ -579,6 +840,10 @@ export default function OrganizationsSection({
       }
 
       showToast('Organization updated successfully', 'success');
+      if (editLogoPreviewUrl) {
+        URL.revokeObjectURL(editLogoPreviewUrl);
+      }
+      setEditLogoPreviewUrl(null);
       setEditingOrg(null);
       loadOrgs(); // Refresh list
     } catch (err: any) {
@@ -828,8 +1093,9 @@ export default function OrganizationsSection({
       showToast('Passwords do not match', 'error');
       return;
     }
-    if (!STRONG_PASSWORD_REGEX.test(password)) {
-      showToast(STRONG_PASSWORD_MESSAGE, 'error');
+    const passwordValidation = validatePassword(password);
+    if (!passwordValidation.ok) {
+      showToast(passwordValidation.message || 'Password is invalid', 'error');
       return;
     }
     setCreating(true);
@@ -862,6 +1128,7 @@ export default function OrganizationsSection({
       await createOrganizationAdmin(payload);
       showToast('Organization created successfully', 'success');
       setCreateOpen(false);
+      setCreateLogoMode('upload');
       setCreateForm({
         name: '',
         email: '',
@@ -881,9 +1148,8 @@ export default function OrganizationsSection({
         customDays: '',
         priorityOverride: 'HIGH',
       });
-      setShowCreatePassword(false);
-      setShowCreateConfirmPassword(false);
       setCreateConfirmPassword('');
+      resetCreateLogoSelection();
       loadOrgs();
     } catch (err: any) {
       showToast(
@@ -895,6 +1161,25 @@ export default function OrganizationsSection({
     }
   };
 
+  const createLogoPreviewSource = createLogoPreviewUrl
+    ? createLogoPreviewUrl
+    : createForm.logo
+      ? createForm.logo.startsWith('http') ||
+        createForm.logo.startsWith('/') ||
+        createForm.logo.startsWith('//')
+        ? createForm.logo
+        : toPreviewUrl(createForm.logo)
+      : '';
+
+  const editUrlPreview = logoUrlInput ? toPreviewUrl(logoUrlInput) : '';
+  const editLogoPreviewSource = editLogoPreviewUrl
+    ? editLogoPreviewUrl
+    : useLogoUrl
+      ? logoError
+        ? ''
+        : editUrlPreview
+      : logoPathInput || editForm.logo || '';
+
   return (
     <div className='space-y-6'>
       <div className='flex justify-between items-center'>
@@ -904,7 +1189,10 @@ export default function OrganizationsSection({
         </h1>
         <div className='flex items-center gap-2'>
           <button
-            onClick={() => setCreateOpen(true)}
+            onClick={() => {
+              setCreateLogoMode('upload');
+              setCreateOpen(true);
+            }}
             className='bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors'
           >
             <Building2 className='w-4 h-4' />
@@ -1335,135 +1623,57 @@ export default function OrganizationsSection({
                 Edit Organization
               </h2>
               <button
-                onClick={() => setEditingOrg(null)}
+                onClick={() => {
+                  if (editLogoPreviewUrl) {
+                    URL.revokeObjectURL(editLogoPreviewUrl);
+                  }
+                  setEditLogoPreviewUrl(null);
+                  setEditingOrg(null);
+                }}
                 className='text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               >
                 <X className='w-5 h-5' />
               </button>
             </div>
             <form onSubmit={submitEdit} className='p-6 space-y-4'>
-              <div className='space-y-4'>
-                <label className='block text-sm font-medium text-slate-600 dark:text-slate-400 mb-2'>
-                  Organization Logo
-                </label>
-
-                {/* Toggle between Upload and URL - Mirrored from CountryForm */}
-                <div className='flex gap-4 mb-4 text-sm'>
-                  <button
-                    type='button'
-                    onClick={() => {
-                      setUseLogoUrl(false);
-                      setLogoUrlInput('');
-                      setLogoError(false);
-                    }}
-                    className={`px-3 py-1 rounded-full transition-colors ${!useLogoUrl ? 'btn-primary' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
-                  >
-                    Upload File
-                  </button>
-                  <button
-                    type='button'
-                    onClick={() => {
-                      setUseLogoUrl(true);
-                      setLogoPathInput('');
-                      setLogoError(false);
-                    }}
-                    className={`px-3 py-1 rounded-full transition-colors ${useLogoUrl ? 'btn-primary' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'}`}
-                  >
-                    External URL
-                  </button>
-                </div>
-
-                {!useLogoUrl ? (
-                  <div className='flex items-start gap-4'>
-                    <div className='w-24 h-24 bg-transparent border border-[var(--app-border)] rounded-lg flex items-center justify-center overflow-hidden relative group shrink-0'>
-                      {uploadingLogo ? (
-                        <Loader2 className='w-6 h-6 text-blue-500 animate-spin' />
-                      ) : logoPathInput ||
-                        (editForm.logo && !editForm.logo.startsWith('http')) ? (
-                        <>
-                          <Image
-                            src={logoPathInput || editForm.logo}
-                            alt='Logo Preview'
-                            fill
-                            className='object-cover'
-                            onError={() => setLogoError(true)}
-                          />
-                          <button
-                            type='button'
-                            onClick={() => {
-                              setLogoPathInput('');
-                              setEditForm({ ...editForm, logo: '' });
-                            }}
-                            className='absolute inset-0 bg-black/60 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity'
-                          >
-                            <X className='w-5 h-5 text-white' />
-                          </button>
-                        </>
-                      ) : (
-                        <Building2 className='w-8 h-8 text-slate-400 dark:text-slate-600' />
-                      )}
-                    </div>
-
-                    <div className='flex-1 space-y-2'>
-                      <input
-                        type='file'
-                        onChange={handleLogoUpload}
-                        accept='image/*'
-                        className='hidden'
-                        id='org-logo-upload'
-                      />
-                      <label
-                        htmlFor='org-logo-upload'
-                        className={`flex items-center justify-center gap-2 w-full px-4 py-2 border border-dashed border-slate-300 dark:border-slate-600 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:border-slate-400 dark:hover:border-slate-500 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors cursor-pointer ${uploadingLogo ? 'opacity-50 pointer-events-none' : ''}`}
-                      >
-                        <Upload className='w-4 h-4' />
-                        <span>
-                          {logoPathInput || editForm.logo
-                            ? 'Change Logo'
-                            : 'Upload Logo'}
-                        </span>
-                      </label>
-                      <p className='text-xs text-slate-500'>
-                        Max 5MB. Formats: PNG, JPG, GIF, SVG.
-                      </p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className='space-y-4'>
-                    <input
-                      type='url'
-                      value={logoUrlInput}
-                      onChange={(e) => {
-                        setLogoUrlInput(e.target.value);
-                        // Live preview update
-                        if (toPreviewUrl(e.target.value)) {
-                          setLogoError(false);
-                        }
-                      }}
-                      placeholder='https://example.com/logo.png'
-                      className={adminOrgFormControlClass}
-                    />
-                    <div className='flex items-center gap-4'>
-                      <div className='text-sm text-slate-500 dark:text-slate-400'>
-                        Preview:
-                      </div>
-                      <div className='w-10 h-10 bg-slate-100 dark:bg-slate-800 rounded overflow-hidden border border-slate-200 dark:border-slate-700 flex items-center justify-center relative'>
-                        {toPreviewUrl(logoUrlInput) && !logoError ? (
-                          /* Using img tag here for raw external URL preview resilience before save, similar to CountryForm logic */
-                          <img
-                            src={toPreviewUrl(logoUrlInput)}
-                            alt='Preview'
-                            className='w-full h-full object-cover'
-                            onError={() => setLogoError(true)}
-                          />
-                        ) : (
-                          <Building2 className='w-4 h-4 text-slate-600' />
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <AdminOrgLogoPicker
+                fileInputId='org-logo-upload'
+                fileInputRef={editLogoInputRef}
+                mode={useLogoUrl ? 'external' : 'upload'}
+                onModeChange={(mode) => {
+                  if (editLogoPreviewUrl) {
+                    URL.revokeObjectURL(editLogoPreviewUrl);
+                  }
+                  setEditLogoPreviewUrl(null);
+                  setLogoError(false);
+                  if (mode === 'upload') {
+                    setUseLogoUrl(false);
+                    setLogoUrlInput('');
+                  } else {
+                    setUseLogoUrl(true);
+                    setLogoPathInput('');
+                  }
+                }}
+                previewSrc={editLogoPreviewSource}
+                uploading={uploadingLogo}
+                uploadLabel={editLogoPreviewSource ? 'Change logo' : 'Upload logo'}
+                helperText='Max 5MB. Uses existing organization logo upload rules.'
+                urlValue={logoUrlInput}
+                onFileChange={handleLogoUpload}
+                onUrlChange={(value) => {
+                  if (editLogoPreviewUrl) {
+                    URL.revokeObjectURL(editLogoPreviewUrl);
+                  }
+                  setEditLogoPreviewUrl(null);
+                  setUseLogoUrl(true);
+                  setLogoError(false);
+                  setLogoPathInput('');
+                  setLogoUrlInput(value);
+                  setEditForm((prev) => ({ ...prev, logo: value }));
+                }}
+                onClear={resetEditLogoSelection}
+                onPreviewError={() => setLogoError(true)}
+              />
 
               <div className='grid grid-cols-2 gap-4 pt-2'>
                 <div className='space-y-2'>
@@ -1959,7 +2169,13 @@ export default function OrganizationsSection({
               <div className='flex justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-700'>
                 <button
                   type='button'
-                  onClick={() => setEditingOrg(null)}
+                  onClick={() => {
+                    if (editLogoPreviewUrl) {
+                      URL.revokeObjectURL(editLogoPreviewUrl);
+                    }
+                    setEditLogoPreviewUrl(null);
+                    setEditingOrg(null);
+                  }}
                   className='px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 >
                   Cancel
@@ -2231,8 +2447,9 @@ export default function OrganizationsSection({
               <button
                 onClick={() => {
                   setCreateOpen(false);
+                  setCreateLogoMode('upload');
                   setCreateConfirmPassword('');
-                  setShowCreateConfirmPassword(false);
+                  resetCreateLogoSelection();
                 }}
                 className='text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
               >
@@ -2240,6 +2457,42 @@ export default function OrganizationsSection({
               </button>
             </div>
             <form onSubmit={handleCreateOrg} className='p-6 space-y-4'>
+              <AdminOrgLogoPicker
+                fileInputId='create-org-logo-upload'
+                fileInputRef={createLogoInputRef}
+                mode={createLogoMode}
+                onModeChange={(mode) => {
+                  setCreateLogoMode(mode);
+                  setCreateLogoError('');
+                  if (mode === 'upload' && createLogoPreviewUrl) {
+                    URL.revokeObjectURL(createLogoPreviewUrl);
+                    setCreateLogoPreviewUrl(null);
+                  }
+                  if (mode === 'upload') {
+                    setCreateForm((prev) => ({ ...prev, logo: '' }));
+                  }
+                }}
+                previewSrc={createLogoPreviewSource}
+                uploading={uploadingLogo}
+                uploadLabel={createLogoPreviewSource ? 'Change logo' : 'Upload logo'}
+                helperText='Max 1MB. Formats: PNG, JPG, JPEG, WEBP, SVG.'
+                urlValue={createForm.logo}
+                onFileChange={handleCreateLogoUpload}
+                onUrlChange={(value) => {
+                  if (createLogoPreviewUrl) {
+                    URL.revokeObjectURL(createLogoPreviewUrl);
+                  }
+                  setCreateLogoPreviewUrl(null);
+                  setCreateLogoError('');
+                  setCreateForm((prev) => ({ ...prev, logo: value }));
+                }}
+                onClear={resetCreateLogoSelection}
+                onPreviewError={() =>
+                  setCreateLogoError('Unable to load logo preview')
+                }
+                errorText={createLogoError}
+              />
+
               <div className='space-y-2'>
                 <label className='text-sm text-slate-600 dark:text-slate-400'>
                   Organization Name
@@ -2282,70 +2535,19 @@ export default function OrganizationsSection({
                   />
                 </div>
               </div>
-              <div className='space-y-2'>
-                <label className='text-sm text-slate-600 dark:text-slate-400'>
-                  Password
-                </label>
-                <div className='relative'>
-                  <input
-                    required
-                    type={showCreatePassword ? 'text' : 'password'}
-                    value={createForm.password}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, password: e.target.value })
-                    }
-                    className={adminOrgFormControlIconClass}
-                  />
-                  <button
-                    type='button'
-                    onClick={() => setShowCreatePassword((prev) => !prev)}
-                    className='absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-                    aria-label={showCreatePassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showCreatePassword ? (
-                      <EyeOff className='w-4 h-4' />
-                    ) : (
-                      <Eye className='w-4 h-4' />
-                    )}
-                  </button>
-                </div>
-                <p className='text-xs text-slate-500 dark:text-slate-500'>
-                  Min 8 chars, uppercase, lowercase, number, and special character.
-                </p>
-              </div>
-              <div className='space-y-2'>
-                <label className='text-sm text-slate-600 dark:text-slate-400'>
-                  Confirm Password
-                </label>
-                <div className='relative'>
-                  <input
-                    required
-                    type={showCreateConfirmPassword ? 'text' : 'password'}
-                    value={createConfirmPassword}
-                    onChange={(e) => setCreateConfirmPassword(e.target.value)}
-                    className={adminOrgFormControlIconClass}
-                  />
-                  <button
-                    type='button'
-                    onClick={() => setShowCreateConfirmPassword((prev) => !prev)}
-                    className='absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
-                    aria-label={showCreateConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                  >
-                    {showCreateConfirmPassword ? (
-                      <EyeOff className='w-4 h-4' />
-                    ) : (
-                      <Eye className='w-4 h-4' />
-                    )}
-                  </button>
-                </div>
-                {createConfirmPassword &&
-                  createForm.password !== createConfirmPassword && (
-                    <p className='text-xs text-red-500'>
-                      Passwords do not match
-                    </p>
-                  )}
-                <PasswordStrengthChecklist password={createForm.password} />
-              </div>
+              <PasswordFields
+                password={createForm.password}
+                setPassword={(value) =>
+                  setCreateForm({ ...createForm, password: value })
+                }
+                confirmPassword={createConfirmPassword}
+                setConfirmPassword={setCreateConfirmPassword}
+                required
+                labelPassword='Password'
+                labelConfirm='Confirm Password'
+                labelClassName='text-sm text-slate-600 dark:text-slate-400'
+                inputClassName={adminOrgFormControlClass}
+              />
               <div className='space-y-2'>
                 <label className='text-sm text-slate-600 dark:text-slate-400'>
                   Website
@@ -2440,35 +2642,21 @@ export default function OrganizationsSection({
                   </select>
                 </div>
               </div>
-              <div className='grid grid-cols-2 gap-4'>
-                <div className='space-y-2'>
-                  <label className='text-sm text-slate-600 dark:text-slate-400'>
-                    Type
-                  </label>
-                  <select
-                    value={createForm.type}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, type: e.target.value })
-                    }
-                    className={adminOrgFormControlClass}
-                  >
-                    <option value='PUBLIC'>Public</option>
-                    <option value='PRIVATE'>Private</option>
-                    <option value='NON_PROFIT'>Non Profit</option>
-                  </select>
-                </div>
-                <div className='space-y-2'>
-                  <label className='text-sm text-slate-600 dark:text-slate-400'>
-                    Logo URL (optional)
-                  </label>
-                  <input
-                    value={createForm.logo}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, logo: e.target.value })
-                    }
-                    className={adminOrgFormControlClass}
-                  />
-                </div>
+              <div className='space-y-2'>
+                <label className='text-sm text-slate-600 dark:text-slate-400'>
+                  Type
+                </label>
+                <select
+                  value={createForm.type}
+                  onChange={(e) =>
+                    setCreateForm({ ...createForm, type: e.target.value })
+                  }
+                  className={adminOrgFormControlClass}
+                >
+                  <option value='PUBLIC'>Public</option>
+                  <option value='PRIVATE'>Private</option>
+                  <option value='NON_PROFIT'>Non Profit</option>
+                </select>
               </div>
               <div className='grid grid-cols-2 gap-4'>
                 <div className='space-y-2'>
@@ -2591,8 +2779,9 @@ export default function OrganizationsSection({
                   type='button'
                   onClick={() => {
                     setCreateOpen(false);
+                    setCreateLogoMode('upload');
                     setCreateConfirmPassword('');
-                    setShowCreateConfirmPassword(false);
+                    resetCreateLogoSelection();
                   }}
                   className='px-4 py-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 >

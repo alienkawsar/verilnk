@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { useToast } from '@/components/ui/Toast';
 import { updateAdminProfile } from '@/lib/api';
 import { Loader2 } from 'lucide-react';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
+import PasswordFields from '@/components/auth/PasswordFields';
+import { validatePassword } from '@/lib/passwordPolicy';
 
 interface AccountSectionProps {
     user: { firstName?: string; lastName?: string; email: string; role: string } | null;
@@ -40,8 +41,9 @@ export default function AccountSection({ user }: AccountSectionProps) {
             showToast('Passwords do not match', 'error');
             return;
         }
-        if (!STRONG_PASSWORD_REGEX.test(password)) {
-            showToast(STRONG_PASSWORD_MESSAGE, 'error');
+        const passwordValidation = validatePassword(password);
+        if (!passwordValidation.ok) {
+            showToast(passwordValidation.message || 'Password is invalid', 'error');
             return;
         }
 
@@ -117,28 +119,18 @@ export default function AccountSection({ user }: AccountSectionProps) {
                 <div className="surface-card rounded-xl p-6 shadow-sm">
                     <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-4">Change Password</h2>
                     <form onSubmit={handleChangePassword} className="space-y-4 max-w-md">
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">New Password</label>
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500"
-                                placeholder="Min 8 chars"
-                            />
-                            <p className="text-[11px] text-slate-400 mt-1">
-                                Min 8 chars with uppercase, lowercase, number, special character.
-                            </p>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Confirm New Password</label>
-                            <input
-                                type="password"
-                                value={confirmPassword}
-                                onChange={(e) => setConfirmPassword(e.target.value)}
-                                className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white focus:outline-none focus:border-blue-500"
-                            />
-                        </div>
+                        <PasswordFields
+                            password={password}
+                            setPassword={setPassword}
+                            confirmPassword={confirmPassword}
+                            setConfirmPassword={setConfirmPassword}
+                            required
+                            labelPassword="New Password"
+                            labelConfirm="Confirm New Password"
+                            labelClassName="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1"
+                            inputClassName="w-full bg-transparent border border-[var(--app-border)] rounded-lg px-4 py-2 text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500"
+                            confirmPlaceholder="Re-enter password"
+                        />
                         <div className="pt-2">
                             <button
                                 type="submit"

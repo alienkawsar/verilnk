@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Shield, Loader2, Search, Eye, EyeOff, X } from 'lucide-react';
+import { Plus, Edit, Trash2, Shield, Loader2, Search, X } from 'lucide-react';
 import { fetchAdmins, createAdmin, updateAdmin, deleteAdmin } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { TableSkeleton } from '@/components/ui/Loading';
 import { useDebounce } from '@/hooks/useDebounce';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
-import PasswordStrengthChecklist from '@/components/ui/PasswordStrengthChecklist';
+import PasswordFields from '@/components/auth/PasswordFields';
+import { validatePassword } from '@/lib/passwordPolicy';
 
 interface Admin {
     id: string;
@@ -179,8 +179,6 @@ export default function AdminsSection() {
 function AdminFormModal({ isOpen, onClose, initialData, onSave }: any) {
     const { showToast } = useToast();
     const [loading, setLoading] = useState(false);
-    const [showPassword, setShowPassword] = useState(false);
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
     const [confirmPassword, setConfirmPassword] = useState('');
     const [formData, setFormData] = useState({
         firstName: initialData?.firstName || '',
@@ -203,8 +201,9 @@ function AdminFormModal({ isOpen, onClose, initialData, onSave }: any) {
         }
         setLoading(true);
         try {
-            if (formData.password && !STRONG_PASSWORD_REGEX.test(formData.password)) {
-                showToast(STRONG_PASSWORD_MESSAGE, 'error');
+            const passwordValidation = validatePassword(formData.password);
+            if (formData.password && !passwordValidation.ok) {
+                showToast(passwordValidation.message || 'Password is invalid', 'error');
                 return;
             }
             if (initialData) {
@@ -274,57 +273,18 @@ function AdminFormModal({ isOpen, onClose, initialData, onSave }: any) {
                         </select>
                     </div>
                     <div>
-                        <label className="text-sm text-slate-600 dark:text-slate-400 block mb-1">
-                            {initialData ? 'New Password (Optional)' : 'Password'}
-                        </label>
-                        <div className="relative">
-                            <input
-                                type={showPassword ? "text" : "password"}
-                                required={!initialData}
-                                className="w-full bg-transparent border border-[var(--app-border)] rounded p-2 pr-10 text-[var(--app-text-primary)]"
-                                value={formData.password}
-                                onChange={e => setFormData({ ...formData, password: e.target.value })}
-                                placeholder={initialData ? 'Leave blank to keep same' : 'Min 8 chars'}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"
-                            >
-                                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                            </button>
-                        </div>
-                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                            Min 8 chars with uppercase, lowercase, number, and special character.
-                        </p>
-                    </div>
-                    <div>
-                        <label className="text-sm text-slate-600 dark:text-slate-400 block mb-1">
-                            Confirm Password
-                        </label>
-                        <div className="relative">
-                            <input
-                                type={showConfirmPassword ? "text" : "password"}
-                                required={!initialData || Boolean(formData.password)}
-                                className="w-full bg-transparent border border-[var(--app-border)] rounded p-2 pr-10 text-[var(--app-text-primary)]"
-                                value={confirmPassword}
-                                onChange={e => setConfirmPassword(e.target.value)}
-                                placeholder={initialData ? 'Re-enter new password' : 'Re-enter password'}
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors"
-                            >
-                                {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                            </button>
-                        </div>
-                        {confirmPassword && formData.password !== confirmPassword && (
-                            <p className="text-xs text-red-500 mt-1">Passwords do not match</p>
-                        )}
-                        {(!initialData || formData.password) && (
-                            <PasswordStrengthChecklist password={formData.password} className="mt-2" />
-                        )}
+                        <PasswordFields
+                            password={formData.password}
+                            setPassword={(value) => setFormData({ ...formData, password: value })}
+                            confirmPassword={confirmPassword}
+                            setConfirmPassword={setConfirmPassword}
+                            required={!initialData}
+                            labelPassword={initialData ? 'New Password (Optional)' : 'Password'}
+                            labelClassName="text-sm text-slate-600 dark:text-slate-400 block mb-1"
+                            inputClassName="w-full bg-transparent border border-[var(--app-border)] rounded p-2 text-[var(--app-text-primary)]"
+                            passwordPlaceholder={initialData ? 'Leave blank to keep same' : 'Enter password'}
+                            confirmPlaceholder={initialData ? 'Re-enter new password' : 'Re-enter password'}
+                        />
                     </div>
                     <div className="flex justify-end gap-3 pt-4">
                         <button

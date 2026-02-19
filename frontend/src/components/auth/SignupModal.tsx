@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import Image from 'next/image';
-import { X, Lock, Mail, User, Globe, Loader2, AlertCircle, Eye, EyeOff, Building2, Phone, MapPin } from 'lucide-react';
+import { X, Mail, Globe, Loader2, AlertCircle, Building2, Phone, MapPin } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { signupSchema, STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
-import { z } from 'zod';
+import { signupSchema } from '@/lib/validation';
 import { signupOrganization, fetchCountries } from '@/lib/api';
 import { useGoogleReCaptcha } from 'react-google-recaptcha-v3';
-import PasswordStrengthChecklist from '@/components/ui/PasswordStrengthChecklist';
+import PasswordFields from '@/components/auth/PasswordFields';
+import { validatePassword } from '@/lib/passwordPolicy';
 
 interface SignupModalProps {
     isOpen: boolean;
@@ -55,9 +55,6 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin }: Signup
     const [logoPreviewUrl, setLogoPreviewUrl] = useState<string | null>(null);
     const [uploadedLogoUrl, setUploadedLogoUrl] = useState<string | null>(null);
     const [generalError, setGeneralError] = useState('');
-    const [showPassword, setShowPassword] = useState(false);
-    const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-
     // Lookups
     const [countries, setCountries] = useState<{ id: string, name: string }[]>([]);
     const [states, setStates] = useState<{ id: string, name: string }[]>([]);
@@ -278,9 +275,13 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin }: Signup
         if (!orgData.categoryId) newErrors.categoryId = 'Category is required';
         // if (!orgData.firstName) newErrors.firstName = 'First Name is required'; // Removed
         // if (!orgData.lastName) newErrors.lastName = 'Last Name is required'; // Removed
-        if (!orgData.password) newErrors.password = 'Password is required';
-        if (orgData.password && !STRONG_PASSWORD_REGEX.test(orgData.password)) {
-            newErrors.password = STRONG_PASSWORD_MESSAGE;
+        if (!orgData.password) {
+            newErrors.password = 'Password is required';
+        } else {
+            const validation = validatePassword(orgData.password);
+            if (!validation.ok) {
+                newErrors.password = validation.message || 'Password is invalid';
+            }
         }
         if (!orgData.confirmPassword) newErrors.confirmPassword = 'Confirm password is required';
         if (orgData.password && orgData.confirmPassword && orgData.password !== orgData.confirmPassword) {
@@ -408,33 +409,24 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin }: Signup
                             {errors.country && <p className="text-xs text-red-400 ml-1">{errors.country}</p>}
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Password</label>
-                            <div className="relative">
-                                <input name="password" type={showPassword ? 'text' : 'password'} value={formData.password} onChange={handleIndividualChange} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm" />
-                                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-2 text-slate-400">
-                                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                </button>
-                            </div>
-                            {errors.password && <p className="text-xs text-red-400 ml-1">{errors.password}</p>}
-                        </div>
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Confirm Password</label>
-                            <div className="relative">
-                                <input
-                                    name="confirmPassword"
-                                    type={showConfirmPassword ? 'text' : 'password'}
-                                    value={formData.confirmPassword}
-                                    onChange={handleIndividualChange}
-                                    className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm"
-                                />
-                                <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute right-3 top-2 text-slate-400">
-                                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                </button>
-                            </div>
-                            {errors.confirmPassword && <p className="text-xs text-red-400 ml-1">{errors.confirmPassword}</p>}
-                            <PasswordStrengthChecklist password={formData.password} className="ml-1" />
-                        </div>
+                        <PasswordFields
+                            password={formData.password}
+                            setPassword={(value) => {
+                                setFormData((prev) => ({ ...prev, password: value }));
+                                setErrors((prev: any) => ({ ...prev, password: undefined, confirmPassword: undefined }));
+                            }}
+                            confirmPassword={formData.confirmPassword}
+                            setConfirmPassword={(value) => {
+                                setFormData((prev) => ({ ...prev, confirmPassword: value }));
+                                setErrors((prev: any) => ({ ...prev, confirmPassword: undefined }));
+                            }}
+                            required
+                            labelClassName="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1"
+                            inputClassName="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm"
+                            className="ml-0.5"
+                            passwordError={errors.password}
+                            confirmError={errors.confirmPassword}
+                        />
 
                         {process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY && !executeRecaptcha && (
                             <div className="text-xs text-slate-500 dark:text-slate-400 text-center">
@@ -590,33 +582,24 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin }: Signup
                             {errors.address && <p className="text-xs text-red-400 ml-1">{errors.address}</p>}
                         </div>
 
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Password</label>
-                            <div className="relative">
-                                <input name="password" type={showPassword ? 'text' : 'password'} value={orgData.password} onChange={handleOrgChange} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm" />
-                                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-2 text-slate-400">
-                                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                </button>
-                            </div>
-                            {errors.password && <p className="text-xs text-red-400 ml-1">{errors.password}</p>}
-                        </div>
-                        <div className="space-y-2">
-                            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Confirm Password</label>
-                            <div className="relative">
-                                <input
-                                    name="confirmPassword"
-                                    type={showConfirmPassword ? 'text' : 'password'}
-                                    value={orgData.confirmPassword}
-                                    onChange={handleOrgChange}
-                                    className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm"
-                                />
-                                <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute right-3 top-2 text-slate-400">
-                                    {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                </button>
-                            </div>
-                            {errors.confirmPassword && <p className="text-xs text-red-400 ml-1">{errors.confirmPassword}</p>}
-                            <PasswordStrengthChecklist password={orgData.password} className="ml-1" />
-                        </div>
+                        <PasswordFields
+                            password={orgData.password}
+                            setPassword={(value) => {
+                                setOrgData((prev) => ({ ...prev, password: value }));
+                                setErrors((prev: any) => ({ ...prev, password: undefined, confirmPassword: undefined }));
+                            }}
+                            confirmPassword={orgData.confirmPassword}
+                            setConfirmPassword={(value) => {
+                                setOrgData((prev) => ({ ...prev, confirmPassword: value }));
+                                setErrors((prev: any) => ({ ...prev, confirmPassword: undefined }));
+                            }}
+                            required
+                            labelClassName="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1"
+                            inputClassName="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm"
+                            className="ml-0.5"
+                            passwordError={errors.password}
+                            confirmError={errors.confirmPassword}
+                        />
 
                         {process.env.NEXT_PUBLIC_RECAPTCHA_SITE_KEY && !executeRecaptcha && (
                             <div className="text-xs text-slate-500 dark:text-slate-400 text-center">

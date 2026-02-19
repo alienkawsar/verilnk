@@ -12,9 +12,7 @@ import {
     Trash2,
     Upload,
     X,
-    XCircle,
-    Eye,
-    EyeOff
+    XCircle
 } from 'lucide-react';
 import { TableSkeleton } from '@/components/ui/Loading';
 import {
@@ -29,8 +27,8 @@ import {
     type LinkedOrganization
 } from '@/lib/enterprise-api';
 import { fetchCategories, fetchCountries, fetchStates, uploadPublicOrgLogo } from '@/lib/api';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
-import PasswordStrengthChecklist from '@/components/ui/PasswordStrengthChecklist';
+import PasswordFields from '@/components/auth/PasswordFields';
+import { validatePassword } from '@/lib/passwordPolicy';
 import type { WorkspaceSectionProps } from '../section-types';
 import { normalizeWorkspaceRole } from '../section-types';
 import {
@@ -69,8 +67,6 @@ export default function OrganizationsSection({
     const [showCreateOrgModal, setShowCreateOrgModal] = useState(false);
     const [creatingOrganization, setCreatingOrganization] = useState(false);
     const [uploadingOrgLogo, setUploadingOrgLogo] = useState(false);
-    const [showOrgPassword, setShowOrgPassword] = useState(false);
-    const [showOrgConfirmPassword, setShowOrgConfirmPassword] = useState(false);
     const [orgConfirmPassword, setOrgConfirmPassword] = useState('');
     const [fetchingOrgStates, setFetchingOrgStates] = useState(false);
     const [orgCountries, setOrgCountries] = useState<Array<{ id: string; name: string }>>([]);
@@ -97,6 +93,10 @@ export default function OrganizationsSection({
     const normalizedRole = normalizeWorkspaceRole(userRole);
     const canManageOrganizations = normalizedRole === 'OWNER' || normalizedRole === 'ADMIN';
     const passwordsDoNotMatch = Boolean(orgConfirmPassword) && orgCreateForm.password !== orgConfirmPassword;
+    const passwordValidation = useMemo(
+        () => validatePassword(orgCreateForm.password),
+        [orgCreateForm.password]
+    );
 
     const quotaLimits = enterpriseAccess?.entitlements;
     const quotaUsage = enterpriseAccess?.usage;
@@ -380,8 +380,6 @@ export default function OrganizationsSection({
         setOrgCreateErrors({});
         setOrgLogoPreviewUrl(null);
         setOrgUploadedLogoUrl(null);
-        setShowOrgPassword(false);
-        setShowOrgConfirmPassword(false);
         setOrgConfirmPassword('');
         setOrgStates([]);
     };
@@ -402,9 +400,10 @@ export default function OrganizationsSection({
         if (!orgCreateForm.website.trim()) nextErrors.website = 'Website is required';
         if (!orgCreateForm.countryId) nextErrors.countryId = 'Country is required';
         if (!orgCreateForm.categoryId) nextErrors.categoryId = 'Category is required';
-        if (!orgCreateForm.password) nextErrors.password = 'Password is required';
-        if (orgCreateForm.password && !STRONG_PASSWORD_REGEX.test(orgCreateForm.password)) {
-            nextErrors.password = STRONG_PASSWORD_MESSAGE;
+        if (!orgCreateForm.password) {
+            nextErrors.password = 'Password is required';
+        } else if (!passwordValidation.ok) {
+            nextErrors.password = passwordValidation.message || 'Password is invalid';
         }
         if (!orgConfirmPassword) nextErrors.confirmPassword = 'Confirm password is required';
         if (orgCreateForm.password && orgConfirmPassword && orgCreateForm.password !== orgConfirmPassword) {
@@ -913,67 +912,30 @@ export default function OrganizationsSection({
                                 />
                             </div>
 
-                            <div>
-                                <label className="text-xs font-medium text-[var(--app-text-secondary)]">Password</label>
-                                <div className="mt-1 relative">
-                                    <input
-                                        type={showOrgPassword ? 'text' : 'password'}
-                                        value={orgCreateForm.password}
-                                        onChange={(e) => {
-                                            handleOrgCreateFieldChange('password', e.target.value);
-                                            setOrgCreateErrors((prev) => {
-                                                if (!prev.confirmPassword) return prev;
-                                                const next = { ...prev };
-                                                delete next.confirmPassword;
-                                                return next;
-                                            });
-                                        }}
-                                        className="w-full px-4 py-2.5 pr-11 rounded-lg border border-[var(--app-border)] bg-transparent text-[var(--app-text-primary)]"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowOrgPassword((prev) => !prev)}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--app-text-secondary)] hover:text-[var(--app-text-primary)]"
-                                    >
-                                        {showOrgPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                    </button>
-                                </div>
-                                {orgCreateErrors.password && <p className="text-xs text-red-600 dark:text-red-400 mt-1">{orgCreateErrors.password}</p>}
-                            </div>
-
-                            <div>
-                                <label className="text-xs font-medium text-[var(--app-text-secondary)]">Confirm Password</label>
-                                <div className="mt-1 relative">
-                                    <input
-                                        type={showOrgConfirmPassword ? 'text' : 'password'}
-                                        value={orgConfirmPassword}
-                                        onChange={(e) => {
-                                            setOrgConfirmPassword(e.target.value);
-                                            setOrgCreateErrors((prev) => {
-                                                if (!prev.confirmPassword) return prev;
-                                                const next = { ...prev };
-                                                delete next.confirmPassword;
-                                                return next;
-                                            });
-                                        }}
-                                        className="w-full px-4 py-2.5 pr-11 rounded-lg border border-[var(--app-border)] bg-transparent text-[var(--app-text-primary)]"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowOrgConfirmPassword((prev) => !prev)}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--app-text-secondary)] hover:text-[var(--app-text-primary)]"
-                                        aria-label={showOrgConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                                    >
-                                        {showOrgConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                    </button>
-                                </div>
-                                {orgCreateErrors.confirmPassword ? (
-                                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">{orgCreateErrors.confirmPassword}</p>
-                                ) : passwordsDoNotMatch ? (
-                                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">Passwords do not match</p>
-                                ) : null}
-                                <PasswordStrengthChecklist password={orgCreateForm.password} className="mt-2" />
-                            </div>
+                            <PasswordFields
+                                password={orgCreateForm.password}
+                                setPassword={(value) => {
+                                    handleOrgCreateFieldChange('password', value);
+                                    setOrgCreateErrors((prev) => ({
+                                        ...prev,
+                                        password: '',
+                                        confirmPassword: '',
+                                    }));
+                                }}
+                                confirmPassword={orgConfirmPassword}
+                                setConfirmPassword={(value) => {
+                                    setOrgConfirmPassword(value);
+                                    setOrgCreateErrors((prev) => ({
+                                        ...prev,
+                                        confirmPassword: '',
+                                    }));
+                                }}
+                                required
+                                labelClassName="text-xs font-medium text-[var(--app-text-secondary)]"
+                                inputClassName="w-full px-4 py-2.5 rounded-lg border border-[var(--app-border)] bg-transparent text-[var(--app-text-primary)]"
+                                passwordError={orgCreateErrors.password}
+                                confirmError={orgCreateErrors.confirmPassword}
+                            />
                         </div>
 
                         <div className="flex gap-3 mt-6">
@@ -997,7 +959,7 @@ export default function OrganizationsSection({
                                     || !orgCreateForm.password.trim()
                                     || !orgConfirmPassword.trim()
                                     || passwordsDoNotMatch
-                                    || !STRONG_PASSWORD_REGEX.test(orgCreateForm.password)
+                                    || !passwordValidation.ok
                                     || !orgCreateForm.website.trim()
                                     || !orgCreateForm.phone.trim()
                                     || !orgCreateForm.address.trim()

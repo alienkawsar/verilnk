@@ -9,7 +9,14 @@ const jwt_1 = require("../config/jwt");
 const client_1 = require("../db/client");
 const session_service_1 = require("../services/session.service");
 const client_2 = require("@prisma/client");
-const SAFE_PATHS = ['/api/auth/me', '/api/auth/logout', '/api/auth/change-password'];
+const SAFE_PATHS = [
+    '/api/auth/me',
+    '/api/auth/org/me',
+    '/api/auth/user/me',
+    '/api/auth/logout',
+    '/api/auth/refresh',
+    '/api/auth/change-password'
+];
 const handleAdminToken = async (decoded, req, res, next) => {
     const now = new Date();
     if (decoded.jti) {

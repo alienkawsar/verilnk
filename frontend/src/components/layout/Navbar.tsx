@@ -46,10 +46,24 @@ function NavbarContent() {
 
   // Open Login Modal if ?login=true is present
   useEffect(() => {
+    if (searchParams?.get('login') !== 'true') {
+      return;
+    }
+
+    if (user) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete('login');
+      params.delete('returnTo');
+      const nextQuery = params.toString();
+      const nextUrl = nextQuery ? `${pathname}?${nextQuery}` : (pathname || '/');
+      window.history.replaceState({}, '', nextUrl);
+      return;
+    }
+
     if (searchParams?.get('login') === 'true') {
       setIsLoginOpen(true);
     }
-  }, [searchParams]);
+  }, [pathname, searchParams, user]);
 
   // Handle click outside to close dropdown
   useEffect(() => {

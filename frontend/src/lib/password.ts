@@ -1,4 +1,7 @@
-import { STRONG_PASSWORD_REGEX } from '@/lib/validation';
+import {
+    checkPasswordCriteria,
+    validatePassword
+} from '@/lib/passwordPolicy';
 
 export type PasswordChecks = {
     length: boolean;
@@ -8,13 +11,16 @@ export type PasswordChecks = {
     special: boolean;
 };
 
-export const getPasswordChecks = (password: string): PasswordChecks => ({
-    length: password.length >= 8,
-    upper: /[A-Z]/.test(password),
-    lower: /[a-z]/.test(password),
-    number: /\d/.test(password),
-    special: /[^A-Za-z0-9]/.test(password),
-});
+export const getPasswordChecks = (password: string): PasswordChecks => {
+    const checks = checkPasswordCriteria(password);
+    return {
+        length: checks.minLen,
+        upper: checks.upper,
+        lower: checks.lower,
+        number: checks.number,
+        special: checks.special,
+    };
+};
 
 export const getPasswordStrengthScore = (checks: PasswordChecks): number => {
     const values = Object.values(checks);
@@ -28,4 +34,4 @@ export const getPasswordStrengthLabel = (score: number): 'Weak' | 'Medium' | 'St
 };
 
 export const isStrongPassword = (password: string): boolean =>
-    STRONG_PASSWORD_REGEX.test(password);
+    validatePassword(password).ok;

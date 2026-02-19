@@ -1,8 +1,11 @@
 import { z } from 'zod';
+import {
+    PASSWORD_POLICY_MESSAGE,
+    PASSWORD_POLICY_REGEX,
+} from '@/lib/passwordPolicy';
 
-export const STRONG_PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
-export const STRONG_PASSWORD_MESSAGE =
-    'Password must be at least 8 characters and include uppercase, lowercase, number, and special character.';
+export const STRONG_PASSWORD_REGEX = PASSWORD_POLICY_REGEX;
+export const STRONG_PASSWORD_MESSAGE = PASSWORD_POLICY_MESSAGE;
 
 export const isStrongPassword = (password: string) => STRONG_PASSWORD_REGEX.test(password);
 

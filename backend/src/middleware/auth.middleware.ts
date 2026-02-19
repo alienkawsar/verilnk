@@ -10,7 +10,14 @@ import { prisma } from '../db/client';
 import { createSession, getSessionByJti, touchSession } from '../services/session.service';
 import { SessionActorType } from '@prisma/client';
 
-const SAFE_PATHS = ['/api/auth/me', '/api/auth/logout', '/api/auth/change-password'];
+const SAFE_PATHS = [
+    '/api/auth/me',
+    '/api/auth/org/me',
+    '/api/auth/user/me',
+    '/api/auth/logout',
+    '/api/auth/refresh',
+    '/api/auth/change-password'
+];
 
 const handleAdminToken = async (decoded: any, req: AuthRequest, res: Response, next: NextFunction) => {
     const now = new Date();

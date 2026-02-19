@@ -11,10 +11,11 @@ import ExportDropdown from '@/components/analytics/ExportDropdown';
 import LockedFeatureCard from '@/components/analytics/LockedFeatureCard';
 import VerifiedBadge from '@/components/ui/VerifiedBadge';
 import { useToast } from '@/components/ui/Toast';
+import PasswordFields from '@/components/auth/PasswordFields';
 import { useRouter } from 'next/navigation';
 import { Loader2, Settings, LayoutDashboard, Globe, MapPin, Building2, Phone, Mail, FileText, CheckCircle, Clock, XCircle, LineChart, Lock, Copy, Ban, Shield, ArrowUpRight, CreditCard, ImageIcon, Link as LinkIcon, Upload, X, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
+import { validatePassword } from '@/lib/passwordPolicy';
 
 export default function OrgDashboard() {
     const { user, loading } = useAuth();
@@ -298,8 +299,17 @@ export default function OrgDashboard() {
                     showToast('Current password is required', 'error');
                     return;
                 }
-                if (!STRONG_PASSWORD_REGEX.test(securityForm.newPassword)) {
-                    showToast(STRONG_PASSWORD_MESSAGE, 'error');
+                if (!securityForm.newPassword) {
+                    showToast('New password is required', 'error');
+                    return;
+                }
+                if (!securityForm.confirmPassword) {
+                    showToast('Confirm password is required', 'error');
+                    return;
+                }
+                const passwordValidation = validatePassword(securityForm.newPassword);
+                if (!passwordValidation.ok) {
+                    showToast(passwordValidation.message || 'Password is invalid', 'error');
                     return;
                 }
                 if (securityForm.newPassword !== securityForm.confirmPassword) {
@@ -1251,31 +1261,23 @@ export default function OrgDashboard() {
                                                     />
                                                 </div>
                                             </div>
-                                            <div className="grid grid-cols-2 gap-4">
-                                                <div className="space-y-2">
-                                                    <label className="text-sm font-medium text-slate-700 dark:text-slate-300">New Password</label>
-                                                    <input
-                                                        type="password"
-                                                        value={securityForm.newPassword}
-                                                        onChange={e => setSecurityForm({ ...securityForm, newPassword: e.target.value })}
-                                                        placeholder="Enter new password"
-                                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                                    />
-                                                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                                                        Min 8 chars with uppercase, lowercase, number, special character.
-                                                    </p>
-                                                </div>
-                                                <div className="space-y-2">
-                                                    <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Confirm Password</label>
-                                                    <input
-                                                        type="password"
-                                                        value={securityForm.confirmPassword}
-                                                        onChange={e => setSecurityForm({ ...securityForm, confirmPassword: e.target.value })}
-                                                        placeholder="Re-enter password"
-                                                        className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
-                                                    />
-                                                </div>
-                                            </div>
+                                            <PasswordFields
+                                                password={securityForm.newPassword}
+                                                setPassword={(value) =>
+                                                    setSecurityForm({ ...securityForm, newPassword: value })
+                                                }
+                                                confirmPassword={securityForm.confirmPassword}
+                                                setConfirmPassword={(value) =>
+                                                    setSecurityForm({ ...securityForm, confirmPassword: value })
+                                                }
+                                                required={false}
+                                                labelPassword="New Password"
+                                                labelConfirm="Confirm Password"
+                                                passwordPlaceholder="Enter new password"
+                                                confirmPlaceholder="Re-enter password"
+                                                labelClassName="text-sm font-medium text-slate-700 dark:text-slate-300"
+                                                inputClassName="w-full bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg px-4 py-2 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                            />
                                             <div className="pt-2">
                                                 <button
                                                     onClick={() => handleSecurityUpdate('PASSWORD')}

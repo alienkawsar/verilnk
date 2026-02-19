@@ -1,13 +1,14 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { updateUserProfile } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
-import { Lock, Loader2, ShieldCheck, Eye, EyeOff } from 'lucide-react';
-import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '@/lib/validation';
+import { Loader2, ShieldCheck } from 'lucide-react';
 import { getDefaultPostLoginRoute, sanitizeReturnTo } from '@/lib/auth-redirect';
+import PasswordFields from '@/components/auth/PasswordFields';
+import { validatePassword } from '@/lib/passwordPolicy';
 
 export default function ChangePasswordPage() {
     const [formData, setFormData] = useState({
@@ -15,18 +16,17 @@ export default function ChangePasswordPage() {
         confirmPassword: ''
     });
 
-    const [showPassword, setShowPassword] = useState(false);
     const [loading, setLoading] = useState(false);
     const { user, checkAuth } = useAuth();
     const router = useRouter();
-    const searchParams = useSearchParams();
     const { showToast } = useToast();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
-        if (!STRONG_PASSWORD_REGEX.test(formData.newPassword)) {
-            showToast(STRONG_PASSWORD_MESSAGE, 'error');
+        const passwordValidation = validatePassword(formData.newPassword);
+        if (!passwordValidation.ok) {
+            showToast(passwordValidation.message || 'Password is invalid', 'error');
             return;
         }
 
@@ -42,7 +42,9 @@ export default function ChangePasswordPage() {
             });
             await checkAuth();
 
-            const queryReturnTo = sanitizeReturnTo(searchParams.get('returnTo'));
+            const queryReturnTo = typeof window !== 'undefined'
+                ? sanitizeReturnTo(new URLSearchParams(window.location.search).get('returnTo'))
+                : null;
             const fallbackRoute = getDefaultPostLoginRoute(user || {});
             const destination = queryReturnTo || fallbackRoute;
 
@@ -73,45 +75,17 @@ export default function ChangePasswordPage() {
 
                 <div className="surface-card rounded-2xl p-8 shadow-xl">
                     <form onSubmit={handleSubmit} className="space-y-6">
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">New Password</label>
-                            <div className="relative">
-                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                                <input
-                                    type={showPassword ? 'text' : 'password'}
-                                    required
-                                    value={formData.newPassword}
-                                    onChange={e => setFormData({ ...formData, newPassword: e.target.value })}
-                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg pl-10 pr-10 py-3 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                                    placeholder="••••••••"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowPassword(!showPassword)}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors"
-                                >
-                                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                                </button>
-                            </div>
-                            <p className="text-xs text-slate-500">
-                                Min 8 chars, 1 uppercase, 1 lowercase, 1 number, 1 special char.
-                            </p>
-                        </div>
-
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium text-slate-700 dark:text-slate-300">Confirm Password</label>
-                            <div className="relative">
-                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 dark:text-slate-500" />
-                                <input
-                                    type={showPassword ? 'text' : 'password'}
-                                    required
-                                    value={formData.confirmPassword}
-                                    onChange={e => setFormData({ ...formData, confirmPassword: e.target.value })}
-                                    className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg pl-10 pr-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
-                                    placeholder="••••••••"
-                                />
-                            </div>
-                        </div>
+                        <PasswordFields
+                            password={formData.newPassword}
+                            setPassword={(value) => setFormData((prev) => ({ ...prev, newPassword: value }))}
+                            confirmPassword={formData.confirmPassword}
+                            setConfirmPassword={(value) => setFormData((prev) => ({ ...prev, confirmPassword: value }))}
+                            required
+                            labelPassword="New Password"
+                            labelConfirm="Confirm Password"
+                            inputClassName="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-4 py-3 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-all"
+                            labelClassName="text-sm font-medium text-slate-700 dark:text-slate-300"
+                        />
 
                         <button
                             type="submit"
