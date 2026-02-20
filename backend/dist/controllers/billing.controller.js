@@ -41,6 +41,7 @@ const client_2 = require("../db/client");
 const trialService = __importStar(require("../services/trial.service"));
 const billing_security_service_1 = require("../services/billing-security.service");
 const enterprise_compliance_service_1 = require("../services/enterprise-compliance.service");
+const BILLING_TERM_VALUES = ['MONTHLY', 'ANNUAL'];
 const mockCheckoutSchema = zod_1.z.object({
     organizationId: zod_1.z.string().uuid().optional(),
     planType: zod_1.z.nativeEnum(client_1.PlanType),
