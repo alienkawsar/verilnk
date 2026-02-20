@@ -6,7 +6,7 @@ export const checkRestriction = async (req: Request, res: Response, next: NextFu
     const user = (req as any).user;
 
     // Skip for Admins or GET requests (Read-Only allowed)
-    if (user && ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER'].includes(user.role)) {
+    if (user && ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER', 'ACCOUNTS'].includes(user.role)) {
         return next();
     }
 

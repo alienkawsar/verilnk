@@ -1,6 +1,7 @@
 import { prisma } from '../db/client';
 import {
     OrgStatus,
+    OrgPriority,
     Site,
     User,
     Organization,
@@ -17,6 +18,11 @@ import { AuditActionType } from '@prisma/client';
 import { VerificationStatus } from '@prisma/client';
 import { assertStrongPassword } from '../utils/passwordPolicy';
 import { normalizeEnterpriseQuotaLimits } from './enterprise-quota.service';
+import {
+    BillingTerm,
+    resolveBillingTerm,
+    resolvePlanChargeAmountCents
+} from './billing-pricing.service';
 import {
     getEffectivelyRestrictedOrganizationIds,
     isOrganizationEffectivelyRestricted
@@ -433,6 +439,9 @@ export const adminCreateOrganization = async (
         planType?: PlanType;
         planStatus?: PlanStatus;
         durationDays?: number;
+        billingTerm?: BillingTerm;
+        amountCents?: number;
+        priority?: OrgPriority;
         priorityOverride?: number | null;
         enterpriseMaxWorkspaces?: number | null;
         enterpriseMaxLinkedOrgs?: number | null;
@@ -455,6 +464,15 @@ export const adminCreateOrganization = async (
     const planType = data.planType ?? PlanType.FREE;
     let planStatus = data.planStatus ?? PlanStatus.ACTIVE;
     const now = new Date();
+    const billingTerm = resolveBillingTerm(data.billingTerm || null, data.durationDays);
+    const shouldProvisionPaidPlan = planType !== PlanType.FREE && planStatus === PlanStatus.ACTIVE;
+    const normalizedAmountCents = shouldProvisionPaidPlan
+        ? resolvePlanChargeAmountCents({
+            planType,
+            billingTerm,
+            requestedAmountCents: data.amountCents
+        })
+        : null;
     let planStartAt = now;
     let planEndAt: Date | null = null;
     let supportTier = PLAN_SUPPORT_TIER[planType] ?? SupportTier.NONE;
@@ -494,7 +512,9 @@ export const adminCreateOrganization = async (
                 stateId: data.stateId || null,
                 categoryId: data.categoryId,
                 status: OrgStatus.APPROVED,
-                priority: 'NORMAL',
+                // Discovery note (backend/src/services/organization.service.ts):
+                // Priority was hardcoded to NORMAL here, so admin-selected priority never persisted on create.
+                priority: data.priority ?? 'NORMAL',
                 type: data.type || 'PUBLIC',
                 about: data.about || null,
                 logo: data.logo || null,
@@ -572,7 +592,67 @@ export const adminCreateOrganization = async (
         }
     }
 
-    return result;
+    let billingProvision: {
+        invoiceId: string | null;
+        invoiceNumber: string | null;
+        subscriptionId: string | null;
+        amountCents: number | null;
+        billingTerm: BillingTerm;
+    } | null = null;
+
+    // Discovery note (backend/src/services/organization.service.ts):
+    // Admin org creation previously only set Organization.planType/planStatus and skipped billing models.
+    // ACCOUNTS dashboard reads Subscription/Invoice rows, so paid orgs without those rows were invisible.
+    if (shouldProvisionPaidPlan) {
+        const billingService = await import('./billing.service');
+        const billingResult = await billingService.provisionOrganizationPlanFromCheckout({
+            organizationId: result.org.id,
+            planType,
+            billingTerm,
+            amountCents: normalizedAmountCents || undefined,
+            durationDays: data.durationDays,
+            billingEmail: result.org.email,
+            billingName: result.org.name,
+            idempotencyKey: `admin-org-create:${result.org.id}:${planType}:${billingTerm}`
+        }) as any;
+
+        const invoice = billingResult?.invoice || null;
+        const subscription = billingResult?.subscription || null;
+        billingProvision = {
+            invoiceId: invoice?.id || null,
+            invoiceNumber: invoice?.invoiceNumber || null,
+            subscriptionId: subscription?.id || null,
+            amountCents: typeof billingResult?.amountCents === 'number' ? billingResult.amountCents : normalizedAmountCents,
+            billingTerm
+        };
+
+        if (auditContext) {
+            await auditService.logAction({
+                adminId: auditContext.adminId,
+                actorRole: auditContext.role,
+                action: AuditActionType.OTHER,
+                entity: 'OrganizationBilling',
+                targetId: result.org.id,
+                details: `ORG_CREATED_WITH_PLAN orgId=${result.org.id} plan=${planType} billingTerm=${billingTerm} amountCents=${billingProvision.amountCents || 0}`,
+                snapshot: {
+                    orgId: result.org.id,
+                    plan: planType,
+                    billingTerm,
+                    amount: billingProvision.amountCents,
+                    invoiceNumber: billingProvision.invoiceNumber,
+                    invoiceId: billingProvision.invoiceId,
+                    subscriptionId: billingProvision.subscriptionId
+                },
+                ipAddress: auditContext.ip,
+                userAgent: auditContext.userAgent
+            });
+        }
+    }
+
+    return {
+        ...result,
+        billingProvision
+    };
 };
 
 // Public Profile (Sanitized)

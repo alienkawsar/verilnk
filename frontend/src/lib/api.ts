@@ -657,6 +657,11 @@ export const updateAdmin = async (id: string, data: any) => {
     return response.data;
 };
 
+export const setAdminActiveStatus = async (id: string, isActive: boolean) => {
+    const response = await api.patch(`/admin/${id}/status`, { isActive });
+    return response.data;
+};
+
 export const deleteAdmin = async (id: string) => {
     const response = await api.delete(`/admin/${id}`);
     return response.data;
@@ -718,6 +723,193 @@ export const cancelSubscription = async (subscriptionId: string) => {
 export const extendTrial = async (organizationId: string, extraDays: number) => {
     const response = await api.post(`/admin/billing/trials/${organizationId}/extend`, { extraDays });
     return response.data;
+};
+
+export type AdminBillingTerm = 'MONTHLY' | 'ANNUAL';
+
+export interface AdminBillingOverviewResponse {
+    mrrCents: number | null;
+    arrCents: number | null;
+    activeSubscriptionsByPlan: {
+        BASIC: number;
+        PRO: number;
+        BUSINESS: number;
+        ENTERPRISE: number;
+    };
+    activeSubscriptionsByBillingTerm: {
+        MONTHLY: number;
+        ANNUAL: number;
+    };
+    newPaidOrganizations: {
+        last7Days: number;
+        last30Days: number;
+    };
+    renewalsDue: {
+        next30Days: number;
+        next60Days: number;
+        next90Days: number;
+    };
+    failedVoidPayments: {
+        failedPayments: number;
+        voidInvoices: number;
+        total: number;
+    };
+}
+
+export interface AdminBillingSubscriptionsQuery extends Record<string, unknown> {
+    search?: string;
+    plan?: 'BASIC' | 'PRO' | 'BUSINESS' | 'ENTERPRISE';
+    billingTerm?: AdminBillingTerm;
+    status?: 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'EXPIRED' | 'TRIALING';
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    limit?: number;
+}
+
+export interface AdminBillingSubscriptionRow {
+    id: string;
+    organization: {
+        id: string;
+        name: string;
+    };
+    plan: 'BASIC' | 'PRO' | 'BUSINESS' | 'ENTERPRISE' | 'FREE';
+    billingTerm: AdminBillingTerm | null;
+    status: 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'EXPIRED' | 'TRIALING';
+    renewalDate: string | null;
+    mrrContributionCents: number | null;
+    currency: string | null;
+    lastInvoiceStatus: 'DRAFT' | 'OPEN' | 'PAID' | 'VOID' | 'REFUNDED' | null;
+    lastInvoiceUpdatedAt: string | null;
+}
+
+export interface AdminBillingSubscriptionsResponse {
+    subscriptions: AdminBillingSubscriptionRow[];
+    pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+    };
+}
+
+export interface AdminBillingInvoicesQuery extends Record<string, unknown> {
+    search?: string;
+    status?: 'OPEN' | 'PAID' | 'VOID' | 'DRAFT' | 'REFUNDED';
+    plan?: 'BASIC' | 'PRO' | 'BUSINESS' | 'ENTERPRISE';
+    billingTerm?: AdminBillingTerm;
+    rangeDays?: 7 | 30 | 90;
+    startDate?: string;
+    endDate?: string;
+    page?: number;
+    limit?: number;
+}
+
+export interface AdminBillingInvoiceRow {
+    id: string;
+    invoiceNumber: string;
+    organization: {
+        id: string;
+        name: string;
+    };
+    plan: 'BASIC' | 'PRO' | 'BUSINESS' | 'ENTERPRISE' | 'FREE';
+    billingTerm: AdminBillingTerm | null;
+    amountCents: number;
+    currency: string;
+    status: 'OPEN' | 'PAID' | 'VOID' | 'DRAFT' | 'REFUNDED';
+    issuedAt: string;
+    updatedAt: string;
+    internalNote: string | null;
+}
+
+export interface AdminBillingInvoicesResponse {
+    invoices: AdminBillingInvoiceRow[];
+    pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+    };
+}
+
+export const fetchAdminBillingOverview = async () => {
+    const response = await api.get('/admin/billing/overview');
+    return response.data as AdminBillingOverviewResponse;
+};
+
+export const fetchAdminBillingSubscriptions = async (params?: AdminBillingSubscriptionsQuery) => {
+    const response = await api.get('/admin/billing/subscriptions', {
+        params: sanitizeQueryParams(params)
+    });
+    return response.data as AdminBillingSubscriptionsResponse;
+};
+
+export const fetchAdminBillingInvoices = async (params?: AdminBillingInvoicesQuery) => {
+    const response = await api.get('/admin/billing/invoices', {
+        params: sanitizeQueryParams(params)
+    });
+    return response.data as AdminBillingInvoicesResponse;
+};
+
+export const updateAdminBillingInvoice = async (
+    invoiceId: string,
+    payload: { status?: 'OPEN' | 'PAID' | 'VOID' | 'DRAFT' | 'REFUNDED'; internalNote?: string | null }
+) => {
+    const response = await api.patch(`/admin/billing/invoices/${invoiceId}`, payload);
+    return response.data as AdminBillingInvoiceRow;
+};
+
+export const downloadAdminBillingInvoicePdf = async (invoiceId: string, fallback?: InvoiceFilenameFallbackInput) => {
+    const response = await fetch(`${API_URL}/admin/billing/invoices/${invoiceId}/pdf`, {
+        method: 'GET',
+        credentials: 'include'
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ message: 'Invoice download failed' }));
+        throw new Error(error.message || 'Invoice download failed');
+    }
+
+    const contentDisposition = response.headers.get('content-disposition') || '';
+    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+    const filename = filenameMatch?.[1] || buildInvoiceFallbackFilename(invoiceId, fallback);
+
+    const blob = await response.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+};
+
+const downloadBillingCsv = async (path: string, filename: string, params?: Record<string, unknown>) => {
+    const response = await api.get(path, {
+        params: sanitizeQueryParams(params),
+        responseType: 'blob'
+    });
+
+    const blob = new Blob([response.data], { type: 'text/csv' });
+    const objectUrl = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(objectUrl);
+};
+
+export const exportAdminBillingInvoicesCsv = async (params?: AdminBillingInvoicesQuery) => {
+    const fileDate = new Date().toISOString().slice(0, 10);
+    await downloadBillingCsv('/admin/billing/exports/invoices.csv', `billing_invoices_${fileDate}.csv`, params);
+};
+
+export const exportAdminBillingSubscriptionsCsv = async (params?: AdminBillingSubscriptionsQuery) => {
+    const fileDate = new Date().toISOString().slice(0, 10);
+    await downloadBillingCsv('/admin/billing/exports/subscriptions.csv', `billing_subscriptions_${fileDate}.csv`, params);
 };
 
 export interface AdminBillingInvoiceListParams extends Record<string, unknown> {
@@ -1019,7 +1211,7 @@ export const bulkUpdateOrganizationPlan = async (
 };
 
 // Billing (Mock)
-export const createMockCheckout = async (data: { organizationId?: string; planType: string; amountCents: number; currency?: string; durationDays?: number; billingEmail?: string; billingName?: string; simulate?: 'success' | 'failure' }, idempotencyKey?: string) => {
+export const createMockCheckout = async (data: { organizationId?: string; planType: string; amountCents: number; currency?: string; durationDays?: number; billingTerm?: 'MONTHLY' | 'ANNUAL'; billingEmail?: string; billingName?: string; simulate?: 'success' | 'failure' }, idempotencyKey?: string) => {
     const res = await api.post('/billing/mock/checkout', data, {
         headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined
     });

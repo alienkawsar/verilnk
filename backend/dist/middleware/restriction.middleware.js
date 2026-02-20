@@ -6,7 +6,7 @@ const organization_visibility_service_1 = require("../services/organization-visi
 const checkRestriction = async (req, res, next) => {
     const user = req.user;
     // Skip for Admins or GET requests (Read-Only allowed)
-    if (user && ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER'].includes(user.role)) {
+    if (user && ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER', 'ACCOUNTS'].includes(user.role)) {
         return next();
     }
     // Only block mutating methods

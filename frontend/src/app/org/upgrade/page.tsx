@@ -141,7 +141,8 @@ function OrgUpgradeContent() {
                     planType: selectedPlan,
                     amountCents,
                     currency: 'USD',
-                    durationDays
+                    durationDays,
+                    billingTerm: billingCycle === 'annual' ? 'ANNUAL' : 'MONTHLY'
                 },
                 idempotencyKey
             );
@@ -663,4 +664,3 @@ function OrgUpgradeContent() {
         </div>
     );
 }
-

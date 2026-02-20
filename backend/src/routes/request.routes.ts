@@ -13,7 +13,7 @@ router.post('/', authenticateUser, checkRestriction, requestController.createReq
 router.get('/my', authenticateUser, requestController.getRequests);
 
 // Admin Routes
-router.get('/', authenticateAdmin, requestController.getRequests);
+router.get('/', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), requestController.getRequests);
 router.post('/:id/approve', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), requestController.approveRequest);
 router.post('/:id/reject', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), requestController.rejectRequest);
 

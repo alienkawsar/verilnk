@@ -48,6 +48,7 @@ router.post('/reindex', auth_middleware_1.authenticateAdmin, (0, auth_middleware
 // Admin Management (Super Admin Only)
 router.get('/', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminController.getAdmins);
 router.post('/', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminController.createAdmin);
+router.patch('/:id/status', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminController.updateAdminStatus);
 router.patch('/:id', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminController.updateAdmin);
 router.delete('/:id', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminController.deleteAdmin);
 router.get('/sessions', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), sessionController.getAdminSessions);
@@ -76,7 +77,7 @@ router.get('/tags', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.a
 router.post('/tags', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN', 'MODERATOR']), categoryController.createTag);
 router.put('/categories/:id/tags', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN', 'MODERATOR']), categoryController.setCategoryTags);
 // Self Management (All Admins)
-router.patch('/me/profile', auth_middleware_1.authenticateAdmin, adminController.updateProfile);
+router.patch('/me/profile', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), adminController.updateProfile);
 // Enterprise Management (Super Admin Only)
 const adminEnterpriseController = __importStar(require("../controllers/admin.enterprise.controller"));
 router.get('/enterprise', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN']), adminEnterpriseController.listEnterprisesAdmin);

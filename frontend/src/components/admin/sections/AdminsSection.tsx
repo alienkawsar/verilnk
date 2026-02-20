@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit, Trash2, Shield, Loader2, Search, X } from 'lucide-react';
-import { fetchAdmins, createAdmin, updateAdmin, deleteAdmin } from '@/lib/api';
+import { Plus, Edit, Trash2, Shield, Loader2, Search, X, Power } from 'lucide-react';
+import { fetchAdmins, createAdmin, updateAdmin, deleteAdmin, setAdminActiveStatus } from '@/lib/api';
 import { useToast } from '@/components/ui/Toast';
 import { TableSkeleton } from '@/components/ui/Loading';
 import { useDebounce } from '@/hooks/useDebounce';
@@ -12,7 +12,8 @@ interface Admin {
     email: string;
     firstName: string;
     lastName: string;
-    role: 'SUPER_ADMIN' | 'MODERATOR' | 'VERIFIER';
+    role: 'SUPER_ADMIN' | 'MODERATOR' | 'VERIFIER' | 'ACCOUNTS';
+    isActive: boolean;
     createdAt: string;
 }
 
@@ -59,6 +60,20 @@ export default function AdminsSection() {
         }
     };
 
+    const handleStatusToggle = async (admin: Admin) => {
+        const nextStatus = !admin.isActive;
+        const actionLabel = nextStatus ? 'activate' : 'deactivate';
+        if (!confirm(`Are you sure you want to ${actionLabel} ${admin.email}?`)) return;
+
+        try {
+            await setAdminActiveStatus(admin.id, nextStatus);
+            showToast(`Admin ${nextStatus ? 'activated' : 'deactivated'} successfully`, 'success');
+            loadAdmins();
+        } catch (err: any) {
+            showToast(err.response?.data?.message || 'Failed to update admin status', 'error');
+        }
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex justify-between items-center sm:flex-row flex-col gap-4">
@@ -97,6 +112,7 @@ export default function AdminsSection() {
                         <option value="SUPER_ADMIN">Super Admin</option>
                         <option value="MODERATOR">Moderator</option>
                         <option value="VERIFIER">Verifier</option>
+                        <option value="ACCOUNTS">Accounts</option>
                     </select>
                 </div>
 
@@ -116,7 +132,7 @@ export default function AdminsSection() {
             </div>
 
             {loading ? (
-                <TableSkeleton cols={4} rows={5} />
+                <TableSkeleton cols={5} rows={5} />
             ) : (
                 <div className="surface-card rounded-xl overflow-hidden shadow-sm">
                     <table className="w-full text-left">
@@ -125,6 +141,7 @@ export default function AdminsSection() {
                                 <th className="px-6 py-4">Name</th>
                                 <th className="px-6 py-4">Email</th>
                                 <th className="px-6 py-4">Role</th>
+                                <th className="px-6 py-4">Status</th>
                                 <th className="px-6 py-4 text-right">Actions</th>
                             </tr>
                         </thead>
@@ -138,12 +155,27 @@ export default function AdminsSection() {
                                     <td className="px-6 py-4">
                                         <span className={`px-2 py-1 rounded text-xs font-bold ${admin.role === 'SUPER_ADMIN' ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400' :
                                             admin.role === 'MODERATOR' ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400' :
+                                                admin.role === 'ACCOUNTS' ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400' :
                                                 'bg-green-500/10 text-green-600 dark:text-green-400'
                                             }`}>
                                             {admin.role}
                                         </span>
                                     </td>
+                                    <td className="px-6 py-4">
+                                        <span className={`px-2 py-1 rounded text-xs font-semibold ${admin.isActive ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-slate-500/10 text-slate-600 dark:text-slate-400'}`}>
+                                            {admin.isActive ? 'Active' : 'Inactive'}
+                                        </span>
+                                    </td>
                                     <td className="px-6 py-4 text-right flex justify-end gap-3">
+                                        {admin.role === 'ACCOUNTS' && (
+                                            <button
+                                                onClick={() => handleStatusToggle(admin)}
+                                                className={`${admin.isActive ? 'text-amber-600 dark:text-amber-400 hover:text-amber-500 dark:hover:text-amber-300' : 'text-emerald-600 dark:text-emerald-400 hover:text-emerald-500 dark:hover:text-emerald-300'}`}
+                                                title={admin.isActive ? 'Deactivate ACCOUNTS admin' : 'Activate ACCOUNTS admin'}
+                                            >
+                                                <Power className="w-4 h-4" />
+                                            </button>
+                                        )}
                                         <button
                                             onClick={() => { setEditingAdmin(admin); setIsModalOpen(true); }}
                                             className="text-blue-600 dark:text-blue-400 hover:text-blue-500 dark:hover:text-blue-300"
@@ -269,6 +301,7 @@ function AdminFormModal({ isOpen, onClose, initialData, onSave }: any) {
                         >
                             <option value="VERIFIER">Verifier</option>
                             <option value="MODERATOR">Moderator</option>
+                            <option value="ACCOUNTS">Accounts</option>
                             <option value="SUPER_ADMIN">Super Admin</option>
                         </select>
                     </div>

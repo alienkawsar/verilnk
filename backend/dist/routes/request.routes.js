@@ -43,7 +43,7 @@ router.post('/', auth_middleware_1.authenticateUser, restriction_middleware_1.ch
 // User/Org Requests (self)
 router.get('/my', auth_middleware_1.authenticateUser, requestController.getRequests);
 // Admin Routes
-router.get('/', auth_middleware_1.authenticateAdmin, requestController.getRequests);
+router.get('/', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), requestController.getRequests);
 router.post('/:id/approve', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), requestController.approveRequest);
 router.post('/:id/reject', auth_middleware_1.authenticateAdmin, (0, auth_middleware_1.authorizeRole)(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), requestController.rejectRequest);
 // Bulk Actions

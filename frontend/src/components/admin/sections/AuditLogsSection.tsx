@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/Skeleton';
 
 interface AuditLog {
     id: string;
+    actorRole?: string | null;
     admin: {
         id: string;
         email: string;
@@ -130,6 +131,7 @@ export default function AuditLogsSection() {
                         <option value="REJECT">Reject</option>
                         <option value="LOGIN">Login</option>
                         <option value="SUSPEND">Suspend</option>
+                        <option value="INVOICE_UPDATE">Invoice Update</option>
                     </select>
                 </div>
                 <div>
@@ -180,7 +182,7 @@ export default function AuditLogsSection() {
                                         </td>
                                         <td className="px-6 py-4">
                                             <div className="font-medium text-slate-900 dark:text-slate-200">{log.admin.email}</div>
-                                            <div className="text-xs text-slate-500 dark:opacity-70">{log.admin.role}</div>
+                                            <div className="text-xs text-slate-500 dark:opacity-70">{log.actorRole || log.admin.role}</div>
                                         </td>
                                         <td className="px-6 py-4">
                                             <span className={`px-2 py-1 rounded text-xs font-bold ${log.action === 'DELETE' || log.action === 'REJECT' || log.action === 'SUSPEND' ? 'bg-red-100 dark:bg-red-500/10 text-red-600 dark:text-red-400' :

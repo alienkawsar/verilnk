@@ -20,6 +20,18 @@ const SAFE_PATHS = [
 ];
 
 const handleAdminToken = async (decoded: any, req: AuthRequest, res: Response, next: NextFunction) => {
+    const admin = await prisma.admin.findUnique({
+        where: { id: decoded.id },
+        select: { id: true, role: true, isActive: true }
+    });
+    if (!admin) {
+        return res.status(401).json({ message: 'Admin not found' });
+    }
+    if (!admin.isActive) {
+        return res.status(403).json({ message: 'Admin account is deactivated' });
+    }
+
+    decoded.role = admin.role;
     const now = new Date();
     if (decoded.jti) {
         const existing = await getSessionByJti(decoded.jti);

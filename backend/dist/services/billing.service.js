@@ -36,12 +36,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.processMockCallback = exports.createMockCheckout = void 0;
+exports.processMockCallback = exports.provisionOrganizationPlanFromCheckout = exports.createMockCheckout = void 0;
 const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const crypto_1 = __importDefault(require("crypto"));
 const organizationService = __importStar(require("./organization.service"));
 const billing_security_service_1 = require("./billing-security.service");
+const billing_pricing_service_1 = require("./billing-pricing.service");
 const PAYMENT_MODE = (process.env.PAYMENT_MODE || 'mock').toLowerCase();
 const buildMockId = (prefix) => `${prefix}_${crypto_1.default.randomBytes(8).toString('hex')}`;
 const stableStringify = (payload) => {
@@ -89,12 +90,16 @@ const createMockCheckout = async (params) => {
     if (PAYMENT_MODE !== 'mock') {
         throw new Error('Mock checkout is disabled');
     }
-    if (params.planType === client_2.PlanType.FREE) {
-        throw new Error('FREE plan does not require checkout');
-    }
-    if (!params.amountCents || params.amountCents <= 0) {
-        throw new Error('Amount must be greater than zero');
-    }
+    const billingTerm = (0, billing_pricing_service_1.resolveBillingTerm)(params.billingTerm || null, params.durationDays);
+    const durationDays = typeof params.durationDays === 'number' && Number.isFinite(params.durationDays) && params.durationDays > 0
+        ? Math.floor(params.durationDays)
+        : (0, billing_pricing_service_1.billingTermToDurationDays)(billingTerm);
+    const amountCents = (0, billing_pricing_service_1.resolvePlanChargeAmountCents)({
+        planType: params.planType,
+        billingTerm,
+        requestedAmountCents: params.amountCents
+    });
+    const currency = params.currency || 'USD';
     const org = await client_1.prisma.organization.findUnique({ where: { id: params.organizationId } });
     if (!org) {
         throw new Error('Organization not found');
@@ -106,9 +111,10 @@ const createMockCheckout = async (params) => {
     const payloadHash = computeHash({
         organizationId: params.organizationId,
         planType: params.planType,
-        amountCents: params.amountCents,
-        currency: params.currency || 'USD',
-        durationDays: params.durationDays || null
+        amountCents,
+        currency,
+        billingTerm,
+        durationDays
     });
     if (params.idempotencyKey) {
         const existingAttempt = await client_1.prisma.paymentAttempt.findFirst({
@@ -131,21 +137,22 @@ const createMockCheckout = async (params) => {
     }
     const invoiceMetadata = {
         planType: params.planType,
-        durationDays: params.durationDays || null,
+        billingTerm,
+        durationDays,
         organizationId: params.organizationId
     };
     const invoiceIntegrityHash = (0, billing_security_service_1.computeInvoiceIntegrity)({
         planType: params.planType,
-        amountCents: params.amountCents,
-        currency: params.currency || 'USD',
+        amountCents,
+        currency,
         organizationId: params.organizationId
     });
     const invoice = await client_1.prisma.invoice.create({
         data: {
             billingAccountId: billingAccount.id,
             status: client_2.InvoiceStatus.OPEN,
-            amountCents: params.amountCents,
-            currency: params.currency || 'USD',
+            amountCents,
+            currency,
             invoiceNumber: buildInvoiceNumber(),
             metadata: invoiceMetadata,
             integrityHash: invoiceIntegrityHash
@@ -156,8 +163,8 @@ const createMockCheckout = async (params) => {
             billingAccountId: billingAccount.id,
             invoiceId: invoice.id,
             status: client_2.PaymentAttemptStatus.PENDING,
-            amountCents: params.amountCents,
-            currency: params.currency || 'USD',
+            amountCents,
+            currency,
             gateway: client_2.BillingGateway.MOCK,
             gatewayPaymentId: buildMockId('mock_pay'),
             idempotencyKey: params.idempotencyKey,
@@ -177,6 +184,39 @@ const createMockCheckout = async (params) => {
     };
 };
 exports.createMockCheckout = createMockCheckout;
+const provisionOrganizationPlanFromCheckout = async (params) => {
+    // Discovery note (backend/src/services/billing.service.ts):
+    // Public /billing/mock/checkout is the canonical invoice+subscription flow.
+    // Super Admin org creation reuses this path to avoid divergent billing logic.
+    const billingTerm = (0, billing_pricing_service_1.resolveBillingTerm)(params.billingTerm || null, params.durationDays);
+    const durationDays = typeof params.durationDays === 'number' && Number.isFinite(params.durationDays) && params.durationDays > 0
+        ? Math.floor(params.durationDays)
+        : (0, billing_pricing_service_1.billingTermToDurationDays)(billingTerm);
+    const amountCents = (0, billing_pricing_service_1.resolvePlanChargeAmountCents)({
+        planType: params.planType,
+        billingTerm,
+        requestedAmountCents: params.amountCents
+    });
+    const checkoutResult = await (0, exports.createMockCheckout)({
+        organizationId: params.organizationId,
+        planType: params.planType,
+        amountCents,
+        currency: params.currency || 'USD',
+        durationDays,
+        billingTerm,
+        billingEmail: params.billingEmail,
+        billingName: params.billingName,
+        idempotencyKey: params.idempotencyKey,
+        simulate: 'success'
+    });
+    return {
+        ...checkoutResult,
+        billingTerm,
+        durationDays,
+        amountCents
+    };
+};
+exports.provisionOrganizationPlanFromCheckout = provisionOrganizationPlanFromCheckout;
 const processMockCallback = async (params) => {
     if (PAYMENT_MODE !== 'mock') {
         throw new Error('Mock callback is disabled');
@@ -256,7 +296,10 @@ const processMockCallback = async (params) => {
     if (!planType) {
         throw new Error('Plan type missing from invoice metadata');
     }
-    const durationDays = metadata.durationDays ?? 30;
+    const durationDays = typeof metadata.durationDays === 'number' && Number.isFinite(metadata.durationDays)
+        ? Math.max(1, Math.floor(metadata.durationDays))
+        : 30;
+    const billingTerm = (0, billing_pricing_service_1.resolveBillingTerm)(metadata.billingTerm || null, durationDays);
     const subscriptionPeriodEnd = new Date(now);
     subscriptionPeriodEnd.setDate(subscriptionPeriodEnd.getDate() + durationDays);
     const activeSubscription = await client_1.prisma.subscription.findFirst({
@@ -296,7 +339,11 @@ const processMockCallback = async (params) => {
                 currency: attempt.currency,
                 startedAt: now,
                 currentPeriodStart: now,
-                currentPeriodEnd: subscriptionPeriodEnd
+                currentPeriodEnd: subscriptionPeriodEnd,
+                metadata: {
+                    billingTerm,
+                    durationDays
+                }
             }
         })
     ]);

@@ -18,6 +18,17 @@ const SAFE_PATHS = [
     '/api/auth/change-password'
 ];
 const handleAdminToken = async (decoded, req, res, next) => {
+    const admin = await client_1.prisma.admin.findUnique({
+        where: { id: decoded.id },
+        select: { id: true, role: true, isActive: true }
+    });
+    if (!admin) {
+        return res.status(401).json({ message: 'Admin not found' });
+    }
+    if (!admin.isActive) {
+        return res.status(403).json({ message: 'Admin account is deactivated' });
+    }
+    decoded.role = admin.role;
     const now = new Date();
     if (decoded.jti) {
         const existing = await (0, session_service_1.getSessionByJti)(decoded.jti);

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 
-const ADMIN_ROLES = ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER'];
+const ADMIN_ROLES = ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER', 'ACCOUNTS'];
 
 export default function SessionMonitor() {
     const { user, session, logout, checkAuth, refresh } = useAuth();

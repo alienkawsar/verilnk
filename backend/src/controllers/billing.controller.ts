@@ -6,12 +6,15 @@ import { prisma } from '../db/client';
 import * as trialService from '../services/trial.service';
 import { verifyWebhookSignature } from '../services/billing-security.service';
 
+const BILLING_TERM_VALUES = ['MONTHLY', 'ANNUAL'] as const;
+
 const mockCheckoutSchema = z.object({
     organizationId: z.string().uuid().optional(),
     planType: z.nativeEnum(PlanType),
     amountCents: z.number().int().positive(),
     currency: z.string().optional(),
     durationDays: z.number().int().positive().optional(),
+    billingTerm: z.enum(BILLING_TERM_VALUES).optional(),
     billingEmail: z.string().email().optional(),
     billingName: z.string().optional(),
     simulate: z.enum(['success', 'failure']).optional()
