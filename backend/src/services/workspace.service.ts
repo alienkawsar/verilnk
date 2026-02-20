@@ -171,10 +171,7 @@ export const getWorkspaceById = async (id: string): Promise<WorkspaceWithDetails
 export const getUserWorkspaces = async (userId: string): Promise<WorkspaceSummary[]> => {
     const memberships = await prisma.workspaceMember.findMany({
         where: {
-            userId,
-            workspace: {
-                status: { not: WorkspaceStatus.DELETED }
-            }
+            userId
         },
         include: {
             workspace: {
@@ -191,16 +188,18 @@ export const getUserWorkspaces = async (userId: string): Promise<WorkspaceSummar
         }
     });
 
-    return memberships.map(m => ({
-        id: m.workspace.id,
-        name: m.workspace.name,
-        status: m.workspace.status,
-        memberCount: m.workspace._count.members,
-        orgCount: m.workspace._count.organizations,
-        apiKeyCount: m.workspace._count.apiKeys,
-        role: m.role,
-        createdAt: m.workspace.createdAt
-    }));
+    return memberships
+        .filter((membership) => membership.workspace.status !== 'DELETED')
+        .map(m => ({
+            id: m.workspace.id,
+            name: m.workspace.name,
+            status: m.workspace.status,
+            memberCount: m.workspace._count.members,
+            orgCount: m.workspace._count.organizations,
+            apiKeyCount: m.workspace._count.apiKeys,
+            role: m.role,
+            createdAt: m.workspace.createdAt
+        }));
 };
 
 /**
