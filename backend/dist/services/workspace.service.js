@@ -14,6 +14,7 @@ const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const enterprise_entitlement_1 = require("./enterprise.entitlement");
 const enterprise_quota_service_1 = require("./enterprise-quota.service");
+const workspace_lifecycle_service_1 = require("./workspace-lifecycle.service");
 const crypto_1 = __importDefault(require("crypto"));
 // ============================================
 // Workspace CRUD
@@ -81,7 +82,9 @@ exports.getWorkspaceById = getWorkspaceById;
  */
 const getUserWorkspaces = async (userId) => {
     const memberships = await client_1.prisma.workspaceMember.findMany({
-        where: { userId },
+        where: {
+            userId
+        },
         include: {
             workspace: {
                 include: {
@@ -96,7 +99,9 @@ const getUserWorkspaces = async (userId) => {
             }
         }
     });
-    return memberships.map(m => ({
+    return memberships
+        .filter((membership) => membership.workspace.status !== 'DELETED')
+        .map(m => ({
         id: m.workspace.id,
         name: m.workspace.name,
         status: m.workspace.status,
@@ -495,6 +500,7 @@ const acceptWorkspaceInvite = async (token, userId) => {
         if (invite.status !== client_2.InviteStatus.PENDING) {
             throw new Error('Invite is no longer active');
         }
+        await (0, workspace_lifecycle_service_1.assertWorkspaceActive)(invite.workspaceId);
         if (invite.expiresAt.getTime() < Date.now()) {
             await tx.invite.update({
                 where: { id: invite.id },
@@ -707,6 +713,7 @@ const acceptWorkspaceInviteById = async (inviteId, userId) => {
         if (invite.status !== client_2.InviteStatus.PENDING) {
             throw new Error('Invite has already been processed');
         }
+        await (0, workspace_lifecycle_service_1.assertWorkspaceActive)(invite.workspaceId);
         if (invite.expiresAt.getTime() < Date.now()) {
             await tx.invite.update({
                 where: { id: invite.id },
@@ -767,6 +774,7 @@ const declineWorkspaceInviteById = async (inviteId, userId) => {
             where: { id: inviteId },
             select: {
                 id: true,
+                workspaceId: true,
                 invitedEmail: true,
                 invitedUserId: true,
                 status: true,
@@ -780,6 +788,7 @@ const declineWorkspaceInviteById = async (inviteId, userId) => {
         if (invite.status !== client_2.InviteStatus.PENDING) {
             throw new Error('Invite has already been processed');
         }
+        await (0, workspace_lifecycle_service_1.assertWorkspaceActive)(invite.workspaceId);
         if (invite.expiresAt.getTime() < Date.now()) {
             await tx.invite.update({
                 where: { id: invite.id },

@@ -65,7 +65,8 @@ import {
     PlanType,
     Prisma,
     SessionActorType,
-    WorkspaceMemberRole
+    WorkspaceMemberRole,
+    WorkspaceStatus
 } from '@prisma/client';
 import { prisma } from '../db/client';
 import * as auditService from '../services/audit.service';
@@ -96,6 +97,18 @@ import {
 } from '../services/session.service';
 import { buildInvoicePdfBuffer } from '../services/invoice-pdf.service';
 import { buildInvoiceContentDisposition, buildInvoiceDownloadFilename } from '../services/invoice-filename.service';
+import {
+    assertEnterpriseCompliance,
+    getEnterpriseCompliancePolicy,
+    isEnterpriseComplianceError,
+    toEnterpriseComplianceErrorResponse,
+    updateEnterpriseCompliancePolicy
+} from '../services/enterprise-compliance.service';
+import {
+    assertWorkspaceLifecycleAccess,
+    isWorkspaceLifecycleError,
+    toWorkspaceLifecycleErrorResponse
+} from '../services/workspace-lifecycle.service';
 
 const router = Router();
 
@@ -207,6 +220,32 @@ const respondWorkspaceForbidden = (res: Response, message: string = "You don't h
 const respondOrgRestricted = (res: Response) =>
     res.status(403).json({ code: 'ORG_RESTRICTED', message: 'Organization is restricted' });
 
+const normalizeComplianceActorRole = (role: string | null | undefined): string => {
+    const normalized = String(role || '').trim().toUpperCase();
+    if (!normalized) return 'UNKNOWN';
+    if (normalized === 'EDITOR') return 'DEVELOPER';
+    if (normalized === 'VIEWER') return 'AUDITOR';
+    return normalized;
+};
+
+const handleComplianceError = (res: Response, error: unknown): boolean => {
+    if (!isEnterpriseComplianceError(error)) {
+        return false;
+    }
+
+    res.status(error.status).json(toEnterpriseComplianceErrorResponse(error));
+    return true;
+};
+
+const handleWorkspaceLifecycleError = (res: Response, error: unknown): boolean => {
+    if (!isWorkspaceLifecycleError(error)) {
+        return false;
+    }
+
+    res.status(error.status).json(toWorkspaceLifecycleErrorResponse(error));
+    return true;
+};
+
 const getEnterpriseRestrictionContext = async (workspaceId: string): Promise<{
     enterpriseOwnerOrgId: string | null;
     enterpriseOwnerOrgIsRestricted: boolean;
@@ -236,6 +275,41 @@ const getEnterpriseRestrictionContext = async (workspaceId: string): Promise<{
         enterpriseOwnerOrgId: enterpriseOwnerOrg?.id || null,
         enterpriseOwnerOrgIsRestricted: Boolean(enterpriseOwnerOrg?.isRestricted)
     };
+};
+
+const resolveWorkspaceEnterpriseIdForCompliance = async (workspaceId: string): Promise<string | null> => {
+    const directEnterpriseId = await resolveWorkspaceEnterpriseOrganizationId(workspaceId);
+    if (directEnterpriseId) return directEnterpriseId;
+
+    const restrictionContext = await getEnterpriseRestrictionContext(workspaceId);
+    return restrictionContext.enterpriseOwnerOrgId;
+};
+
+const assertComplianceForWorkspaceAction = async (input: {
+    workspaceId: string;
+    action:
+        | 'WORKSPACE_DELETE'
+        | 'WORKSPACE_SUSPEND'
+        | 'WORKSPACE_ARCHIVE'
+        | 'WORKSPACE_RESTORE'
+        | 'ORGANIZATION_LINK'
+        | 'ORGANIZATION_UNLINK'
+        | 'MEMBER_ROLE_CHANGE'
+        | 'API_KEY_LIFECYCLE'
+        | 'COMPLIANCE_AUDIT_VIEW'
+        | 'COMPLIANCE_AUDIT_EXPORT';
+    actorRole: string | null | undefined;
+}) => {
+    const enterpriseId = await resolveWorkspaceEnterpriseIdForCompliance(input.workspaceId);
+    if (!enterpriseId) {
+        return null;
+    }
+
+    return assertEnterpriseCompliance({
+        enterpriseId,
+        action: input.action,
+        actorRole: normalizeComplianceActorRole(input.actorRole)
+    });
 };
 
 const isOrganizationRestricted = async (organizationId: string): Promise<boolean> => {
@@ -269,6 +343,37 @@ const enforceWorkspaceEnterpriseNotRestricted = async (req: AuthRequest, res: Re
     } catch (error: any) {
         console.error('[Enterprise] Workspace restriction guard error:', error);
         return res.status(500).json({ message: error.message || 'Failed to resolve workspace restriction state' });
+    }
+};
+
+const enforceWorkspaceLifecycleGuard = async (req: AuthRequest, res: Response, next: NextFunction) => {
+    try {
+        const workspaceId = req.params.id as string | undefined;
+        const userId = req.user?.id as string | undefined;
+        if (!workspaceId || !userId) {
+            return next();
+        }
+
+        const memberRole = await getUserWorkspaceRole(workspaceId, userId);
+        if (!memberRole) {
+            return next();
+        }
+
+        const isReadRequest = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+        const isRestoreRequest = req.method === 'POST' && req.path === '/restore';
+
+        await assertWorkspaceLifecycleAccess({
+            workspaceId,
+            actorRole: normalizeWorkspaceRole(memberRole) || memberRole,
+            mode: isReadRequest ? 'READ' : 'ADMIN',
+            allowArchivedAdminRecovery: isRestoreRequest
+        });
+
+        return next();
+    } catch (error: any) {
+        if (handleWorkspaceLifecycleError(res, error)) return;
+        console.error('[Enterprise] Workspace lifecycle guard error:', error);
+        return res.status(500).json({ message: error.message || 'Failed to resolve workspace lifecycle state' });
     }
 };
 
@@ -379,6 +484,14 @@ const workspaceAuditLogQuerySchema = z.object({
     startDate: z.string().optional(),
     endDate: z.string().optional()
 });
+
+const enterpriseCompliancePolicyUpdateSchema = z.object({
+    logRetentionDays: z.coerce.number().int().min(7).max(3650).optional(),
+    requireStrongPasswords: z.boolean().optional()
+}).refine(
+    (value) => typeof value.logRetentionDays === 'number' || typeof value.requireStrongPasswords === 'boolean',
+    { message: 'At least one policy field is required' }
+);
 
 const resolveEnterpriseProfileContext = async (userId: string) => {
     const access = await getUserEnterpriseAccess(userId);
@@ -547,6 +660,15 @@ router.post('/workspaces', async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ message: 'Workspace name must be at least 2 characters' });
         }
 
+        const access = await getUserEnterpriseAccess(req.user.id as string);
+        if (access.organizationId) {
+            await assertEnterpriseCompliance({
+                enterpriseId: access.organizationId,
+                action: 'WORKSPACE_CREATE',
+                actorRole: normalizeComplianceActorRole((req.user as any)?.role || 'OWNER')
+            });
+        }
+
         const workspace = await createWorkspace({
             name: name.trim(),
             ownerId: req.user.id as string
@@ -563,6 +685,7 @@ router.post('/workspaces', async (req: AuthRequest, res: Response) => {
         res.status(201).json({ workspace });
     } catch (error: any) {
         console.error('[Enterprise] Create workspace error:', error);
+        if (handleComplianceError(res, error)) return;
         if (handleEnterpriseLimitError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to create workspace' });
     }
@@ -570,6 +693,7 @@ router.post('/workspaces', async (req: AuthRequest, res: Response) => {
 
 // Workspace-level routes are blocked when the owning enterprise organization is restricted.
 router.use('/workspaces/:id', enforceWorkspaceEnterpriseNotRestricted);
+router.use('/workspaces/:id', enforceWorkspaceLifecycleGuard);
 
 // Get current user's workspace membership context
 router.get('/workspaces/:id/me', async (req: AuthRequest, res: Response) => {
@@ -665,6 +789,175 @@ router.patch('/workspaces/:id', async (req: AuthRequest, res: Response) => {
     }
 });
 
+router.post('/workspaces/:id/suspend', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await getUserWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'update_workspace')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'WORKSPACE_SUSPEND',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
+        const workspace = await getWorkspaceById(id);
+        if (!workspace) {
+            return res.status(404).json({ message: 'Workspace not found' });
+        }
+
+        if (workspace.status === WorkspaceStatus.SUSPENDED) {
+            return res.status(409).json({ message: 'Workspace is already suspended' });
+        }
+        if (workspace.status === WorkspaceStatus.ARCHIVED) {
+            return res.status(409).json({ message: 'Archived workspaces cannot be suspended' });
+        }
+        if (workspace.status === WorkspaceStatus.DELETED) {
+            return res.status(410).json({ message: 'Workspace is deleted' });
+        }
+
+        const updated = await updateWorkspace(id, { status: WorkspaceStatus.SUSPENDED });
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.SUSPEND,
+            'Workspace',
+            `WORKSPACE_SUSPENDED workspaceId=${id}`,
+            id
+        );
+
+        return res.json({ workspace: updated });
+    } catch (error: any) {
+        console.error('[Enterprise] Suspend workspace error:', error);
+        if (handleComplianceError(res, error)) return;
+        res.status(400).json({ message: error.message || 'Failed to suspend workspace' });
+    }
+});
+
+router.post('/workspaces/:id/unsuspend', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await getUserWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'update_workspace')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'WORKSPACE_SUSPEND',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
+        const workspace = await getWorkspaceById(id);
+        if (!workspace) {
+            return res.status(404).json({ message: 'Workspace not found' });
+        }
+
+        if (workspace.status !== WorkspaceStatus.SUSPENDED) {
+            return res.status(409).json({ message: 'Workspace is not suspended' });
+        }
+
+        const updated = await updateWorkspace(id, { status: WorkspaceStatus.ACTIVE });
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'Workspace',
+            `WORKSPACE_UNSUSPENDED workspaceId=${id}`,
+            id
+        );
+
+        return res.json({ workspace: updated });
+    } catch (error: any) {
+        console.error('[Enterprise] Unsuspend workspace error:', error);
+        if (handleComplianceError(res, error)) return;
+        res.status(400).json({ message: error.message || 'Failed to unsuspend workspace' });
+    }
+});
+
+router.post('/workspaces/:id/archive', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await getUserWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'update_workspace')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'WORKSPACE_ARCHIVE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
+        const workspace = await getWorkspaceById(id);
+        if (!workspace) {
+            return res.status(404).json({ message: 'Workspace not found' });
+        }
+
+        if (workspace.status === WorkspaceStatus.ARCHIVED) {
+            return res.status(409).json({ message: 'Workspace is already archived' });
+        }
+        if (workspace.status === WorkspaceStatus.DELETED) {
+            return res.status(410).json({ message: 'Workspace is deleted' });
+        }
+
+        const updated = await updateWorkspace(id, { status: WorkspaceStatus.ARCHIVED });
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'Workspace',
+            `WORKSPACE_ARCHIVED workspaceId=${id}`,
+            id
+        );
+
+        return res.json({ workspace: updated });
+    } catch (error: any) {
+        console.error('[Enterprise] Archive workspace error:', error);
+        if (handleComplianceError(res, error)) return;
+        res.status(400).json({ message: error.message || 'Failed to archive workspace' });
+    }
+});
+
+router.post('/workspaces/:id/restore', async (req: AuthRequest, res: Response) => {
+    try {
+        const id = req.params.id as string;
+        const role = await getUserWorkspaceRole(id, req.user.id as string);
+        if (!role || !canPerformWorkspaceAction(role, 'update_workspace')) {
+            return respondWorkspaceForbidden(res);
+        }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'WORKSPACE_RESTORE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
+        const workspace = await getWorkspaceById(id);
+        if (!workspace) {
+            return res.status(404).json({ message: 'Workspace not found' });
+        }
+
+        if (workspace.status !== WorkspaceStatus.ARCHIVED) {
+            return res.status(409).json({ message: 'Only archived workspaces can be restored' });
+        }
+
+        const updated = await updateWorkspace(id, { status: WorkspaceStatus.ACTIVE });
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'Workspace',
+            `WORKSPACE_RESTORED workspaceId=${id}`,
+            id
+        );
+
+        return res.json({ workspace: updated });
+    } catch (error: any) {
+        console.error('[Enterprise] Restore workspace error:', error);
+        if (handleComplianceError(res, error)) return;
+        res.status(400).json({ message: error.message || 'Failed to restore workspace' });
+    }
+});
+
 // Delete workspace (OWNER only)
 router.delete('/workspaces/:id', async (req: AuthRequest, res: Response) => {
     try {
@@ -675,6 +968,12 @@ router.delete('/workspaces/:id', async (req: AuthRequest, res: Response) => {
         if (!role || !canPerformWorkspaceAction(role, 'delete_workspace')) {
             return respondWorkspaceForbidden(res, 'Only the owner can delete a workspace');
         }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'WORKSPACE_DELETE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
 
         if (!password.trim()) {
             return res.status(400).json({ message: 'Password is required to delete workspace' });
@@ -711,6 +1010,7 @@ router.delete('/workspaces/:id', async (req: AuthRequest, res: Response) => {
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Delete workspace error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to delete workspace' });
     }
 });
@@ -998,6 +1298,7 @@ router.post('/invites/accept', async (req: AuthRequest, res: Response) => {
         res.json({ success: true, member });
     } catch (error: any) {
         console.error('[Enterprise] Accept invite error:', error);
+        if (handleWorkspaceLifecycleError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to accept invite' });
     }
 });
@@ -1021,6 +1322,7 @@ router.post('/invites/:inviteId/accept', async (req: AuthRequest, res: Response)
         res.json({ success: true, member });
     } catch (error: any) {
         console.error('[Enterprise] Accept invite by id error:', error);
+        if (handleWorkspaceLifecycleError(res, error)) return;
         if (error?.message === 'Invite not found') {
             return res.status(404).json({ message: error.message });
         }
@@ -1056,6 +1358,7 @@ router.post('/invites/:inviteId/decline', async (req: AuthRequest, res: Response
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Decline invite error:', error);
+        if (handleWorkspaceLifecycleError(res, error)) return;
         if (error?.message === 'Invite not found') {
             return res.status(404).json({ message: error.message });
         }
@@ -1090,6 +1393,12 @@ router.patch('/workspaces/:workspaceId/members/:memberId/role', async (req: Auth
             return respondWorkspaceForbidden(res);
         }
 
+        await assertComplianceForWorkspaceAction({
+            workspaceId,
+            action: 'MEMBER_ROLE_CHANGE',
+            actorRole: normalizeWorkspaceRole(currentRole) || currentRole
+        });
+
         const normalizedRole = normalizeWorkspaceRole(parsedBody.data.role as WorkspaceRoleInput);
         if (!normalizedRole || normalizedRole === 'OWNER') {
             return res.status(400).json({ message: 'Invalid role. Must be one of: ADMIN, DEVELOPER, ANALYST, AUDITOR' });
@@ -1118,6 +1427,7 @@ router.patch('/workspaces/:workspaceId/members/:memberId/role', async (req: Auth
         });
     } catch (error: any) {
         console.error('[Enterprise] Update member role by id error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to update member role' });
     }
 });
@@ -1133,6 +1443,12 @@ router.patch('/workspaces/:id/members/:userId', async (req: AuthRequest, res: Re
         if (!currentRole || !canPerformWorkspaceAction(currentRole, 'manage_members')) {
             return respondWorkspaceForbidden(res);
         }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'MEMBER_ROLE_CHANGE',
+            actorRole: normalizeWorkspaceRole(currentRole) || currentRole
+        });
 
         const normalizedRole = normalizeWorkspaceRole(String(newRole || '').toUpperCase() as WorkspaceRoleInput);
         if (!normalizedRole || normalizedRole === 'OWNER') {
@@ -1155,6 +1471,7 @@ router.patch('/workspaces/:id/members/:userId', async (req: AuthRequest, res: Re
         });
     } catch (error: any) {
         console.error('[Enterprise] Update member error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to update member' });
     }
 });
@@ -1196,6 +1513,12 @@ router.post('/workspaces/:id/transfer', async (req: AuthRequest, res: Response) 
             return respondWorkspaceForbidden(res, 'Only the owner can transfer ownership');
         }
 
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'MEMBER_ROLE_CHANGE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
         await transferOwnership(id, req.user.id as string, newOwnerId);
         await logEnterpriseAdminActionIfApplicable(
             req,
@@ -1207,6 +1530,7 @@ router.post('/workspaces/:id/transfer', async (req: AuthRequest, res: Response) 
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Transfer ownership error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to transfer ownership' });
     }
 });
@@ -1258,6 +1582,12 @@ const createWorkspaceOrganizationHandler = async (req: AuthRequest, res: Respons
             return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
         }
 
+        await assertEnterpriseCompliance({
+            enterpriseId,
+            action: 'ORGANIZATION_LINK',
+            actorRole: normalizeComplianceActorRole(normalizeWorkspaceRole(role) || role)
+        });
+
         const payload = createEnterpriseOrganizationSchema.parse(req.body);
         const result = await createEnterpriseOrganizationAndLink({
             workspaceId: id,
@@ -1291,6 +1621,7 @@ const createWorkspaceOrganizationHandler = async (req: AuthRequest, res: Respons
         });
     } catch (error: any) {
         console.error('[Enterprise] Create org for workspace error:', error);
+        if (handleComplianceError(res, error)) return;
         if (error?.code === 'ORG_RESTRICTED') {
             return respondOrgRestricted(res);
         }
@@ -1354,6 +1685,12 @@ router.post('/workspaces/:id/link-requests', async (req: AuthRequest, res: Respo
             return res.status(403).json({ message: 'Workspace is not linked to an active enterprise organization' });
         }
 
+        await assertEnterpriseCompliance({
+            enterpriseId,
+            action: 'ORGANIZATION_LINK',
+            actorRole: normalizeComplianceActorRole(normalizeWorkspaceRole(role) || role)
+        });
+
         if ('organizationId' in payload && payload.organizationId) {
             const restricted = await isOrganizationRestricted(payload.organizationId);
             if (restricted) {
@@ -1381,6 +1718,7 @@ router.post('/workspaces/:id/link-requests', async (req: AuthRequest, res: Respo
         res.status(201).json({ request });
     } catch (error: any) {
         console.error('[Enterprise] Create link request error:', error);
+        if (handleComplianceError(res, error)) return;
         if (error?.code === 'ORG_RESTRICTED') {
             return respondOrgRestricted(res);
         }
@@ -1417,6 +1755,18 @@ router.post('/link-requests/:id/cancel', async (req: AuthRequest, res: Response)
             return respondWorkspaceForbidden(res);
         }
 
+        await assertWorkspaceLifecycleAccess({
+            workspaceId: existingRequest.workspaceId,
+            actorRole: normalizeWorkspaceRole(role) || role,
+            mode: 'ADMIN'
+        });
+
+        await assertEnterpriseCompliance({
+            enterpriseId: existingRequest.enterpriseId,
+            action: 'ORGANIZATION_UNLINK',
+            actorRole: normalizeComplianceActorRole(normalizeWorkspaceRole(role) || role)
+        });
+
         if (existingRequest.organizationId) {
             const restricted = await isOrganizationRestricted(existingRequest.organizationId);
             if (restricted) {
@@ -1441,6 +1791,8 @@ router.post('/link-requests/:id/cancel', async (req: AuthRequest, res: Response)
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Cancel link request error:', error);
+        if (handleWorkspaceLifecycleError(res, error)) return;
+        if (handleComplianceError(res, error)) return;
         if (error?.code === 'ORG_RESTRICTED') {
             return respondOrgRestricted(res);
         }
@@ -1459,6 +1811,12 @@ router.delete('/workspaces/:id/organizations/:orgId', async (req: AuthRequest, r
             return respondWorkspaceForbidden(res);
         }
 
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'ORGANIZATION_UNLINK',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
         const restricted = await isOrganizationRestricted(orgId);
         if (restricted) {
             return respondOrgRestricted(res);
@@ -1475,6 +1833,7 @@ router.delete('/workspaces/:id/organizations/:orgId', async (req: AuthRequest, r
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Unlink org error:', error);
+        if (handleComplianceError(res, error)) return;
         if (error?.code === 'ORG_RESTRICTED') {
             return respondOrgRestricted(res);
         }
@@ -1497,6 +1856,12 @@ router.post('/workspaces/:id/organizations/unlink', async (req: AuthRequest, res
             return respondWorkspaceForbidden(res);
         }
 
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'ORGANIZATION_UNLINK',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
         const restricted = await isOrganizationRestricted(organizationId);
         if (restricted) {
             return respondOrgRestricted(res);
@@ -1513,6 +1878,7 @@ router.post('/workspaces/:id/organizations/unlink', async (req: AuthRequest, res
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Unlink org alias error:', error);
+        if (handleComplianceError(res, error)) return;
         if (error?.code === 'ORG_RESTRICTED') {
             return respondOrgRestricted(res);
         }
@@ -1552,6 +1918,12 @@ router.post('/workspaces/:id/api-keys', async (req: AuthRequest, res: Response) 
         if (!role || !canPerformWorkspaceAction(role, 'create_api_key')) {
             return respondWorkspaceForbidden(res);
         }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'API_KEY_LIFECYCLE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
 
         // Validate name
         if (!name || typeof name !== 'string' || name.trim().length < 2) {
@@ -1597,6 +1969,7 @@ router.post('/workspaces/:id/api-keys', async (req: AuthRequest, res: Response) 
         });
     } catch (error: any) {
         console.error('[Enterprise] Create API key error:', error);
+        if (handleComplianceError(res, error)) return;
         if (handleEnterpriseLimitError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to create API key' });
     }
@@ -1618,6 +1991,12 @@ router.delete('/workspaces/:id/api-keys/:keyId', async (req: AuthRequest, res: R
             return respondWorkspaceForbidden(res);
         }
 
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'API_KEY_LIFECYCLE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
         // Verify key belongs to workspace
         const apiKey = await getApiKeyById(keyId);
         if (!apiKey) {
@@ -1638,6 +2017,7 @@ router.delete('/workspaces/:id/api-keys/:keyId', async (req: AuthRequest, res: R
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] Revoke API key error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to revoke API key' });
     }
 });
@@ -1652,6 +2032,12 @@ router.post('/workspaces/:id/api-keys/:keyId/rotate', async (req: AuthRequest, r
         if (!role || !canPerformWorkspaceAction(role, 'rotate_api_key')) {
             return respondWorkspaceForbidden(res);
         }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'API_KEY_LIFECYCLE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
 
         const apiKey = await getApiKeyById(keyId);
         if (!apiKey) {
@@ -1677,6 +2063,7 @@ router.post('/workspaces/:id/api-keys/:keyId/rotate', async (req: AuthRequest, r
         });
     } catch (error: any) {
         console.error('[Enterprise] Rotate API key error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to rotate API key' });
     }
 });
@@ -1690,6 +2077,12 @@ router.post('/workspaces/:id/api-keys/:keyId/copy', async (req: AuthRequest, res
         if (!role || !canPerformWorkspaceAction(role, 'copy_api_key')) {
             return respondWorkspaceForbidden(res);
         }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'API_KEY_LIFECYCLE',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
 
         const apiKey = await getApiKeyById(keyId);
         if (!apiKey) {
@@ -1713,6 +2106,7 @@ router.post('/workspaces/:id/api-keys/:keyId/copy', async (req: AuthRequest, res
         res.json({ success: true });
     } catch (error: any) {
         console.error('[Enterprise] API key copy audit error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(400).json({ message: error.message || 'Failed to audit key copy' });
     }
 });
@@ -1836,6 +2230,12 @@ router.get('/workspaces/:id/audit-logs', async (req: AuthRequest, res: Response)
             return respondWorkspaceForbidden(res);
         }
 
+        const policy = await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'COMPLIANCE_AUDIT_VIEW',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
+
         const parsedQuery = workspaceAuditLogQuerySchema.safeParse(req.query);
         if (!parsedQuery.success) {
             return res.status(400).json({ message: 'Invalid audit log filters' });
@@ -1875,9 +2275,10 @@ router.get('/workspaces/:id/audit-logs', async (req: AuthRequest, res: Response)
                 where.createdAt = createdAt;
             }
         } else {
-            // Safe default: last 30 days
+            // Safe default: current enterprise retention policy
+            const retentionDays = Math.max(1, policy?.logRetentionDays || 30);
             where.createdAt = {
-                gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+                gte: new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000)
             };
         }
 
@@ -1981,6 +2382,7 @@ router.get('/workspaces/:id/audit-logs', async (req: AuthRequest, res: Response)
         });
     } catch (error: any) {
         console.error('[Enterprise] Workspace audit logs error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(500).json({ message: error.message || 'Failed to load audit logs' });
     }
 });
@@ -1992,6 +2394,12 @@ router.get('/workspaces/:id/exports/audit-logs', async (req: AuthRequest, res: R
         if (!role || !canPerformWorkspaceAction(role, 'export_audit_logs')) {
             return respondWorkspaceForbidden(res);
         }
+
+        await assertComplianceForWorkspaceAction({
+            workspaceId: id,
+            action: 'COMPLIANCE_AUDIT_EXPORT',
+            actorRole: normalizeWorkspaceRole(role) || role
+        });
 
         const format = typeof req.query.format === 'string' ? req.query.format.toLowerCase() : 'csv';
         const range = normalizeRange(req.query.range, '30');
@@ -2038,6 +2446,30 @@ router.get('/workspaces/:id/exports/audit-logs', async (req: AuthRequest, res: R
             return res.send(lines.join('\n'));
         }
 
+        if (format === 'json') {
+            const payload = logs.map((log) => ({
+                id: log.id,
+                action: log.action,
+                entity: log.entity,
+                targetId: log.targetId,
+                details: log.details,
+                ipAddress: log.ipAddress,
+                userAgent: log.userAgent,
+                createdAt: log.createdAt,
+                actor: log.admin
+                    ? {
+                        id: log.admin.id,
+                        name: `${log.admin.firstName || ''} ${log.admin.lastName || ''}`.trim() || log.admin.email,
+                        email: log.admin.email,
+                        role: log.admin.role
+                    }
+                    : null
+            }));
+            res.setHeader('Content-Type', 'application/json; charset=utf-8');
+            res.setHeader('Content-Disposition', `attachment; filename="workspace-audit-${id}-${range}.json"`);
+            return res.send(JSON.stringify(payload, null, 2));
+        }
+
         const safe = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
         const csvLines = [
             'Timestamp,Action,Entity,Target ID,Actor Name,Actor Email,Details,IP,User Agent'
@@ -2064,6 +2496,7 @@ router.get('/workspaces/:id/exports/audit-logs', async (req: AuthRequest, res: R
         res.send(csvLines.join('\n'));
     } catch (error: any) {
         console.error('[Enterprise] Export audit logs error:', error);
+        if (handleComplianceError(res, error)) return;
         res.status(500).json({ message: error.message || 'Failed to export audit logs' });
     }
 });
@@ -2599,6 +3032,91 @@ router.patch('/profile', async (req: AuthRequest, res: Response) => {
         }
         console.error('[Enterprise] Update profile error:', error);
         res.status(500).json({ message: error.message || 'Failed to update enterprise profile' });
+    }
+});
+
+// ============================================
+// Enterprise Compliance Policy
+// ============================================
+
+router.get('/compliance/policy', async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id as string | undefined;
+        if (!userId) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const context = await resolveEnterpriseProfileContext(userId);
+        if (!context) {
+            return res.status(403).json({ message: 'Enterprise access required' });
+        }
+
+        const actorRole = normalizeComplianceActorRole(
+            context.role || (req.user?.role ? String(req.user.role) : null)
+        );
+
+        await assertEnterpriseCompliance({
+            enterpriseId: context.organization.id,
+            action: 'COMPLIANCE_POLICY_VIEW',
+            actorRole
+        });
+
+        const policy = await getEnterpriseCompliancePolicy(context.organization.id);
+        const canEditPolicy = actorRole === 'OWNER' || actorRole === 'SUPER_ADMIN';
+
+        return res.json({
+            policy,
+            role: context.role,
+            canEditPolicy
+        });
+    } catch (error: any) {
+        if (handleComplianceError(res, error)) return;
+        console.error('[Enterprise] Compliance policy read error:', error);
+        return res.status(500).json({ message: error.message || 'Failed to load compliance policy' });
+    }
+});
+
+router.patch('/compliance/policy', async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id as string | undefined;
+        if (!userId) {
+            return res.status(401).json({ message: 'Unauthorized' });
+        }
+
+        const context = await resolveEnterpriseProfileContext(userId);
+        if (!context) {
+            return res.status(403).json({ message: 'Enterprise access required' });
+        }
+
+        const actorRole = normalizeComplianceActorRole(
+            context.role || (req.user?.role ? String(req.user.role) : null)
+        );
+
+        await assertEnterpriseCompliance({
+            enterpriseId: context.organization.id,
+            action: 'COMPLIANCE_POLICY_UPDATE',
+            actorRole
+        });
+
+        const payload = enterpriseCompliancePolicyUpdateSchema.parse(req.body);
+        const policy = await updateEnterpriseCompliancePolicy(context.organization.id, payload);
+
+        await logEnterpriseAdminActionIfApplicable(
+            req,
+            AuditActionType.UPDATE,
+            'EnterpriseCompliancePolicy',
+            `ENTERPRISE_COMPLIANCE_POLICY_UPDATED enterpriseId=${context.organization.id} logRetentionDays=${policy.logRetentionDays} requireStrongPasswords=${policy.requireStrongPasswords}`,
+            policy.id
+        );
+
+        return res.json({ policy });
+    } catch (error: any) {
+        if (handleComplianceError(res, error)) return;
+        if (error instanceof z.ZodError) {
+            return res.status(400).json({ errors: error.issues });
+        }
+        console.error('[Enterprise] Compliance policy update error:', error);
+        return res.status(400).json({ message: error.message || 'Failed to update compliance policy' });
     }
 });
 

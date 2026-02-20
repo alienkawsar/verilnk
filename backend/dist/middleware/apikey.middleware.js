@@ -45,9 +45,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.requireScope = exports.authenticateApiKey = void 0;
 const apikey_service_1 = require("../services/apikey.service");
 const enterprise_entitlement_1 = require("../services/enterprise.entitlement");
-const client_1 = require("../db/client");
+const client_1 = require("@prisma/client");
+const client_2 = require("../db/client");
 const auditService = __importStar(require("../services/audit.service"));
-const client_2 = require("@prisma/client");
 const rateLimitMap = new Map();
 const workspaceRateLimitMap = new Map();
 const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
@@ -128,13 +128,13 @@ const logRateLimitAudit = async (req, workspaceId, apiKeyId, reason) => {
     try {
         let admin = null;
         if (process.env.COMPLIANCE_SYSTEM_ADMIN_ID) {
-            admin = await client_1.prisma.admin.findUnique({
+            admin = await client_2.prisma.admin.findUnique({
                 where: { id: process.env.COMPLIANCE_SYSTEM_ADMIN_ID },
                 select: { id: true, role: true }
             });
         }
         if (!admin) {
-            admin = await client_1.prisma.admin.findFirst({
+            admin = await client_2.prisma.admin.findFirst({
                 where: { role: 'SUPER_ADMIN' },
                 orderBy: { createdAt: 'asc' },
                 select: { id: true, role: true }
@@ -145,7 +145,7 @@ const logRateLimitAudit = async (req, workspaceId, apiKeyId, reason) => {
         await auditService.logAction({
             adminId: admin.id,
             actorRole: admin.role,
-            action: client_2.AuditActionType.OTHER,
+            action: client_1.AuditActionType.OTHER,
             entity: 'ApiUsageLimit',
             targetId: apiKeyId,
             details: `${reason} workspaceId=${workspaceId} apiKeyId=${apiKeyId} method=${req.method} endpoint=${req.path}`,
@@ -207,6 +207,42 @@ const authenticateApiKey = async (req, res, next) => {
         res.status(403).json({
             error: 'Forbidden',
             message: 'Enterprise plan required for API access'
+        });
+        return;
+    }
+    const workspace = await client_2.prisma.workspace.findUnique({
+        where: { id: apiKey.workspaceId },
+        select: { status: true }
+    });
+    if (!workspace) {
+        res.status(404).json({
+            error: 'Not Found',
+            message: 'Workspace not found'
+        });
+        return;
+    }
+    const isReadOnlyRequest = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+    if (workspace.status === client_1.WorkspaceStatus.SUSPENDED) {
+        res.status(423).json({
+            error: 'Locked',
+            code: 'WORKSPACE_SUSPENDED',
+            message: 'Workspace is suspended'
+        });
+        return;
+    }
+    if (workspace.status === client_1.WorkspaceStatus.ARCHIVED && !isReadOnlyRequest) {
+        res.status(423).json({
+            error: 'Locked',
+            code: 'WORKSPACE_ARCHIVED',
+            message: 'Workspace is archived and currently read-only'
+        });
+        return;
+    }
+    if (workspace.status === client_1.WorkspaceStatus.DELETED) {
+        res.status(410).json({
+            error: 'Gone',
+            code: 'WORKSPACE_DELETED',
+            message: 'Workspace is deleted'
         });
         return;
     }

@@ -40,7 +40,7 @@ const billingService = __importStar(require("../services/billing.service"));
 const client_2 = require("../db/client");
 const trialService = __importStar(require("../services/trial.service"));
 const billing_security_service_1 = require("../services/billing-security.service");
-const BILLING_TERM_VALUES = ['MONTHLY', 'ANNUAL'];
+const enterprise_compliance_service_1 = require("../services/enterprise-compliance.service");
 const mockCheckoutSchema = zod_1.z.object({
     organizationId: zod_1.z.string().uuid().optional(),
     planType: zod_1.z.nativeEnum(client_1.PlanType),
@@ -73,6 +73,23 @@ const resolveOrganizationId = async (actor) => {
     });
     return user?.organizationId ?? null;
 };
+const assertBillingComplianceForOrganization = async (organizationId, actorRole) => {
+    const organization = await client_2.prisma.organization.findUnique({
+        where: { id: organizationId },
+        select: { id: true, planType: true, deletedAt: true }
+    });
+    if (!organization || organization.deletedAt) {
+        throw new Error('Organization not found');
+    }
+    if (organization.planType !== client_1.PlanType.ENTERPRISE) {
+        return;
+    }
+    await (0, enterprise_compliance_service_1.assertEnterpriseCompliance)({
+        enterpriseId: organization.id,
+        action: 'BILLING_CHANGE',
+        actorRole
+    });
+};
 const mockCheckout = async (req, res) => {
     try {
         const payload = mockCheckoutSchema.parse(req.body);
@@ -101,6 +118,7 @@ const mockCheckout = async (req, res) => {
             res.status(400).json({ message: 'organizationId is required' });
             return;
         }
+        await assertBillingComplianceForOrganization(organizationId, actor?.role ? String(actor.role).toUpperCase() : 'OWNER');
         const result = await billingService.createMockCheckout({
             ...payload,
             organizationId,
@@ -109,6 +127,10 @@ const mockCheckout = async (req, res) => {
         res.json(result);
     }
     catch (error) {
+        if ((0, enterprise_compliance_service_1.isEnterpriseComplianceError)(error)) {
+            res.status(error.status).json((0, enterprise_compliance_service_1.toEnterpriseComplianceErrorResponse)(error));
+            return;
+        }
         if (error instanceof zod_1.z.ZodError) {
             res.status(400).json({ errors: error.issues });
             return;
@@ -127,25 +149,39 @@ const mockCallback = async (req, res) => {
         }
         const payload = mockCallbackSchema.parse(req.body);
         const actor = req.user;
+        const attemptForCompliance = await client_2.prisma.paymentAttempt.findUnique({
+            where: { id: payload.paymentAttemptId },
+            include: {
+                billingAccount: {
+                    select: {
+                        organizationId: true
+                    }
+                }
+            }
+        });
         if (!actor?.role) {
             const resolvedOrgId = await resolveOrganizationId(actor);
             if (!resolvedOrgId) {
                 res.status(403).json({ message: 'Organization user required' });
                 return;
             }
-            const attempt = await client_2.prisma.paymentAttempt.findUnique({
-                where: { id: payload.paymentAttemptId },
-                include: { billingAccount: true }
-            });
-            if (!attempt || attempt.billingAccount.organizationId !== resolvedOrgId) {
+            if (!attemptForCompliance
+                || attemptForCompliance.billingAccount.organizationId !== resolvedOrgId) {
                 res.status(403).json({ message: 'Forbidden' });
                 return;
             }
+        }
+        if (attemptForCompliance?.billingAccount.organizationId) {
+            await assertBillingComplianceForOrganization(attemptForCompliance.billingAccount.organizationId, actor?.role ? String(actor.role).toUpperCase() : 'OWNER');
         }
         const result = await billingService.processMockCallback(payload);
         res.json(result);
     }
     catch (error) {
+        if ((0, enterprise_compliance_service_1.isEnterpriseComplianceError)(error)) {
+            res.status(error.status).json((0, enterprise_compliance_service_1.toEnterpriseComplianceErrorResponse)(error));
+            return;
+        }
         if (error instanceof zod_1.z.ZodError) {
             res.status(400).json({ errors: error.issues });
             return;
@@ -167,6 +203,7 @@ const startTrial = async (req, res) => {
             res.status(403).json({ message: 'Organization user required' });
             return;
         }
+        await assertBillingComplianceForOrganization(resolvedOrgId, 'OWNER');
         const trial = await trialService.startTrial({
             organizationId: resolvedOrgId,
             durationDays: payload.durationDays,
@@ -175,6 +212,10 @@ const startTrial = async (req, res) => {
         res.json({ trial });
     }
     catch (error) {
+        if ((0, enterprise_compliance_service_1.isEnterpriseComplianceError)(error)) {
+            res.status(error.status).json((0, enterprise_compliance_service_1.toEnterpriseComplianceErrorResponse)(error));
+            return;
+        }
         if (error instanceof zod_1.z.ZodError) {
             res.status(400).json({ errors: error.issues });
             return;

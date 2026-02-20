@@ -51,8 +51,20 @@ const extractHostname = (url) => {
 const getAllSites = async (countryId, stateId, categoryId, status, search, organizationId, type) => {
     await (0, organization_service_1.checkAndExpirePriorities)().catch(console.error);
     const baseWhere = {};
-    if (countryId)
-        baseWhere.countryId = countryId;
+    if (countryId) {
+        const selectedCountry = await client_1.prisma.country.findUnique({
+            where: { id: countryId },
+            select: { code: true, name: true }
+        });
+        const selectedCountryCode = String(selectedCountry?.code || '').trim().toUpperCase();
+        const selectedCountryName = String(selectedCountry?.name || '').trim().toUpperCase();
+        const isGlobalCountry = selectedCountryCode === 'GL'
+            || selectedCountryCode === 'WW'
+            || selectedCountryName === 'GLOBAL';
+        if (!isGlobalCountry) {
+            baseWhere.countryId = countryId;
+        }
+    }
     if (stateId)
         baseWhere.stateId = stateId;
     if (categoryId)

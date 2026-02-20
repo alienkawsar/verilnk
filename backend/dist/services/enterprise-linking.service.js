@@ -5,6 +5,7 @@ const client_1 = require("@prisma/client");
 const client_2 = require("../db/client");
 const organization_service_1 = require("./organization.service");
 const enterprise_quota_service_1 = require("./enterprise-quota.service");
+const workspace_lifecycle_service_1 = require("./workspace-lifecycle.service");
 const LINK_REQUEST_STATUS = {
     PENDING: 'PENDING',
     PENDING_APPROVAL: 'PENDING_APPROVAL',
@@ -355,13 +356,7 @@ const approveOrganizationLinkRequest = async (input) => {
         await (0, enterprise_quota_service_1.assertEnterpriseQuotaByOrganizationId)(request.enterpriseId, 'LINKED_ORGS', {
             linkedOrganizationId: request.organizationId
         });
-        const workspace = await tx.workspace.findUnique({
-            where: { id: request.workspaceId },
-            select: { id: true, status: true }
-        });
-        if (!workspace || workspace.status !== client_1.WorkspaceStatus.ACTIVE) {
-            throw new Error('Workspace is unavailable');
-        }
+        await (0, workspace_lifecycle_service_1.assertWorkspaceActive)(request.workspaceId);
         const existingLink = await tx.workspaceOrganization.findUnique({
             where: {
                 workspaceId_organizationId: {
