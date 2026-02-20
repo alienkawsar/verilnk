@@ -43,11 +43,17 @@
     "@types/react-google-recaptcha": "^2.1.9",
     "@vitejs/plugin-react": "^4.3.1",
     "eslint": "^9",
-    "eslint-config-next": "16.1.1",
+    "eslint-config-next": "16.1.6",
     "jsdom": "^22.1.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vite": "^5.4.21",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "minimatch": "10.2.1",
+    "vite": {
+      "esbuild": "0.25.0"
+    }
   }
 }
