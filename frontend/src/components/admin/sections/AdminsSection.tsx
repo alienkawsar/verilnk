@@ -17,6 +17,14 @@ interface Admin {
     createdAt: string;
 }
 
+// Discovery note (frontend/src/components/admin/sections/AdminsSection.tsx):
+// Manage Admins role controls are native <select> elements (filter + create form role),
+// and were using transparent backgrounds with minimal focus styles, causing light/dark inconsistencies.
+const adminRoleSelectClassName =
+    "w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2.5 text-sm text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 transition-colors disabled:opacity-60 disabled:cursor-not-allowed [color-scheme:light] dark:[color-scheme:dark]";
+
+const adminRoleOptionClassName = "bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100";
+
 export default function AdminsSection() {
     const [admins, setAdmins] = useState<Admin[]>([]);
     const [loading, setLoading] = useState(true);
@@ -106,13 +114,13 @@ export default function AdminsSection() {
                     <select
                         value={selectedRole}
                         onChange={(e) => setSelectedRole(e.target.value)}
-                        className="w-full px-4 py-2.5 bg-transparent border border-[var(--app-border)] rounded-lg text-[var(--app-text-primary)] focus:outline-none focus:border-blue-500 transition-colors"
+                        className={adminRoleSelectClassName}
                     >
-                        <option value="">All Roles</option>
-                        <option value="SUPER_ADMIN">Super Admin</option>
-                        <option value="MODERATOR">Moderator</option>
-                        <option value="VERIFIER">Verifier</option>
-                        <option value="ACCOUNTS">Accounts</option>
+                        <option className={adminRoleOptionClassName} value="">All Roles</option>
+                        <option className={adminRoleOptionClassName} value="SUPER_ADMIN">Super Admin</option>
+                        <option className={adminRoleOptionClassName} value="MODERATOR">Moderator</option>
+                        <option className={adminRoleOptionClassName} value="VERIFIER">Verifier</option>
+                        <option className={adminRoleOptionClassName} value="ACCOUNTS">Accounts</option>
                     </select>
                 </div>
 
@@ -295,14 +303,14 @@ function AdminFormModal({ isOpen, onClose, initialData, onSave }: any) {
                     <div>
                         <label className="text-sm text-slate-600 dark:text-slate-400 block mb-1">Role</label>
                         <select
-                            className="w-full bg-transparent border border-[var(--app-border)] rounded p-2 text-[var(--app-text-primary)]"
+                            className={adminRoleSelectClassName}
                             value={formData.role}
                             onChange={e => setFormData({ ...formData, role: e.target.value })}
                         >
-                            <option value="VERIFIER">Verifier</option>
-                            <option value="MODERATOR">Moderator</option>
-                            <option value="ACCOUNTS">Accounts</option>
-                            <option value="SUPER_ADMIN">Super Admin</option>
+                            <option className={adminRoleOptionClassName} value="VERIFIER">Verifier</option>
+                            <option className={adminRoleOptionClassName} value="MODERATOR">Moderator</option>
+                            <option className={adminRoleOptionClassName} value="ACCOUNTS">Accounts</option>
+                            <option className={adminRoleOptionClassName} value="SUPER_ADMIN">Super Admin</option>
                         </select>
                     </div>
                     <div>

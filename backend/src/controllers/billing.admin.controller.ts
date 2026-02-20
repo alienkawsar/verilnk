@@ -6,6 +6,7 @@ import * as trialService from '../services/trial.service';
 import * as auditService from '../services/audit.service';
 import { AuditActionType } from '@prisma/client';
 import { buildInvoiceContentDisposition } from '../services/invoice-filename.service';
+import { formatCentsToDecimalString } from '../utils/currency';
 
 const createInvoiceSchema = z.object({
     organizationId: z.string().uuid(),
@@ -458,7 +459,9 @@ export const exportBillingInvoicesCsv = async (req: Request, res: Response): Pro
             row.organization.name,
             row.plan,
             row.billingTerm,
-            row.amountCents / 100,
+            // Discovery note (backend/src/controllers/billing.admin.controller.ts):
+            // CSV previously emitted numeric cents/100 values (e.g. 50.5). Export now keeps fixed 2-decimal currency strings.
+            formatCentsToDecimalString(row.amountCents),
             row.currency,
             row.status,
             row.issuedAt.toISOString(),
@@ -500,7 +503,7 @@ export const exportBillingSubscriptionsCsv = async (req: Request, res: Response)
             row.billingTerm,
             row.status,
             row.renewalDate ? row.renewalDate.toISOString() : '',
-            row.mrrContributionCents !== null ? row.mrrContributionCents / 100 : '',
+            formatCentsToDecimalString(row.mrrContributionCents),
             row.currency || '',
             row.lastInvoiceStatus || ''
         ]));

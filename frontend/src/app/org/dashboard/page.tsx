@@ -16,6 +16,7 @@ import { useRouter } from 'next/navigation';
 import { Loader2, Settings, LayoutDashboard, Globe, MapPin, Building2, Phone, Mail, FileText, CheckCircle, Clock, XCircle, LineChart, Lock, Copy, Ban, Shield, ArrowUpRight, CreditCard, ImageIcon, Link as LinkIcon, Upload, X, ExternalLink, Eye, EyeOff } from 'lucide-react';
 import Link from 'next/link';
 import { validatePassword } from '@/lib/passwordPolicy';
+import { formatCurrencyFromCents } from '@/lib/currency';
 
 export default function OrgDashboard() {
     const { user, loading } = useAuth();
@@ -935,7 +936,7 @@ export default function OrgDashboard() {
                                                     <div>
                                                         <div className="text-sm font-semibold text-slate-900 dark:text-white">{invoice.invoiceNumber || invoice.id}</div>
                                                         <div className="text-xs text-slate-500 dark:text-slate-400">
-                                                            {new Date(invoice.createdAt).toLocaleDateString()} · {(invoice.amountCents / 100).toFixed(2)} {invoice.currency}
+                                                            {new Date(invoice.createdAt).toLocaleDateString()} · {formatCurrencyFromCents(invoice.amountCents, invoice.currency || 'USD')}
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-3">

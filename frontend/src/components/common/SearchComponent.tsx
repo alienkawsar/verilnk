@@ -132,29 +132,41 @@ export default function SearchComponent() {
     return (
         <div ref={wrapperRef} className="relative w-full max-w-2xl mx-auto">
             <form onSubmit={handleSearch} className="relative z-50">
-                <div className="relative group">
-                    <div className={`absolute -inset-1 bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 rounded-full blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200 ${showResults ? 'opacity-50' : ''}`}></div>
-                    <div className="relative flex items-center bg-white dark:bg-slate-900 rounded-full border border-slate-200 dark:border-slate-700 shadow-xl overflow-hidden">
-                        <div className="pl-4 text-slate-400">
-                            <Search className={`w-5 h-5 ${loading ? 'animate-pulse text-blue-500' : ''}`} />
-                        </div>
-                        <input
-                            type="text"
-                            className="w-full px-4 py-4 bg-transparent text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none"
-                            placeholder="Search verified sites (e.g., 'Ministry of Education', 'Tax Portal')..."
-                            value={query}
-                            onChange={(e) => setQuery(e.target.value)}
-                            onFocus={() => query.length > 1 && setShowResults(true)}
-                        />
+                {/* Discovery note (frontend/src/components/common/SearchComponent.tsx):
+                    align with homepage search shell from frontend/src/components/home/SearchBar.tsx
+                    preserve height h-[52px] and reuse homepage content card radius token rounded-2xl
+                */}
+                <div className={`group flex h-[52px] items-center gap-2 surface-card rounded-2xl pl-4 pr-2 shadow-lg hover:shadow-xl transition-all duration-300 ring-1 ring-black/5 dark:ring-white/5 focus-within:ring-2 focus-within:ring-[var(--btn-primary)] focus-within:border-[var(--btn-primary)] ${showResults ? 'ring-2 ring-[var(--btn-primary)]/30' : ''}`}>
+                    <div className="text-slate-400 group-focus-within:text-blue-500 dark:group-focus-within:text-blue-400 transition-colors">
+                        <Search className={`h-5 w-5 ${loading ? 'animate-pulse text-blue-500' : ''}`} />
+                    </div>
+                    <input
+                        type="text"
+                        className="flex-1 h-full min-w-0 bg-transparent border-none text-[var(--app-text-primary)] placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-0 px-1 text-base font-medium tracking-tight selection:bg-blue-500/30"
+                        placeholder="Search verified sites (e.g., 'Ministry of Education', 'Tax Portal')..."
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        onFocus={() => query.length > 1 && setShowResults(true)}
+                    />
+                    <div className="flex items-center gap-1.5">
                         {query && (
                             <button
                                 type="button"
                                 onClick={() => setQuery('')}
-                                className="p-2 mr-2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                                className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-black/5 text-slate-400 hover:text-slate-600 dark:border-white/10 dark:hover:text-slate-200 transition-colors"
+                                aria-label="Clear search"
                             >
                                 <X className="w-4 h-4" />
                             </button>
                         )}
+                        <button
+                            type="submit"
+                            className="h-9 w-9 inline-flex items-center justify-center rounded-xl btn-primary shadow-md hover:shadow-lg transition-all"
+                            aria-label="Search"
+                            title="Search"
+                        >
+                            <Search className="h-4 w-4" />
+                        </button>
                     </div>
                 </div>
             </form>

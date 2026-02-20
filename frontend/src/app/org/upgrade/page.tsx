@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle, CreditCard, Lock, Loader2, ShieldCheck, XCircle, Zap, BarChart3, TrendingUp, Headphones, Clock, ArrowRight, Building2, Star, Shield } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { createMockCheckout, fetchMyOrganization, mockPaymentCallback, startTrial, fetchTrialStatus } from '@/lib/api';
+import { formatCurrencyFromCents } from '@/lib/currency';
 
 type Step = 'pricing' | 'plan' | 'checkout' | 'confirmation';
 type PlanKey = 'BASIC' | 'PRO' | 'BUSINESS';
@@ -27,6 +28,12 @@ const STORAGE_KEY_PREFIX = 'verilnk:mockCheckout:';
 
 const buildIdempotencyKey = (orgId: string, plan: PlanKey) => {
     return `${orgId}:${plan}:${Date.now()}`;
+};
+
+const calculateAnnualSavingsCents = (monthlyAmountCents: number) => {
+    const monthlyTotalCents = Math.round(monthlyAmountCents * 12);
+    const discountedAnnualCents = Math.round(monthlyAmountCents * 12 * 0.9);
+    return monthlyTotalCents - discountedAnnualCents;
 };
 
 export default function OrgUpgradePage() {
@@ -444,13 +451,13 @@ function OrgUpgradeContent() {
                                     <p className="text-sm text-slate-600 dark:text-slate-300 mb-4">{plan.description}</p>
                                     <div className="flex items-baseline gap-1">
                                         <span className="text-3xl font-bold text-slate-900 dark:text-white">
-                                            ${(getPrice(key as PlanKey) / 100).toFixed(0)}
+                                            {formatCurrencyFromCents(getPrice(key as PlanKey), 'USD')}
                                         </span>
                                         <span className="text-sm text-slate-500 dark:text-slate-400">/{billingCycle === 'annual' ? 'yr' : 'mo'}</span>
                                     </div>
                                     {billingCycle === 'annual' && (
                                         <div className="mt-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                                            Save ${(Math.round(plan.amountCents * 12) - Math.round(plan.amountCents * 12 * 0.9)) / 100} per year
+                                            Save {formatCurrencyFromCents(calculateAnnualSavingsCents(plan.amountCents), 'USD')} per year
                                         </div>
                                     )}
                                 </button>
@@ -530,7 +537,7 @@ function OrgUpgradeContent() {
                                 </div>
                                 <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-4 bg-slate-50/50 dark:bg-slate-900/30">
                                     <div className="text-sm text-slate-500 dark:text-slate-400 mb-1">Amount</div>
-                                    <div className="text-xl font-bold text-slate-900 dark:text-white">${(getPrice(selectedPlan) / 100).toFixed(0)} USD</div>
+                                    <div className="text-xl font-bold text-slate-900 dark:text-white">{formatCurrencyFromCents(getPrice(selectedPlan), 'USD')}</div>
                                     <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">{billingCycle === 'annual' ? 'Annual payment' : 'Monthly payment'}</div>
                                 </div>
                             </div>

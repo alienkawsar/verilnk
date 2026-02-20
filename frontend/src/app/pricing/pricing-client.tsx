@@ -4,6 +4,7 @@ import { useState, Fragment } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
+import { formatCurrencyFromCents } from '@/lib/currency';
 import {
   Check,
   ShieldCheck,
@@ -247,14 +248,17 @@ export default function PricingClient() {
     router.push(`${href}${separator}billing=${billingCycle}`);
   };
 
+  const toCents = (value: number) => Math.round(value * 100);
+
   const formatPrice = (price: number | string) => {
     if (typeof price === 'string') return price;
+    const monthlyCents = toCents(price);
     if (billingCycle === 'annual') {
       // Annual price = Monthly * 12 * 0.9 (10% discount)
-      const annualPrice = Math.round(price * 12 * 0.9);
-      return `$${annualPrice}`;
+      const annualCents = Math.round(monthlyCents * 12 * 0.9);
+      return formatCurrencyFromCents(annualCents, 'USD');
     }
-    return `$${price}`;
+    return formatCurrencyFromCents(monthlyCents, 'USD');
   };
 
   const getBillingText = (price: number | string) => {
@@ -350,7 +354,10 @@ export default function PricingClient() {
               {/* Annual Savings Text */}
               {billingCycle === 'annual' && typeof plan.price === 'number' && (
                 <p className="text-center text-xs text-emerald-600 dark:text-emerald-400 font-medium -mt-4 mb-4">
-                  Save ${(Math.round(plan.price * 12) - Math.round(plan.price * 12 * 0.9))} per year
+                  Save {formatCurrencyFromCents(
+                    Math.round(toCents(plan.price) * 12) - Math.round(toCents(plan.price) * 12 * 0.9),
+                    'USD',
+                  )} per year
                 </p>
               )}
 

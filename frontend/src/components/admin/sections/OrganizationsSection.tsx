@@ -52,6 +52,11 @@ import { useDebounce } from '@/hooks/useDebounce';
 import { toProxyImageUrl } from '@/lib/imageProxy';
 import PasswordFields from '@/components/auth/PasswordFields';
 import { validatePassword } from '@/lib/passwordPolicy';
+import {
+  centsToDecimalString,
+  formatCurrencyFromCents,
+  parseDecimalCurrencyToCents,
+} from '@/lib/currency';
 
 interface Organization {
   id: string;
@@ -1036,8 +1041,8 @@ export default function OrganizationsSection({
     }
 
     if (createForm.planType === 'ENTERPRISE') {
-      const parsed = Number.parseInt(createForm.amountCents, 10);
-      return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+      const parsed = parseDecimalCurrencyToCents(createForm.amountCents);
+      return parsed !== null ? Math.max(0, parsed) : 0;
     }
 
     return 0;
@@ -2817,7 +2822,7 @@ export default function OrganizationsSection({
                           return {
                             ...prev,
                             planType: nextPlanType,
-                            amountCents: String(nextAmount),
+                            amountCents: centsToDecimalString(nextAmount),
                           };
                         }
 
@@ -2929,7 +2934,7 @@ export default function OrganizationsSection({
                             return {
                               ...prev,
                               billingTerm: nextBillingTerm,
-                              amountCents: String(nextAmount),
+                              amountCents: centsToDecimalString(nextAmount),
                             };
                           }
 
@@ -2951,11 +2956,12 @@ export default function OrganizationsSection({
                   {createForm.planType === 'ENTERPRISE' ? (
                     <div className='space-y-2'>
                       <label className='text-sm text-slate-600 dark:text-slate-400'>
-                        Invoice Amount (cents)
+                        Invoice Amount (USD)
                       </label>
                       <input
                         type='number'
-                        min='1'
+                        min='0.01'
+                        step='0.01'
                         value={createForm.amountCents}
                         onChange={(e) =>
                           setCreateForm({
@@ -2963,7 +2969,7 @@ export default function OrganizationsSection({
                             amountCents: e.target.value,
                           })
                         }
-                        placeholder='e.g. 120000'
+                        placeholder='e.g. 1200.50'
                         className={adminOrgFormControlClass}
                       />
                     </div>
@@ -2975,8 +2981,10 @@ export default function OrganizationsSection({
                       <div
                         className={`${adminOrgFormControlClass} bg-slate-50 dark:bg-slate-900/60 flex items-center`}
                       >
-                        ${(resolveCreateBillingAmountCents() / 100).toFixed(2)}{' '}
-                        USD
+                        {formatCurrencyFromCents(
+                          resolveCreateBillingAmountCents(),
+                          'USD',
+                        )}
                       </div>
                     </div>
                   )}

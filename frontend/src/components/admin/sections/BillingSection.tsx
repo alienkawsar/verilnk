@@ -29,6 +29,7 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { CardSkeleton, TableSkeleton } from '@/components/ui/Loading';
 import { useDebounce } from '@/hooks/useDebounce';
+import { formatCurrencyFromCents } from '@/lib/currency';
 
 const INVOICE_STATUS_OPTIONS: Array<{
     value: AdminBillingInvoicesQuery['status'] | '';
@@ -87,10 +88,7 @@ const formatDate = (value: string | Date | null | undefined) => {
 
 const formatCurrency = (amountCents: number | null | undefined, currency: string = 'USD') => {
     if (amountCents === null || amountCents === undefined) return 'N/A';
-    return new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency
-    }).format(amountCents / 100);
+    return formatCurrencyFromCents(amountCents, currency);
 };
 
 const invoiceStatusBadgeClass = (status: string) => {

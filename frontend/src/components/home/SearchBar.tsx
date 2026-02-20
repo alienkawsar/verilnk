@@ -50,14 +50,18 @@ export default function SearchBar({ stateId }: { stateId?: string }) {
 
     return (
         <form onSubmit={handleSearch} className="w-full max-w-3xl relative">
-            <div className={`group flex items-center gap-2 surface-card pl-4 pr-1.5 h-[52px] rounded-full shadow-lg hover:shadow-xl transition-all duration-300 ring-1 ring-black/5 dark:ring-white/5 focus-within:ring-2 focus-within:ring-[var(--btn-primary)] focus-within:border-[var(--btn-primary)] focus-within:shadow-[0_0_20px_rgba(24,125,233,0.3)] ${isListening ? 'ring-2 ring-red-500/50 border-red-500/50' : isProcessing ? 'ring-2 ring-blue-500/50 border-blue-500/50' : ''}`}>
+            {/* Discovery note (frontend/src/components/home/SearchBar.tsx):
+                preserve search height: h-[52px]
+                match homepage content card radius from frontend/src/app/HomeClient.tsx: rounded-2xl
+            */}
+            <div className={`group flex h-[52px] items-center gap-2 surface-card rounded-2xl pl-4 pr-2 shadow-lg hover:shadow-xl transition-all duration-300 ring-1 ring-black/5 dark:ring-white/5 focus-within:ring-2 focus-within:ring-[var(--btn-primary)] focus-within:border-[var(--btn-primary)] focus-within:shadow-[0_0_20px_rgba(24,125,233,0.3)] ${isListening ? 'ring-2 ring-red-500/50 border-red-500/50' : isProcessing ? 'ring-2 ring-blue-500/50 border-blue-500/50' : ''}`}>
                 <div className="text-slate-400 group-focus-within:text-blue-500 dark:group-focus-within:text-blue-400 transition-colors">
                     <Search className="h-5 w-5" />
                 </div>
                 <input
                     type="text"
                     ref={inputRef}
-                    className="flex-1 h-full bg-transparent border-none text-[var(--app-text-primary)] placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-0 px-2 text-base font-medium tracking-tight selection:bg-blue-500/30"
+                    className="flex-1 h-full min-w-0 bg-transparent border-none text-[var(--app-text-primary)] placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-0 px-1 text-base font-medium tracking-tight selection:bg-blue-500/30"
                     placeholder={isListening ? "Listening..." : isProcessing ? "Processing..." : "Search official websites securely…"}
                     aria-label="Search official websites"
                     value={query}
@@ -69,11 +73,11 @@ export default function SearchBar({ stateId }: { stateId?: string }) {
                     type="button"
                     onClick={handleVoiceToggle}
                     disabled={!isSupported}
-                    className={`h-9 w-9 flex items-center justify-center rounded-full transition-all ${!isSupported
+                    className={`h-9 w-9 flex items-center justify-center rounded-xl transition-all ${!isSupported
                         ? 'text-slate-400 dark:text-slate-600 cursor-not-allowed'
                         : isListening
                             ? 'bg-red-500 text-white animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
-                            : 'text-slate-500 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-black/5 dark:hover:bg-white/5'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-black/5 dark:hover:bg-white/5 border border-black/5 dark:border-white/10'
                         }`}
                     title={isListening ? "Stop recording" : "Search by voice"}
                     aria-label={isListening ? "Stop recording" : "Search by voice"}
@@ -89,7 +93,7 @@ export default function SearchBar({ stateId }: { stateId?: string }) {
 
                 <button
                     type="submit"
-                    className="h-10 w-10 btn-primary rounded-full transition-all shadow-md hover:shadow-lg flex items-center justify-center flex-shrink-0"
+                    className="h-10 w-10 btn-primary rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center flex-shrink-0"
                     title="Search"
                     aria-label="Search"
                 >

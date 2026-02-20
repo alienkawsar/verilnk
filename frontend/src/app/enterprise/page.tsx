@@ -74,6 +74,7 @@ import {
 import { useToast } from '@/components/ui/Toast';
 import { useAuth } from '@/context/AuthContext';
 import SecuritySection from '@/components/enterprise/sections/SecuritySection';
+import { formatCurrencyFromCents } from '@/lib/currency';
 
 type DashboardTab =
   | 'overview'
@@ -1486,8 +1487,7 @@ export default function EnterprisePage() {
                             </div>
                             <div className='text-xs text-slate-500 dark:text-slate-400'>
                               {new Date(invoice.createdAt).toLocaleDateString()}{' '}
-                              · {(invoice.amountCents / 100).toFixed(2)}{' '}
-                              {invoice.currency}
+                              · {formatCurrencyFromCents(invoice.amountCents, invoice.currency || 'USD')}
                             </div>
                           </div>
                           <div className='flex items-center gap-3'>
@@ -1731,12 +1731,24 @@ export default function EnterprisePage() {
 
                   {compliancePolicy ? (
                     <div className='space-y-4'>
-                      <div className='grid grid-cols-1 sm:grid-cols-2 gap-4'>
-                        <label className='space-y-1'>
-                          <span className='text-sm font-medium text-slate-700 dark:text-slate-300'>
-                            Log Retention (days)
-                          </span>
+                      {/* Discovery note (frontend/src/app/enterprise/page.tsx):
+                          Compliance policy fields were using mismatched UI patterns (plain input block vs checkbox row),
+                          making alignment inconsistent. This section now uses a unified policy row layout + footer action. */}
+                      <div className='space-y-3'>
+                        <div className='rounded-lg border border-[var(--app-border)] p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3'>
+                          <div className='space-y-1'>
+                            <label
+                              htmlFor='compliance-log-retention-days'
+                              className='text-sm font-medium text-slate-700 dark:text-slate-300'
+                            >
+                              Log Retention (days)
+                            </label>
+                            <p className='text-xs text-slate-500 dark:text-slate-400'>
+                              Keep audit logs between 7 and 3650 days.
+                            </p>
+                          </div>
                           <input
+                            id='compliance-log-retention-days'
                             type='number'
                             min={7}
                             max={3650}
@@ -1752,33 +1764,52 @@ export default function EnterprisePage() {
                               )
                             }
                             disabled={!canEditCompliancePolicy || compliancePolicySaving}
-                            className='w-full rounded-lg border border-[var(--app-border)] bg-transparent px-3 py-2 text-sm text-[var(--app-text-primary)] disabled:opacity-60 disabled:cursor-not-allowed'
+                            className='h-11 w-full sm:w-40 rounded-lg border border-[var(--app-border)] bg-transparent px-3 text-sm text-[var(--app-text-primary)] disabled:opacity-60 disabled:cursor-not-allowed'
                           />
-                        </label>
-                        <label className='rounded-lg border border-[var(--app-border)] p-3 flex items-center justify-between gap-3'>
-                          <span className='text-sm font-medium text-slate-700 dark:text-slate-300'>
-                            Require Strong Passwords
-                          </span>
-                          <input
-                            type='checkbox'
-                            checked={compliancePolicy.requireStrongPasswords}
-                            onChange={(event) =>
-                              setCompliancePolicy((previous) =>
-                                previous
-                                  ? {
-                                      ...previous,
-                                      requireStrongPasswords: event.target.checked,
-                                    }
-                                  : previous,
-                              )
-                            }
-                            disabled={!canEditCompliancePolicy || compliancePolicySaving}
-                            className='h-4 w-4 accent-blue-600 disabled:opacity-60 disabled:cursor-not-allowed'
-                          />
-                        </label>
+                        </div>
+
+                        <div className='rounded-lg border border-[var(--app-border)] p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3'>
+                          <div className='space-y-1'>
+                            <label
+                              htmlFor='compliance-strong-passwords'
+                              className='text-sm font-medium text-slate-700 dark:text-slate-300'
+                            >
+                              Require Strong Passwords
+                            </label>
+                            <p className='text-xs text-slate-500 dark:text-slate-400'>
+                              Enforce strong password standards for workspace access.
+                            </p>
+                          </div>
+                          <div className='h-11 inline-flex items-center'>
+                            <input
+                              id='compliance-strong-passwords'
+                              type='checkbox'
+                              checked={compliancePolicy.requireStrongPasswords}
+                              onChange={(event) =>
+                                setCompliancePolicy((previous) =>
+                                  previous
+                                    ? {
+                                        ...previous,
+                                        requireStrongPasswords: event.target.checked,
+                                      }
+                                    : previous,
+                                )
+                              }
+                              disabled={!canEditCompliancePolicy || compliancePolicySaving}
+                              className='peer sr-only'
+                            />
+                            <label
+                              htmlFor='compliance-strong-passwords'
+                              aria-label='Require Strong Passwords'
+                              className='relative inline-flex h-6 w-11 items-center rounded-full border border-[var(--app-border)] bg-slate-300 dark:bg-slate-700 transition-colors cursor-pointer peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500/40 peer-disabled:opacity-60 peer-disabled:cursor-not-allowed peer-checked:bg-blue-600'
+                            >
+                              <span className='inline-block h-5 w-5 translate-x-0.5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5' />
+                            </label>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className='flex justify-end'>
+                      <div className='border-t border-[var(--app-border)] pt-4 flex justify-end'>
                         <button
                           type='button'
                           onClick={handleCompliancePolicySave}
@@ -1866,58 +1897,73 @@ export default function EnterprisePage() {
                     disabled={!canEditProfile || saving}
                     className='space-y-6'
                   >
-                    <div className='space-y-4'>
-                      <label className='text-sm font-medium text-slate-700 dark:text-slate-300 block'>
+                    <div className='space-y-3'>
+                      {/* Discovery note (frontend/src/app/enterprise/page.tsx):
+                          Enterprise Profile logo preview and upload CTA were split into visually disconnected blocks.
+                          This is now a single cohesive logo component with aligned preview + action panel. */}
+                      <p className='text-sm font-medium text-slate-700 dark:text-slate-300'>
                         Enterprise Logo
-                      </label>
-                      <div className='flex flex-col md:flex-row items-center md:items-start gap-4 md:gap-6'>
-                        <div className='w-24 h-24 md:w-28 md:h-28 rounded-lg surface-card flex items-center justify-center overflow-hidden shrink-0 relative'>
-                          {logoPathInput ? (
-                            <img
-                              key={logoPathInput}
-                              src={logoPathInput}
-                              alt='Enterprise logo'
-                              className='w-full h-full object-cover'
-                              onError={() => setLogoError(true)}
-                            />
-                          ) : (
-                            <Building2 className='w-8 h-8 text-slate-400' />
-                          )}
-                          {logoPathInput && logoError && (
-                            <div className='absolute inset-0 bg-red-500/10 backdrop-blur-sm flex items-center justify-center'>
-                              <X className='w-6 h-6 text-red-500' />
-                            </div>
-                          )}
-                        </div>
-
-                        <label
-                          className={`flex flex-col items-center justify-center w-full md:w-72 h-24 md:h-28 border-2 border-dashed rounded-lg transition-colors p-3 ${
-                            canEditProfile
-                              ? 'cursor-pointer border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
-                              : 'cursor-not-allowed border-slate-200 dark:border-slate-800 opacity-60'
-                          }`}
-                        >
-                          <div className='flex flex-col items-center justify-center text-center'>
-                            {uploadingLogo ? (
-                              <Loader2 className='w-5 h-5 text-blue-500 animate-spin mb-1' />
+                      </p>
+                      <div className='rounded-xl border border-[var(--app-border)] bg-slate-50/40 dark:bg-slate-900/30 p-4 sm:p-5'>
+                        <div className='flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6'>
+                          <div className='w-24 h-24 sm:w-28 sm:h-28 rounded-xl border border-[var(--app-border)] bg-white dark:bg-slate-900 flex items-center justify-center overflow-hidden shrink-0 relative mx-auto sm:mx-0'>
+                            {logoPathInput ? (
+                              <img
+                                key={logoPathInput}
+                                src={logoPathInput}
+                                alt='Enterprise logo'
+                                className='w-full h-full object-cover'
+                                onError={() => setLogoError(true)}
+                              />
                             ) : (
-                              <Upload className='w-5 h-5 text-slate-400 mb-1' />
+                              <Building2 className='w-8 h-8 text-slate-400' />
                             )}
-                            <p className='text-sm text-slate-500 dark:text-slate-400 leading-tight'>
-                              <span className='font-semibold'>Upload logo</span>
+                            {logoPathInput && logoError && (
+                              <div className='absolute inset-0 bg-red-500/10 backdrop-blur-sm flex items-center justify-center'>
+                                <X className='w-6 h-6 text-red-500' />
+                              </div>
+                            )}
+                          </div>
+
+                          <div className='flex-1 space-y-2 text-center sm:text-left'>
+                            <p className='text-sm font-medium text-slate-900 dark:text-white'>
+                              Upload or replace logo
                             </p>
-                            <p className='text-[10px] text-slate-400 dark:text-slate-500 mt-0.5'>
+                            <p className='text-xs text-slate-500 dark:text-slate-400'>
+                              Used across enterprise workspace profile and member-facing views.
+                            </p>
+
+                            <label
+                              htmlFor='enterprise-logo-upload'
+                              className={`inline-flex items-center justify-center gap-2 h-11 px-4 rounded-lg border transition-colors focus-within:outline-none focus-within:ring-2 focus-within:ring-blue-500/30 ${
+                                canEditProfile
+                                  ? 'cursor-pointer border-[var(--app-border)] bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200'
+                                  : 'cursor-not-allowed border-slate-200 dark:border-slate-800 opacity-60 text-slate-400 dark:text-slate-500'
+                              }`}
+                            >
+                              {uploadingLogo ? (
+                                <Loader2 className='w-4 h-4 text-blue-500 animate-spin' />
+                              ) : (
+                                <Upload className='w-4 h-4 text-slate-400' />
+                              )}
+                              <span className='text-sm font-semibold'>
+                                {logoPathInput ? 'Replace logo' : 'Upload logo'}
+                              </span>
+                            </label>
+                            <input
+                              id='enterprise-logo-upload'
+                              type='file'
+                              className='sr-only'
+                              accept='image/*'
+                              onChange={handleLogoUpload}
+                              disabled={!canEditProfile || uploadingLogo}
+                            />
+
+                            <p className='text-[11px] text-slate-500 dark:text-slate-400'>
                               SVG, PNG, JPG (max 1MB)
                             </p>
                           </div>
-                          <input
-                            type='file'
-                            className='hidden'
-                            accept='image/*'
-                            onChange={handleLogoUpload}
-                            disabled={!canEditProfile || uploadingLogo}
-                          />
-                        </label>
+                        </div>
                       </div>
                     </div>
 
