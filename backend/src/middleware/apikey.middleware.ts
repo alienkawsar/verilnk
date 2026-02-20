@@ -11,10 +11,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { hashApiKey, findApiKeyByHash, getApiKeyRateLimitOverride, isApiKeyValid, hasScope, touchApiKeyUsage, logApiUsage } from '../services/apikey.service';
 import { getWorkspaceEntitlements } from '../services/enterprise.entitlement';
-import { ApiKey } from '@prisma/client';
+import { ApiKey, AuditActionType, WorkspaceStatus } from '@prisma/client';
 import { prisma } from '../db/client';
 import * as auditService from '../services/audit.service';
-import { AuditActionType } from '@prisma/client';
 
 // ============================================
 // Types
@@ -230,6 +229,48 @@ export const authenticateApiKey = async (
         res.status(403).json({
             error: 'Forbidden',
             message: 'Enterprise plan required for API access'
+        });
+        return;
+    }
+
+    const workspace = await prisma.workspace.findUnique({
+        where: { id: apiKey.workspaceId },
+        select: { status: true }
+    });
+
+    if (!workspace) {
+        res.status(404).json({
+            error: 'Not Found',
+            message: 'Workspace not found'
+        });
+        return;
+    }
+
+    const isReadOnlyRequest = req.method === 'GET' || req.method === 'HEAD' || req.method === 'OPTIONS';
+
+    if (workspace.status === WorkspaceStatus.SUSPENDED) {
+        res.status(423).json({
+            error: 'Locked',
+            code: 'WORKSPACE_SUSPENDED',
+            message: 'Workspace is suspended'
+        });
+        return;
+    }
+
+    if (workspace.status === WorkspaceStatus.ARCHIVED && !isReadOnlyRequest) {
+        res.status(423).json({
+            error: 'Locked',
+            code: 'WORKSPACE_ARCHIVED',
+            message: 'Workspace is archived and currently read-only'
+        });
+        return;
+    }
+
+    if (workspace.status === WorkspaceStatus.DELETED) {
+        res.status(410).json({
+            error: 'Gone',
+            code: 'WORKSPACE_DELETED',
+            message: 'Workspace is deleted'
         });
         return;
     }

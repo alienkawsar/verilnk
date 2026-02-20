@@ -50,7 +50,7 @@ export type WorkspaceManageRole = 'ADMIN' | 'DEVELOPER' | 'ANALYST' | 'AUDITOR' 
 export interface Workspace {
     id: string;
     name: string;
-    status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED';
+    status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED' | 'DELETED';
     memberCount: number;
     orgCount: number;
     apiKeyCount: number;
@@ -159,7 +159,7 @@ export interface EnterpriseLinkRequest {
     workspace?: {
         id: string;
         name: string;
-        status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED';
+        status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED' | 'DELETED';
     } | null;
     enterprise?: {
         id: string;
@@ -349,6 +349,15 @@ export interface EnterpriseProfileUpdateInput {
     logo?: string;
 }
 
+export interface EnterpriseCompliancePolicy {
+    id: string;
+    enterpriseId: string;
+    logRetentionDays: number;
+    requireStrongPasswords: boolean;
+    createdAt: string;
+    updatedAt: string;
+}
+
 // ============================================
 // Helper Functions
 // ============================================
@@ -513,6 +522,30 @@ export async function deleteWorkspace(
         body: JSON.stringify({
             password: options.password
         }),
+    });
+}
+
+export async function suspendWorkspace(id: string): Promise<{ workspace: Workspace }> {
+    return apiRequest(`/enterprise/workspaces/${id}/suspend`, {
+        method: 'POST',
+    });
+}
+
+export async function unsuspendWorkspace(id: string): Promise<{ workspace: Workspace }> {
+    return apiRequest(`/enterprise/workspaces/${id}/unsuspend`, {
+        method: 'POST',
+    });
+}
+
+export async function archiveWorkspace(id: string): Promise<{ workspace: Workspace }> {
+    return apiRequest(`/enterprise/workspaces/${id}/archive`, {
+        method: 'POST',
+    });
+}
+
+export async function restoreWorkspace(id: string): Promise<{ workspace: Workspace }> {
+    return apiRequest(`/enterprise/workspaces/${id}/restore`, {
+        method: 'POST',
     });
 }
 
@@ -936,7 +969,7 @@ export async function exportWorkspaceUsage(
 
 export async function exportWorkspaceAuditLogs(
     workspaceId: string,
-    format: 'csv' | 'log' = 'csv',
+    format: 'csv' | 'json' = 'csv',
     range: string = '30'
 ): Promise<{ success: boolean }> {
     const url = `${API_BASE}/enterprise/workspaces/${workspaceId}/exports/audit-logs?format=${format}&range=${range}`;
@@ -957,6 +990,26 @@ export async function exportWorkspaceAuditLogs(
     window.URL.revokeObjectURL(objectUrl);
 
     return { success: true };
+}
+
+export async function getEnterpriseCompliancePolicy(): Promise<{
+    policy: EnterpriseCompliancePolicy;
+    role: WorkspaceRole | null;
+    canEditPolicy: boolean;
+}> {
+    return apiRequest('/enterprise/compliance/policy', {
+        cache: 'no-store'
+    });
+}
+
+export async function updateEnterpriseCompliancePolicy(payload: {
+    logRetentionDays?: number;
+    requireStrongPasswords?: boolean;
+}): Promise<{ policy: EnterpriseCompliancePolicy }> {
+    return apiRequest('/enterprise/compliance/policy', {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+    });
 }
 
 export async function downloadEnterpriseInvoice(invoiceId: string): Promise<{ success: boolean }> {

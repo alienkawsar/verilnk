@@ -41,6 +41,7 @@ async function main() {
 
     // Countries
     const countries = [
+        { name: 'Global', code: 'GL' },
         { name: 'Bangladesh', code: 'BD' },
         { name: 'United States', code: 'US' },
         { name: 'United Kingdom', code: 'GB' },

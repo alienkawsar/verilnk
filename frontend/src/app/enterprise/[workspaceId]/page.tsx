@@ -69,6 +69,7 @@ export default function WorkspacePage() {
     const [error, setError] = useState<string | null>(null);
     const [workspaceAccessDenied, setWorkspaceAccessDenied] = useState(false);
     const [workspaceRestricted, setWorkspaceRestricted] = useState(false);
+    const [workspaceSuspended, setWorkspaceSuspended] = useState(false);
 
     const normalizedRole = useMemo(() => normalizeWorkspaceRole(userRole), [userRole]);
     const accessibleSections = useMemo(() => getAccessibleSections(userRole), [userRole]);
@@ -111,6 +112,7 @@ export default function WorkspacePage() {
                 setError(null);
                 setWorkspaceAccessDenied(false);
                 setWorkspaceRestricted(false);
+                setWorkspaceSuspended(false);
 
                 const membership = await getWorkspaceMembership(workspaceId);
                 const { workspace: ws, role } = await getWorkspace(workspaceId);
@@ -158,6 +160,16 @@ export default function WorkspacePage() {
                     setUserRole('');
                     setEnterpriseAccess(null);
                     return;
+                }
+
+                if (err instanceof EnterpriseApiError && err.status === 423) {
+                    if (err.code === 'WORKSPACE_SUSPENDED') {
+                        setWorkspaceSuspended(true);
+                        setWorkspace(null);
+                        setUserRole('');
+                        setEnterpriseAccess(null);
+                        return;
+                    }
                 }
 
                 console.error('Error loading workspace:', err);
@@ -327,6 +339,33 @@ export default function WorkspacePage() {
         );
     }
 
+    if (workspaceSuspended) {
+        return (
+            <main className="min-h-screen bg-app pb-16">
+                <div className="w-full px-4 py-10">
+                    <div className="max-w-xl mx-auto text-center py-24">
+                        <XCircle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
+                            Workspace Suspended
+                        </h1>
+                        <p className="text-slate-600 dark:text-slate-400">
+                            This workspace is currently suspended. Access is blocked until it is unsuspended by an owner or admin.
+                        </p>
+                        <p className="text-slate-600 dark:text-slate-400 mt-1 mb-6">
+                            Use the Enterprise Dashboard workspace list for suspend/unsuspend actions.
+                        </p>
+                        <button
+                            onClick={() => router.push('/enterprise')}
+                            className="px-4 py-2 btn-primary rounded-lg"
+                        >
+                            Back to Enterprise
+                        </button>
+                    </div>
+                </div>
+            </main>
+        );
+    }
+
     if (!workspace) {
         return null;
     }
@@ -362,6 +401,11 @@ export default function WorkspacePage() {
             activeSection={activeSection}
             onSectionChange={handleSectionChange}
         >
+            {workspace?.status === 'ARCHIVED' && (
+                <div className="mb-4 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-200">
+                    This workspace is archived. The dashboard is currently read-only.
+                </div>
+            )}
             {renderSection()}
         </WorkspaceDashboardShell>
     );

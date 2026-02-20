@@ -44,7 +44,7 @@ export default function SecuritySection({
     const [auditPagination, setAuditPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 1 });
     const [workspaceSessions, setWorkspaceSessions] = useState<WorkspaceSession[]>([]);
     const [revokingSessionId, setRevokingSessionId] = useState<string | null>(null);
-    const [exportingAuditFormat, setExportingAuditFormat] = useState<'csv' | 'log' | null>(null);
+    const [exportingAuditFormat, setExportingAuditFormat] = useState<'csv' | 'json' | null>(null);
     const [analyticsRange] = useState<'7' | '30' | '90'>('30');
 
     const [auditActionFilter, setAuditActionFilter] = useState<string>('ALL');
@@ -128,7 +128,7 @@ export default function SecuritySection({
         }
     };
 
-    const handleExportAuditLogs = async (format: 'csv' | 'log') => {
+    const handleExportAuditLogs = async (format: 'csv' | 'json') => {
         if (!canExportAuditLogs) {
             showToast("You don't have permission to do that.", 'error');
             return;
@@ -197,14 +197,14 @@ export default function SecuritySection({
                         {canExportAuditLogs && (
                             <button
                                 type="button"
-                                onClick={() => handleExportAuditLogs('log')}
+                                onClick={() => handleExportAuditLogs('json')}
                                 disabled={Boolean(exportingAuditFormat)}
                                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs rounded-lg border border-[var(--app-border)] disabled:opacity-50 disabled:cursor-not-allowed hover:bg-slate-50 dark:hover:bg-slate-800"
                             >
-                                {exportingAuditFormat === 'log'
+                                {exportingAuditFormat === 'json'
                                     ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                     : <Download className="w-3.5 h-3.5" />}
-                                Export .log
+                                Export JSON
                             </button>
                         )}
                         <button
