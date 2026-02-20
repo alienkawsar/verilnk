@@ -95,6 +95,182 @@ const adminOrgFormControlClass =
 const adminOrgCompactControlClass =
   'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 disabled:opacity-60 disabled:cursor-not-allowed transition-colors';
 
+type EnterpriseLimitFormValues = {
+  enterpriseMaxWorkspaces: string;
+  enterpriseMaxLinkedOrgs: string;
+  enterpriseMaxApiKeys: string;
+  enterpriseMaxMembers: string;
+};
+
+const DEFAULT_ENTERPRISE_LIMITS: EnterpriseLimitFormValues = {
+  enterpriseMaxWorkspaces: '10',
+  enterpriseMaxLinkedOrgs: '50',
+  enterpriseMaxApiKeys: '10',
+  enterpriseMaxMembers: '100',
+};
+
+interface EnterpriseLimitsFieldsProps {
+  idPrefix: string;
+  values: EnterpriseLimitFormValues;
+  onChange: (field: keyof EnterpriseLimitFormValues, value: string) => void;
+}
+
+function EnterpriseLimitsFields({
+  idPrefix,
+  values,
+  onChange,
+}: EnterpriseLimitsFieldsProps) {
+  const workspaceInputId = `${idPrefix}-enterprise-max-workspaces`;
+  const workspaceHelpId = `${workspaceInputId}-help`;
+  const linkedOrgsInputId = `${idPrefix}-enterprise-max-linked-orgs`;
+  const linkedOrgsHelpId = `${linkedOrgsInputId}-help`;
+  const apiKeysInputId = `${idPrefix}-enterprise-max-api-keys`;
+  const apiKeysHelpId = `${apiKeysInputId}-help`;
+  const membersInputId = `${idPrefix}-enterprise-max-members`;
+  const membersHelpId = `${membersInputId}-help`;
+
+  return (
+    <div className='space-y-3'>
+      <div className='flex items-center justify-between gap-3'>
+        <h4 className='text-sm text-slate-600 dark:text-slate-400'>
+          Enterprise Limits
+        </h4>
+        <span className='inline-flex items-center rounded-full border border-slate-300 dark:border-slate-700 bg-slate-100/70 dark:bg-slate-900/60 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400'>
+          Applies per workspace
+        </span>
+      </div>
+      <div className='grid grid-cols-1 sm:grid-cols-2 gap-3'>
+        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
+          <div className='flex items-start gap-2'>
+            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
+              <Building2 className='w-3.5 h-3.5' />
+            </span>
+            <div className='space-y-0.5'>
+              <label
+                htmlFor={workspaceInputId}
+                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
+              >
+                Workspace Limit
+              </label>
+              <p id={workspaceHelpId} className='text-xs text-slate-500 dark:text-slate-400'>
+                Maximum workspaces allowed for this enterprise organization.
+              </p>
+            </div>
+          </div>
+          <input
+            id={workspaceInputId}
+            aria-describedby={workspaceHelpId}
+            type='number'
+            min='1'
+            max='1000000'
+            value={values.enterpriseMaxWorkspaces}
+            onChange={(event) =>
+              onChange('enterpriseMaxWorkspaces', event.target.value)
+            }
+            className={adminOrgCompactControlClass}
+            placeholder='Max workspaces'
+          />
+        </div>
+
+        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
+          <div className='flex items-start gap-2'>
+            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
+              <Link2 className='w-3.5 h-3.5' />
+            </span>
+            <div className='space-y-0.5'>
+              <label
+                htmlFor={linkedOrgsInputId}
+                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
+              >
+                Linked Organizations / Workspace
+              </label>
+              <p
+                id={linkedOrgsHelpId}
+                className='text-xs text-slate-500 dark:text-slate-400'
+              >
+                Maximum linked organizations each workspace can connect.
+              </p>
+            </div>
+          </div>
+          <input
+            id={linkedOrgsInputId}
+            aria-describedby={linkedOrgsHelpId}
+            type='number'
+            min='1'
+            max='1000000'
+            value={values.enterpriseMaxLinkedOrgs}
+            onChange={(event) =>
+              onChange('enterpriseMaxLinkedOrgs', event.target.value)
+            }
+            className={adminOrgCompactControlClass}
+            placeholder='Max linked organizations'
+          />
+        </div>
+
+        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
+          <div className='flex items-start gap-2'>
+            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
+              <Key className='w-3.5 h-3.5' />
+            </span>
+            <div className='space-y-0.5'>
+              <label
+                htmlFor={apiKeysInputId}
+                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
+              >
+                API Keys / Workspace
+              </label>
+              <p id={apiKeysHelpId} className='text-xs text-slate-500 dark:text-slate-400'>
+                Maximum active API keys each workspace can maintain.
+              </p>
+            </div>
+          </div>
+          <input
+            id={apiKeysInputId}
+            aria-describedby={apiKeysHelpId}
+            type='number'
+            min='1'
+            max='1000000'
+            value={values.enterpriseMaxApiKeys}
+            onChange={(event) => onChange('enterpriseMaxApiKeys', event.target.value)}
+            className={adminOrgCompactControlClass}
+            placeholder='Max API keys'
+          />
+        </div>
+
+        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
+          <div className='flex items-start gap-2'>
+            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
+              <Users className='w-3.5 h-3.5' />
+            </span>
+            <div className='space-y-0.5'>
+              <label
+                htmlFor={membersInputId}
+                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
+              >
+                Members / Workspace
+              </label>
+              <p id={membersHelpId} className='text-xs text-slate-500 dark:text-slate-400'>
+                Maximum members and pending invites allowed per workspace.
+              </p>
+            </div>
+          </div>
+          <input
+            id={membersInputId}
+            aria-describedby={membersHelpId}
+            type='number'
+            min='1'
+            max='1000000'
+            value={values.enterpriseMaxMembers}
+            onChange={(event) => onChange('enterpriseMaxMembers', event.target.value)}
+            className={adminOrgCompactControlClass}
+            placeholder='Max members'
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface AdminOrgLogoPickerProps {
   fileInputId: string;
   fileInputRef: RefObject<HTMLInputElement | null>;
@@ -307,6 +483,7 @@ export default function OrganizationsSection({
     durationPreset: '30',
     customDays: '',
     priorityOverride: 'HIGH',
+    ...DEFAULT_ENTERPRISE_LIMITS,
   });
   const [editForm, setEditForm] = useState({
     name: '',
@@ -376,10 +553,7 @@ export default function OrganizationsSection({
     durationPreset: '30',
     customDays: '',
     priorityOverride: 'HIGH',
-    enterpriseMaxWorkspaces: '10',
-    enterpriseMaxLinkedOrgs: '50',
-    enterpriseMaxApiKeys: '10',
-    enterpriseMaxMembers: '100',
+    ...DEFAULT_ENTERPRISE_LIMITS,
   });
   const [bulkPlanForm, setBulkPlanForm] = useState({
     planType: 'FREE',
@@ -683,16 +857,16 @@ export default function OrganizationsSection({
         : 'NORMAL',
       enterpriseMaxWorkspaces: org.enterpriseMaxWorkspaces
         ? String(org.enterpriseMaxWorkspaces)
-        : '10',
+        : DEFAULT_ENTERPRISE_LIMITS.enterpriseMaxWorkspaces,
       enterpriseMaxLinkedOrgs: org.enterpriseMaxLinkedOrgs
         ? String(org.enterpriseMaxLinkedOrgs)
-        : '50',
+        : DEFAULT_ENTERPRISE_LIMITS.enterpriseMaxLinkedOrgs,
       enterpriseMaxApiKeys: org.enterpriseMaxApiKeys
         ? String(org.enterpriseMaxApiKeys)
-        : '10',
+        : DEFAULT_ENTERPRISE_LIMITS.enterpriseMaxApiKeys,
       enterpriseMaxMembers: org.enterpriseMaxMembers
         ? String(org.enterpriseMaxMembers)
-        : '100',
+        : DEFAULT_ENTERPRISE_LIMITS.enterpriseMaxMembers,
     });
   };
 
@@ -818,7 +992,12 @@ export default function OrganizationsSection({
         const durationDays = resolveDurationDays(planForm);
         const enterpriseQuotas =
           planForm.planType === 'ENTERPRISE'
-            ? resolveEnterpriseQuotaPayload()
+            ? resolveEnterpriseQuotaPayload({
+                enterpriseMaxWorkspaces: planForm.enterpriseMaxWorkspaces,
+                enterpriseMaxLinkedOrgs: planForm.enterpriseMaxLinkedOrgs,
+                enterpriseMaxApiKeys: planForm.enterpriseMaxApiKeys,
+                enterpriseMaxMembers: planForm.enterpriseMaxMembers,
+              })
             : {};
         const planPayload = {
           planType: planForm.planType,
@@ -972,22 +1151,24 @@ export default function OrganizationsSection({
     return parsed;
   };
 
-  const resolveEnterpriseQuotaPayload = () => ({
+  const resolveEnterpriseQuotaPayload = (
+    values: EnterpriseLimitFormValues,
+  ) => ({
     enterpriseMaxWorkspaces: parseEnterpriseQuotaField(
       'Workspaces limit',
-      planForm.enterpriseMaxWorkspaces,
+      values.enterpriseMaxWorkspaces,
     ),
     enterpriseMaxLinkedOrgs: parseEnterpriseQuotaField(
       'Linked organizations limit',
-      planForm.enterpriseMaxLinkedOrgs,
+      values.enterpriseMaxLinkedOrgs,
     ),
     enterpriseMaxApiKeys: parseEnterpriseQuotaField(
       'API keys limit',
-      planForm.enterpriseMaxApiKeys,
+      values.enterpriseMaxApiKeys,
     ),
     enterpriseMaxMembers: parseEnterpriseQuotaField(
       'Members limit',
-      planForm.enterpriseMaxMembers,
+      values.enterpriseMaxMembers,
     ),
   });
 
@@ -1046,7 +1227,12 @@ export default function OrganizationsSection({
       const durationDays = resolveDurationDays(planForm);
       const enterpriseQuotas =
         planForm.planType === 'ENTERPRISE'
-          ? resolveEnterpriseQuotaPayload()
+          ? resolveEnterpriseQuotaPayload({
+              enterpriseMaxWorkspaces: planForm.enterpriseMaxWorkspaces,
+              enterpriseMaxLinkedOrgs: planForm.enterpriseMaxLinkedOrgs,
+              enterpriseMaxApiKeys: planForm.enterpriseMaxApiKeys,
+              enterpriseMaxMembers: planForm.enterpriseMaxMembers,
+            })
           : {};
       const payload = {
         planType: planForm.planType,
@@ -1104,6 +1290,15 @@ export default function OrganizationsSection({
         durationPreset: createForm.durationPreset,
         customDays: createForm.customDays,
       });
+      const enterpriseQuotas =
+        createForm.planType === 'ENTERPRISE'
+          ? resolveEnterpriseQuotaPayload({
+              enterpriseMaxWorkspaces: createForm.enterpriseMaxWorkspaces,
+              enterpriseMaxLinkedOrgs: createForm.enterpriseMaxLinkedOrgs,
+              enterpriseMaxApiKeys: createForm.enterpriseMaxApiKeys,
+              enterpriseMaxMembers: createForm.enterpriseMaxMembers,
+            })
+          : {};
       const payload = {
         name: createForm.name,
         email: createForm.email,
@@ -1124,6 +1319,7 @@ export default function OrganizationsSection({
           createForm.planType === 'ENTERPRISE'
             ? mapPriorityOverrideToValue(createForm.priorityOverride)
             : null,
+        ...enterpriseQuotas,
       };
       await createOrganizationAdmin(payload);
       showToast('Organization created successfully', 'success');
@@ -1147,6 +1343,7 @@ export default function OrganizationsSection({
         durationPreset: '30',
         customDays: '',
         priorityOverride: 'HIGH',
+        ...DEFAULT_ENTERPRISE_LIMITS,
       });
       setCreateConfirmPassword('');
       resetCreateLogoSelection();
@@ -1918,173 +2115,18 @@ export default function OrganizationsSection({
                       </select>
                     </div>
 
-                    <div className='space-y-3'>
-                      <div className='flex items-center justify-between gap-3'>
-                        <h4 className='text-sm text-slate-600 dark:text-slate-400'>
-                          Enterprise Limits
-                        </h4>
-                        <span className='inline-flex items-center rounded-full border border-slate-300 dark:border-slate-700 bg-slate-100/70 dark:bg-slate-900/60 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:text-slate-400'>
-                          Applies per workspace
-                        </span>
-                      </div>
-                      <div className='grid grid-cols-1 sm:grid-cols-2 gap-3'>
-                        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
-                          <div className='flex items-start gap-2'>
-                            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
-                              <Building2 className='w-3.5 h-3.5' />
-                            </span>
-                            <div className='space-y-0.5'>
-                              <label
-                                htmlFor='enterprise-max-workspaces'
-                                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
-                              >
-                                Workspace Limit
-                              </label>
-                              <p
-                                id='enterprise-max-workspaces-help'
-                                className='text-xs text-slate-500 dark:text-slate-400'
-                              >
-                                Maximum workspaces allowed for this enterprise
-                                organization.
-                              </p>
-                            </div>
-                          </div>
-                          <input
-                            id='enterprise-max-workspaces'
-                            aria-describedby='enterprise-max-workspaces-help'
-                            type='number'
-                            min='1'
-                            max='1000000'
-                            value={planForm.enterpriseMaxWorkspaces}
-                            onChange={(e) =>
-                              setPlanForm({
-                                ...planForm,
-                                enterpriseMaxWorkspaces: e.target.value,
-                              })
-                            }
-                            className={adminOrgCompactControlClass}
-                            placeholder='Max workspaces'
-                          />
-                        </div>
-
-                        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
-                          <div className='flex items-start gap-2'>
-                            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
-                              <Link2 className='w-3.5 h-3.5' />
-                            </span>
-                            <div className='space-y-0.5'>
-                              <label
-                                htmlFor='enterprise-max-linked-orgs'
-                                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
-                              >
-                                Linked Organizations / Workspace
-                              </label>
-                              <p
-                                id='enterprise-max-linked-orgs-help'
-                                className='text-xs text-slate-500 dark:text-slate-400'
-                              >
-                                Maximum linked organizations each workspace can
-                                connect.
-                              </p>
-                            </div>
-                          </div>
-                          <input
-                            id='enterprise-max-linked-orgs'
-                            aria-describedby='enterprise-max-linked-orgs-help'
-                            type='number'
-                            min='1'
-                            max='1000000'
-                            value={planForm.enterpriseMaxLinkedOrgs}
-                            onChange={(e) =>
-                              setPlanForm({
-                                ...planForm,
-                                enterpriseMaxLinkedOrgs: e.target.value,
-                              })
-                            }
-                            className={adminOrgCompactControlClass}
-                            placeholder='Max linked organizations'
-                          />
-                        </div>
-
-                        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
-                          <div className='flex items-start gap-2'>
-                            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
-                              <Key className='w-3.5 h-3.5' />
-                            </span>
-                            <div className='space-y-0.5'>
-                              <label
-                                htmlFor='enterprise-max-api-keys'
-                                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
-                              >
-                                API Keys / Workspace
-                              </label>
-                              <p
-                                id='enterprise-max-api-keys-help'
-                                className='text-xs text-slate-500 dark:text-slate-400'
-                              >
-                                Maximum active API keys each workspace can
-                                maintain.
-                              </p>
-                            </div>
-                          </div>
-                          <input
-                            id='enterprise-max-api-keys'
-                            aria-describedby='enterprise-max-api-keys-help'
-                            type='number'
-                            min='1'
-                            max='1000000'
-                            value={planForm.enterpriseMaxApiKeys}
-                            onChange={(e) =>
-                              setPlanForm({
-                                ...planForm,
-                                enterpriseMaxApiKeys: e.target.value,
-                              })
-                            }
-                            className={adminOrgCompactControlClass}
-                            placeholder='Max API keys'
-                          />
-                        </div>
-
-                        <div className='rounded-xl border border-[var(--app-border)] bg-white/30 dark:bg-slate-900/30 p-3 space-y-2'>
-                          <div className='flex items-start gap-2'>
-                            <span className='mt-0.5 inline-flex h-7 w-7 items-center justify-center rounded-lg bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-500/20'>
-                              <Users className='w-3.5 h-3.5' />
-                            </span>
-                            <div className='space-y-0.5'>
-                              <label
-                                htmlFor='enterprise-max-members'
-                                className='block text-sm font-medium text-slate-700 dark:text-slate-200'
-                              >
-                                Members / Workspace
-                              </label>
-                              <p
-                                id='enterprise-max-members-help'
-                                className='text-xs text-slate-500 dark:text-slate-400'
-                              >
-                                Maximum members and pending invites allowed per
-                                workspace.
-                              </p>
-                            </div>
-                          </div>
-                          <input
-                            id='enterprise-max-members'
-                            aria-describedby='enterprise-max-members-help'
-                            type='number'
-                            min='1'
-                            max='1000000'
-                            value={planForm.enterpriseMaxMembers}
-                            onChange={(e) =>
-                              setPlanForm({
-                                ...planForm,
-                                enterpriseMaxMembers: e.target.value,
-                              })
-                            }
-                            className={adminOrgCompactControlClass}
-                            placeholder='Max members'
-                          />
-                        </div>
-                      </div>
-                    </div>
+                    <EnterpriseLimitsFields
+                      idPrefix='edit-plan'
+                      values={{
+                        enterpriseMaxWorkspaces: planForm.enterpriseMaxWorkspaces,
+                        enterpriseMaxLinkedOrgs: planForm.enterpriseMaxLinkedOrgs,
+                        enterpriseMaxApiKeys: planForm.enterpriseMaxApiKeys,
+                        enterpriseMaxMembers: planForm.enterpriseMaxMembers,
+                      }}
+                      onChange={(field, value) =>
+                        setPlanForm({ ...planForm, [field]: value })
+                      }
+                    />
                   </div>
                 )}
               </div>
@@ -2741,25 +2783,40 @@ export default function OrganizationsSection({
                 )}
               </div>
               {createForm.planType === 'ENTERPRISE' && (
-                <div className='space-y-2'>
-                  <label className='text-sm text-slate-600 dark:text-slate-400'>
-                    Enterprise Priority Override
-                  </label>
-                  <select
-                    value={createForm.priorityOverride}
-                    onChange={(e) =>
-                      setCreateForm({
-                        ...createForm,
-                        priorityOverride: e.target.value,
-                      })
+                <div className='space-y-4'>
+                  <div className='space-y-2'>
+                    <label className='text-sm text-slate-600 dark:text-slate-400'>
+                      Enterprise Priority Override
+                    </label>
+                    <select
+                      value={createForm.priorityOverride}
+                      onChange={(e) =>
+                        setCreateForm({
+                          ...createForm,
+                          priorityOverride: e.target.value,
+                        })
+                      }
+                      className={adminOrgFormControlClass}
+                    >
+                      <option value='HIGH'>HIGH</option>
+                      <option value='MEDIUM'>MEDIUM</option>
+                      <option value='NORMAL'>NORMAL</option>
+                      <option value='LOW'>LOW</option>
+                    </select>
+                  </div>
+
+                  <EnterpriseLimitsFields
+                    idPrefix='create-org'
+                    values={{
+                      enterpriseMaxWorkspaces: createForm.enterpriseMaxWorkspaces,
+                      enterpriseMaxLinkedOrgs: createForm.enterpriseMaxLinkedOrgs,
+                      enterpriseMaxApiKeys: createForm.enterpriseMaxApiKeys,
+                      enterpriseMaxMembers: createForm.enterpriseMaxMembers,
+                    }}
+                    onChange={(field, value) =>
+                      setCreateForm({ ...createForm, [field]: value })
                     }
-                    className={adminOrgFormControlClass}
-                  >
-                    <option value='HIGH'>HIGH</option>
-                    <option value='MEDIUM'>MEDIUM</option>
-                    <option value='NORMAL'>NORMAL</option>
-                    <option value='LOW'>LOW</option>
-                  </select>
+                  />
                 </div>
               )}
               <div className='space-y-2'>

@@ -81,6 +81,7 @@ type DashboardTab =
   | 'workspaces'
   | 'compliance'
   | 'settings';
+type WorkspaceNavigationTab = 'members' | 'api-keys';
 type EnterpriseAccessGate = 'none' | 'normal-user' | 'org-upgrade' | 'restricted';
 
 const DASHBOARD_TABS: DashboardTab[] = [
@@ -152,6 +153,24 @@ const roleBadgeClass = (role: string | null | undefined) => {
     default:
       return 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300';
   }
+};
+
+const canAccessWorkspaceTab = (
+  workspace: Workspace,
+  tab: WorkspaceNavigationTab,
+) => {
+  const normalizedRole = normalizeWorkspaceRoleLabel(workspace.role);
+  if (!normalizedRole) return false;
+
+  if (tab === 'members') {
+    return normalizedRole === 'OWNER' || normalizedRole === 'ADMIN';
+  }
+
+  return (
+    normalizedRole === 'OWNER' ||
+    normalizedRole === 'ADMIN' ||
+    normalizedRole === 'DEVELOPER'
+  );
 };
 
 const formatStatusLabel = (value: string | null | undefined): string => {
@@ -232,6 +251,9 @@ export default function EnterprisePage() {
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newWorkspaceName, setNewWorkspaceName] = useState('');
+  const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
+  const [workspacePickerTab, setWorkspacePickerTab] =
+    useState<WorkspaceNavigationTab | null>(null);
   const [compliancePolicy, setCompliancePolicy] =
     useState<EnterpriseCompliancePolicy | null>(null);
   const [compliancePolicySaving, setCompliancePolicySaving] = useState(false);
@@ -244,6 +266,29 @@ export default function EnterprisePage() {
       .toUpperCase();
     return actorRole === 'OWNER' || actorRole === 'SUPER_ADMIN';
   }, [profile?.role, user?.role]);
+  const navigableWorkspaces = useMemo(
+    () => workspaces.filter((workspace) => workspace.status !== 'DELETED'),
+    [workspaces],
+  );
+  const membersTabWorkspaces = useMemo(
+    () =>
+      navigableWorkspaces.filter((workspace) =>
+        canAccessWorkspaceTab(workspace, 'members'),
+      ),
+    [navigableWorkspaces],
+  );
+  const apiKeysTabWorkspaces = useMemo(
+    () =>
+      navigableWorkspaces.filter((workspace) =>
+        canAccessWorkspaceTab(workspace, 'api-keys'),
+      ),
+    [navigableWorkspaces],
+  );
+  const workspacePickerOptions = useMemo(() => {
+    if (workspacePickerTab === 'members') return membersTabWorkspaces;
+    if (workspacePickerTab === 'api-keys') return apiKeysTabWorkspaces;
+    return [];
+  }, [apiKeysTabWorkspaces, membersTabWorkspaces, workspacePickerTab]);
   const activeWorkspaceCount = useMemo(
     () =>
       workspaces.filter((workspace) => workspace.status === 'ACTIVE').length,
@@ -298,7 +343,6 @@ export default function EnterprisePage() {
   const apiLimitSummary = effectiveApiRateLimit
     ? `API Limit: ${effectiveApiRateLimit.toLocaleString()}/min`
     : null;
-  const primaryWorkspaceId = workspaces[0]?.id || null;
   const complianceWorkspace = useMemo(() => {
     if (!complianceWorkspaceId) return null;
     return workspaces.find((workspace) => workspace.id === complianceWorkspaceId) || null;
@@ -351,13 +395,57 @@ export default function EnterprisePage() {
     });
   };
 
-  const openWorkspaceTab = (tab: 'members' | 'api-keys') => {
-    if (!primaryWorkspaceId) {
+  const closeWorkspacePicker = () => {
+    setWorkspacePickerOpen(false);
+    setWorkspacePickerTab(null);
+  };
+
+  const selectWorkspaceForTab = (
+    workspaceId: string,
+    tab: WorkspaceNavigationTab,
+  ) => {
+    closeWorkspacePicker();
+    router.push(`/enterprise/${workspaceId}?tab=${tab}`);
+  };
+
+  const openWorkspaceTab = (tab: WorkspaceNavigationTab) => {
+    const tabWorkspaces =
+      tab === 'members' ? membersTabWorkspaces : apiKeysTabWorkspaces;
+    if (tabWorkspaces.length === 0) {
+      if (navigableWorkspaces.length === 0) {
+        showToast('Create a workspace first', 'error');
+        return;
+      }
+      showToast("You don't have permission to do that.", 'error');
+      return;
+    }
+    if (tabWorkspaces.length === 1) {
+      router.push(`/enterprise/${tabWorkspaces[0].id}?tab=${tab}`);
+      return;
+    }
+    setWorkspacePickerTab(tab);
+    setWorkspacePickerOpen(true);
+  };
+
+  useEffect(() => {
+    if (!workspacePickerOpen || !workspacePickerTab) return;
+    if (workspacePickerOptions.length > 0) return;
+
+    setWorkspacePickerOpen(false);
+    setWorkspacePickerTab(null);
+
+    if (navigableWorkspaces.length === 0) {
       showToast('Create a workspace first', 'error');
       return;
     }
-    router.push(`/enterprise/${primaryWorkspaceId}?tab=${tab}`);
-  };
+    showToast("You don't have permission to do that.", 'error');
+  }, [
+    navigableWorkspaces.length,
+    showToast,
+    workspacePickerOpen,
+    workspacePickerOptions.length,
+    workspacePickerTab,
+  ]);
 
   const openWorkspaceList = () => {
     updateDashboardSection('workspaces');
@@ -1114,7 +1202,7 @@ export default function EnterprisePage() {
             </button>
             <button
               onClick={() => openWorkspaceTab('members')}
-              disabled={!primaryWorkspaceId}
+              disabled={membersTabWorkspaces.length === 0}
               className='w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed'
             >
               <Users className='w-5 h-5' />
@@ -1122,7 +1210,7 @@ export default function EnterprisePage() {
             </button>
             <button
               onClick={() => openWorkspaceTab('api-keys')}
-              disabled={!primaryWorkspaceId}
+              disabled={apiKeysTabWorkspaces.length === 0}
               className='w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white disabled:opacity-50 disabled:cursor-not-allowed'
             >
               <Key className='w-5 h-5' />
@@ -1348,7 +1436,7 @@ export default function EnterprisePage() {
                       </button>
                       <button
                         onClick={() => openWorkspaceTab('api-keys')}
-                        disabled={!primaryWorkspaceId}
+                        disabled={apiKeysTabWorkspaces.length === 0}
                         className='w-full text-left px-4 py-3 rounded-lg border border-[var(--app-border)] text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
                       >
                         <span className='text-sm font-semibold'>
@@ -1357,7 +1445,7 @@ export default function EnterprisePage() {
                       </button>
                       <button
                         onClick={() => openWorkspaceTab('members')}
-                        disabled={!primaryWorkspaceId}
+                        disabled={membersTabWorkspaces.length === 0}
                         className='w-full text-left px-4 py-3 rounded-lg border border-[var(--app-border)] text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed'
                       >
                         <span className='text-sm font-semibold'>
@@ -1365,7 +1453,7 @@ export default function EnterprisePage() {
                         </span>
                       </button>
                     </div>
-                    {!primaryWorkspaceId && (
+                    {navigableWorkspaces.length === 0 && (
                       <p className='mt-3 text-xs text-slate-500 dark:text-slate-400'>
                         Create a workspace from the Workspaces section to access
                         API Keys and Members.
@@ -2115,6 +2203,57 @@ export default function EnterprisePage() {
                 ) : (
                   'Create Workspace'
                 )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {workspacePickerOpen && workspacePickerTab && (
+        <div className='fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4'>
+          <div className='bg-white dark:bg-slate-900 rounded-2xl w-full max-w-lg p-6 border border-[var(--app-border)]'>
+            <h2 className='text-xl font-bold text-slate-900 dark:text-white mb-2'>
+              Select Workspace
+            </h2>
+            <p className='text-slate-600 dark:text-slate-400 mb-5 text-sm'>
+              Choose a workspace to open{' '}
+              {workspacePickerTab === 'members' ? 'Members' : 'API Keys'}.
+            </p>
+            <div className='space-y-2 max-h-72 overflow-y-auto mb-5'>
+              {workspacePickerOptions.map((workspace) => (
+                <button
+                  key={workspace.id}
+                  type='button'
+                  onClick={() =>
+                    selectWorkspaceForTab(workspace.id, workspacePickerTab)
+                  }
+                  className='w-full text-left rounded-lg border border-[var(--app-border)] px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors'
+                >
+                  <div className='flex items-center justify-between gap-3'>
+                    <span className='text-sm font-semibold text-slate-900 dark:text-white truncate'>
+                      {workspace.name}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${roleBadgeClass(workspace.role)}`}
+                    >
+                      {normalizeWorkspaceRoleLabel(workspace.role) ||
+                        workspace.role}
+                    </span>
+                  </div>
+                  <div className='mt-1 text-xs text-slate-500 dark:text-slate-400 flex items-center gap-3'>
+                    <span>{workspace.memberCount} members</span>
+                    <span>{workspace.apiKeyCount} API keys</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            <div className='flex justify-end'>
+              <button
+                type='button'
+                onClick={closeWorkspacePicker}
+                className='px-4 py-2.5 border border-[var(--app-border)] text-[var(--app-text-secondary)] font-medium rounded-lg hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors'
+              >
+                Cancel
               </button>
             </div>
           </div>

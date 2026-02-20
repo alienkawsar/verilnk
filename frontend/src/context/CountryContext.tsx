@@ -4,6 +4,16 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useCountryDetection } from '../hooks/useCountryDetection';
 import { getImageUrl } from '@/lib/utils';
 
+type CountryRecord = {
+    id: string;
+    name?: string;
+    code?: string;
+    iso?: string;
+    iso2?: string;
+    flagImage?: string;
+    flagImageUrl?: string;
+};
+
 interface CountryContextType {
     countryCode: string;
     countryName: string;
@@ -18,6 +28,57 @@ interface CountryContextType {
 }
 
 const CountryContext = createContext<CountryContextType | undefined>(undefined);
+let hasWarnedMissingGlobalCountry = false;
+
+const isGlobalCountryValue = (code?: string | null, name?: string | null) => {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    const normalizedName = String(name || '').trim().toUpperCase();
+
+    return (
+        normalizedCode === 'GLOBAL'
+        || normalizedCode === 'GL'
+        || normalizedCode === 'WW'
+        || normalizedName === 'GLOBAL'
+    );
+};
+
+const normalizeCountrySelection = (code: string, name: string) => {
+    if (isGlobalCountryValue(code, name)) {
+        return { code: 'Global', name: 'Global' };
+    }
+    return { code, name };
+};
+
+const resolveCountryFlag = (country: CountryRecord): string | undefined => {
+    if (country.flagImage) return getImageUrl(country.flagImage);
+    if (country.flagImageUrl) return country.flagImageUrl;
+    return undefined;
+};
+
+const findCountryByCode = (countries: CountryRecord[], code: string) => {
+    const normalizedCode = String(code || '').trim().toUpperCase();
+    return countries.find((country) => {
+        const values = [
+            country.code,
+            country.iso2,
+            country.iso
+        ].map((value) => String(value || '').trim().toUpperCase());
+
+        return values.includes(normalizedCode);
+    });
+};
+
+const findGlobalCountry = (countries: CountryRecord[]) => {
+    const byIso = countries.find((country) =>
+        isGlobalCountryValue(country.code, country.name)
+        || isGlobalCountryValue(country.iso2, country.name)
+        || isGlobalCountryValue(country.iso, country.name)
+    );
+
+    if (byIso) return byIso;
+
+    return countries.find((country) => String(country.name || '').trim().toLowerCase() === 'global');
+};
 
 export function CountryProvider({ children }: { children: React.ReactNode }) {
     // Auto-detect on mount
@@ -44,50 +105,84 @@ export function CountryProvider({ children }: { children: React.ReactNode }) {
     // Sync with detection and resolve ID
     useEffect(() => {
         const initialize = async () => {
-            if (!detectionLoading && !isInitialized && detectedCode !== 'Global') {
-                setCountryCode(detectedCode);
-                setCountryName(detectedName);
+            if (detectionLoading || isInitialized) {
+                return;
+            }
 
-                // Fetch countries to find ID and Flag if needed
-                try {
-                    // Lazy import to avoid circular dependency
-                    const { fetchCountries, fetchStates } = await import('@/lib/api');
-                    const countries = await fetchCountries();
-                    const matched = countries.find((c: { code: string; id: string; flagImage?: string; flagImageUrl?: string }) => c.code === detectedCode);
-                    if (matched) {
-                        setCountryId(matched.id);
-                        if (matched.flagImage) {
-                            setFlagImage(getImageUrl(matched.flagImage));
-                        } else if (matched.flagImageUrl) {
-                            setFlagImage(matched.flagImageUrl);
-                        }
+            const persistedCountryId = typeof window !== 'undefined'
+                ? localStorage.getItem('user_country_id')
+                : null;
 
-                        if (detectedStateName || detectedStateCode) {
-                            const states = await fetchStates(matched.id);
-                            const normalizedStateName = detectedStateName ? normalizeStateValue(detectedStateName) : null;
-                            const normalizedStateCode = detectedStateCode?.toLowerCase() || null;
+            // Respect prior manual selection/persisted choice.
+            if (persistedCountryId) {
+                setIsInitialized(true);
+                setIsResolved(true);
+                return;
+            }
 
-                            const matchedState = states.find((state: { name: string; code?: string }) => {
-                                if (normalizedStateCode && state.code && state.code.toLowerCase() === normalizedStateCode) {
-                                    return true;
-                                }
-                                if (normalizedStateName) {
-                                    return normalizeStateValue(state.name) === normalizedStateName;
-                                }
-                                return false;
-                            });
+            try {
+                const { fetchCountries, fetchStates } = await import('@/lib/api');
+                const countries: CountryRecord[] = await fetchCountries();
 
-                            if (matchedState) {
-                                setStateId(matchedState.id);
-                                setStateName(matchedState.name);
-                                setStateCode(matchedState.code || detectedStateCode);
+                const applyGlobalFallback = () => {
+                    const globalCountry = findGlobalCountry(countries);
+
+                    if (globalCountry) {
+                        const normalized = normalizeCountrySelection(globalCountry.code || 'Global', globalCountry.name || 'Global');
+                        setCountryCode(normalized.code);
+                        setCountryName(normalized.name);
+                        setCountryId(globalCountry.id);
+                        setStateId(undefined);
+                        setStateName(undefined);
+                        setStateCode(undefined);
+                        setFlagImage(resolveCountryFlag(globalCountry));
+                        return;
+                    }
+
+                    if (!hasWarnedMissingGlobalCountry) {
+                        console.warn('Global country (GL) not found in DB — falling back to previous global behavior');
+                        hasWarnedMissingGlobalCountry = true;
+                    }
+                };
+
+                const detectedCountry = detectedCode && !isGlobalCountryValue(detectedCode, detectedName)
+                    ? findCountryByCode(countries, detectedCode)
+                    : undefined;
+
+                if (detectedCountry) {
+                    const normalized = normalizeCountrySelection(detectedCountry.code || detectedCode, detectedCountry.name || detectedName);
+                    setCountryCode(normalized.code);
+                    setCountryName(normalized.name);
+                    setCountryId(detectedCountry.id);
+                    setFlagImage(resolveCountryFlag(detectedCountry));
+
+                    if (detectedStateName || detectedStateCode) {
+                        const states = await fetchStates(detectedCountry.id);
+                        const normalizedStateName = detectedStateName ? normalizeStateValue(detectedStateName) : null;
+                        const normalizedStateCode = detectedStateCode?.toLowerCase() || null;
+
+                        const matchedState = states.find((state: { name: string; code?: string }) => {
+                            if (normalizedStateCode && state.code && state.code.toLowerCase() === normalizedStateCode) {
+                                return true;
                             }
+                            if (normalizedStateName) {
+                                return normalizeStateValue(state.name) === normalizedStateName;
+                            }
+                            return false;
+                        });
+
+                        if (matchedState) {
+                            setStateId(matchedState.id);
+                            setStateName(matchedState.name);
+                            setStateCode(matchedState.code || detectedStateCode);
                         }
                     }
-                } catch (e) {
-                    console.error('Failed to resolve country ID', e);
+                } else {
+                    applyGlobalFallback();
                 }
-
+            } catch (e) {
+                console.error('Failed to resolve country ID', e);
+            } finally {
                 setIsInitialized(true);
                 setIsResolved(true);
             }
@@ -95,15 +190,10 @@ export function CountryProvider({ children }: { children: React.ReactNode }) {
         initialize();
     }, [detectionLoading, detectedCode, detectedName, detectedStateName, detectedStateCode, isInitialized]);
 
-    useEffect(() => {
-        if (!detectionLoading && !isResolved && detectedCode === 'Global') {
-            setIsResolved(true);
-        }
-    }, [detectionLoading, detectedCode, isResolved]);
-
     const handleSetCountry = (code: string, name: string, id?: string, flag?: string) => {
-        setCountryCode(code);
-        setCountryName(name);
+        const normalized = normalizeCountrySelection(code, name);
+        setCountryCode(normalized.code);
+        setCountryName(normalized.name);
         setCountryId(id);
         setStateId(undefined);
         setStateName(undefined);
@@ -113,8 +203,8 @@ export function CountryProvider({ children }: { children: React.ReactNode }) {
         setIsResolved(true);
 
         // Persist override
-        localStorage.setItem('user_country_code', code);
-        localStorage.setItem('user_country_name', name);
+        localStorage.setItem('user_country_code', normalized.code);
+        localStorage.setItem('user_country_name', normalized.name);
         if (id) localStorage.setItem('user_country_id', id); else localStorage.removeItem('user_country_id');
         if (flag) localStorage.setItem('user_country_flag', flag); else localStorage.removeItem('user_country_flag');
     };
@@ -140,17 +230,18 @@ export function CountryProvider({ children }: { children: React.ReactNode }) {
                     const current = countries.find((c: any) => c.id === cachedId);
 
                     if (current) {
+                        const normalized = normalizeCountrySelection(current.code, current.name);
                         // Update state with fresh data
-                        setCountryCode(current.code);
-                        setCountryName(current.name);
+                        setCountryCode(normalized.code);
+                        setCountryName(normalized.name);
 
                         const finalFlag = current.flagImage ? getImageUrl(current.flagImage) : current.flagImageUrl;
                         setFlagImage(finalFlag);
 
                         // Update cache
                         localStorage.setItem('user_country_flag', finalFlag || '');
-                        localStorage.setItem('user_country_name', current.name);
-                        localStorage.setItem('user_country_code', current.code);
+                        localStorage.setItem('user_country_name', normalized.name);
+                        localStorage.setItem('user_country_code', normalized.code);
                     }
                 } catch (error) {
                     console.error("Failed to sync country data", error);
