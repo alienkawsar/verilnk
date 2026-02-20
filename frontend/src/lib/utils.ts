@@ -5,10 +5,26 @@ export function cn(...inputs: ClassValue[]) {
     return twMerge(clsx(inputs));
 }
 
+export function normalizeCountryCode(code: string | null | undefined): string {
+    const normalized = String(code || '').trim().toUpperCase();
+    if (!normalized) return '';
+    if (normalized === 'GLOBAL' || normalized === 'WW') return 'GL';
+    return normalized;
+}
+
+export function isGlobalCountryCode(
+    code: string | null | undefined,
+    name?: string | null,
+): boolean {
+    const normalizedCode = normalizeCountryCode(code);
+    const normalizedName = String(name || '').trim().toUpperCase();
+    return normalizedCode === 'GL' || normalizedName === 'GLOBAL';
+}
+
 // Helper to convert ISO code to flag emoji
 export function getFlagEmoji(countryCode: string) {
-    if (!countryCode || countryCode === 'Global') return '🌐';
-    const codePoints = countryCode
+    if (isGlobalCountryCode(countryCode)) return '🌐';
+    const codePoints = normalizeCountryCode(countryCode)
         .toUpperCase()
         .split('')
         .map(char => 127397 + char.charCodeAt(0));

@@ -7,7 +7,11 @@ import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import { ShieldCheck, Globe } from 'lucide-react';
 import { useCountry } from '@/context/CountryContext';
-import { getInitials, getFlagEmoji } from '@/lib/utils';
+import {
+  getInitials,
+  isGlobalCountryCode,
+  normalizeCountryCode,
+} from '@/lib/utils';
 
 import LoginModal from '@/components/auth/LoginModal';
 import SignupModal from '@/components/auth/SignupModal';
@@ -129,8 +133,10 @@ function NavbarContent() {
     setIsLoginOpen(false);
   };
 
+  const normalizedCountryCode = normalizeCountryCode(countryCode);
+  const isGlobalCountry = isGlobalCountryCode(countryCode, countryName);
   const countryIsoLabel =
-    countryCode === 'Global' ? 'Global' : countryCode?.toUpperCase() || '--';
+    isGlobalCountry ? (countryName || 'Global') : normalizedCountryCode || '--';
   const stateLabel = (stateCode || stateName)?.toUpperCase();
   const dashboardHref =
     user?.organizationId && user.planType === 'ENTERPRISE'
@@ -165,7 +171,7 @@ function NavbarContent() {
                     onError={() => setImgError(true)}
                   />
                 </div>
-              ) : countryCode === 'Global' ? (
+              ) : isGlobalCountry ? (
                 <div className='hidden md:block p-0.5 bg-blue-500/10 rounded-full'>
                   <Globe className='w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0' />
                 </div>
@@ -174,7 +180,7 @@ function NavbarContent() {
                 <>
                   <span className='inline-flex md:hidden items-center gap-1 text-xs font-medium tracking-tight min-w-0'>
                     <span>{countryIsoLabel}</span>
-                    {countryCode !== 'Global' && stateLabel && (
+                    {!isGlobalCountry && stateLabel && (
                       <>
                         <span className='text-slate-400 dark:text-slate-500'>
                           •
@@ -187,11 +193,9 @@ function NavbarContent() {
                   </span>
                   <span className='hidden md:inline-block relative pr-3'>
                     <span className='font-medium text-xs tracking-tight'>
-                      {countryCode === 'Global'
-                        ? 'Global'
-                        : countryCode?.toUpperCase()}
+                      {isGlobalCountry ? (countryName || 'Global') : normalizedCountryCode}
                     </span>
-                    {countryCode !== 'Global' && (stateCode || stateName) && (
+                    {!isGlobalCountry && (stateCode || stateName) && (
                       <span className='absolute -top-0.5 -right-0.5 text-[8px] font-medium text-slate-400 dark:text-slate-500 leading-none'>
                         {(stateCode || stateName)?.toUpperCase()}
                       </span>

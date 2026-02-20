@@ -254,8 +254,35 @@ export const fetchMyEnterpriseWorkspaces = async () => {
     };
 };
 
+type CountryListItem = {
+    id: string;
+    name?: string | null;
+    code?: string | null;
+};
+
+const isGlobalCountryItem = (country: CountryListItem): boolean => {
+    const code = String(country?.code || '').trim().toUpperCase();
+    const name = String(country?.name || '').trim().toUpperCase();
+    return code === 'GL' || code === 'WW' || name === 'GLOBAL';
+};
+
+const pinGlobalCountryFirst = <T extends CountryListItem>(countries: T[]): T[] => {
+    // Discovery:
+    // - Country order is sourced from backend name ASC (backend/src/services/country.service.ts)
+    // - Country options are built from fetchCountries in homepage/admin flows
+    //   (e.g., frontend/src/app/HomeClient.tsx, frontend/src/components/admin/sections/UsersSection.tsx).
+    // Keep non-Global order exactly as provided and only move Global to index 0.
+    const globalIndex = countries.findIndex((country) => isGlobalCountryItem(country));
+    if (globalIndex <= 0) return countries;
+    const globalCountry = countries[globalIndex];
+    const rest = countries.filter((_, index) => index !== globalIndex);
+    return [globalCountry, ...rest];
+};
+
 export const fetchCountries = async (params?: { includeDisabled?: boolean }) => {
-    return deduplicatedGet('/countries', { params });
+    const countries = await deduplicatedGet('/countries', { params });
+    if (!Array.isArray(countries)) return countries;
+    return pinGlobalCountryFirst(countries);
 };
 
 export const fetchCategories = async () => {

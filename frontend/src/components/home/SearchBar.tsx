@@ -6,11 +6,12 @@ import { Search, Mic, Loader2, Square } from 'lucide-react';
 import { useSpeechRecognition } from '@/hooks/useSpeechRecognition';
 
 import { useCountry } from '@/context/CountryContext';
+import { normalizeCountryCode } from '@/lib/utils';
 
 export default function SearchBar({ stateId }: { stateId?: string }) {
     const [query, setQuery] = useState('');
     const router = useRouter();
-    const { countryId, countryCode } = useCountry();
+    const { countryCode } = useCountry();
     const { isListening, transcript, startListening, stopListening, isSupported, resetTranscript, isProcessing, error, showPrivacyNotice } = useSpeechRecognition();
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -30,10 +31,13 @@ export default function SearchBar({ stateId }: { stateId?: string }) {
         if (e) e.preventDefault();
         if (isSubmitting || !query.trim()) return;
 
+        const countryIso = normalizeCountryCode(countryCode);
+        if (!countryIso) return;
+
         setIsSubmitting(true);
         const params = new URLSearchParams();
         params.set('q', query.trim());
-        if (countryCode && countryCode !== 'Global') params.set('country', countryCode); // STRICT: Use Code
+        params.set('country', countryIso); // STRICT: Use Code (GL for global scope)
         if (stateId) params.set('state', stateId); // Pass State ID as 'state' param
 
         router.push(`/search?${params.toString()}`);
@@ -73,11 +77,11 @@ export default function SearchBar({ stateId }: { stateId?: string }) {
                     type="button"
                     onClick={handleVoiceToggle}
                     disabled={!isSupported}
-                    className={`h-9 w-9 flex items-center justify-center rounded-xl transition-all ${!isSupported
+                    className={`h-9 w-9 flex items-center justify-center rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-primary)]/50 ${!isSupported
                         ? 'text-slate-400 dark:text-slate-600 cursor-not-allowed'
                         : isListening
                             ? 'bg-red-500 text-white animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]'
-                            : 'text-slate-500 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-black/5 dark:hover:bg-white/5 border border-black/5 dark:border-white/10'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-black/5 dark:hover:bg-white/5'
                         }`}
                     title={isListening ? "Stop recording" : "Search by voice"}
                     aria-label={isListening ? "Stop recording" : "Search by voice"}
@@ -93,7 +97,7 @@ export default function SearchBar({ stateId }: { stateId?: string }) {
 
                 <button
                     type="submit"
-                    className="h-10 w-10 btn-primary rounded-xl transition-all shadow-md hover:shadow-lg flex items-center justify-center flex-shrink-0"
+                    className="h-[38px] w-[38px] btn-primary rounded-full transition-all shadow-md hover:shadow-lg flex items-center justify-center flex-shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-primary)]/50"
                     title="Search"
                     aria-label="Search"
                 >

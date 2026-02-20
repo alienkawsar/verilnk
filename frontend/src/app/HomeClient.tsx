@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useCountry } from '@/context/CountryContext';
@@ -11,16 +11,33 @@ import SiteCard from '@/components/shared/SiteCard';
 import NotFoundThemeImage from '@/components/shared/NotFoundThemeImage';
 import Pagination from '@/components/common/Pagination';
 import { fetchSitesPaginated, fetchStates } from '@/lib/api';
-import { Loader2, Hash, MapPin, ShieldCheck } from 'lucide-react';
-import { getFlagEmoji, getImageUrl } from '@/lib/utils';
+import { Banknote, GraduationCap, Grid2x2, HeartPulse, Landmark, Loader2, MapPin, ShieldCheck } from 'lucide-react';
+import { getImageUrl, isGlobalCountryCode, normalizeCountryCode } from '@/lib/utils';
 
 interface HomeClientProps {
     initialCountries: any[];
     initialCategories: any[];
 }
 
+const getCategoryIcon = (categoryName: string) => {
+    const name = String(categoryName || '').toLowerCase();
+    if (name.includes('government') || name.includes('public')) return Landmark;
+    if (name.includes('education') || name.includes('research')) return GraduationCap;
+    if (name.includes('health') || name.includes('welfare') || name.includes('medical')) return HeartPulse;
+    if (name.includes('finance') || name.includes('tax') || name.includes('bank')) return Banknote;
+    return Grid2x2;
+};
+
 export default function HomeClient({ initialCountries, initialCategories }: HomeClientProps) {
-    const { countryCode, countryName, countryId, stateId: detectedStateId, flagImage, setCountry } = useCountry();
+    const {
+        countryCode,
+        countryName,
+        countryId,
+        stateId: detectedStateId,
+        flagImage,
+        setCountry,
+        isResolved
+    } = useCountry();
     const router = useRouter();
     const searchParams = useSearchParams();
     const pageParam = Number(searchParams.get('page')) || 1;
@@ -35,6 +52,9 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
     const [loadingSites, setLoadingSites] = useState(false);
     const [totalSites, setTotalSites] = useState(0);
     const [sitesFetchState, setSitesFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+    const hasSpecificCountrySelection =
+        Boolean(countryId) &&
+        !isGlobalCountryCode(countryCode, countryName);
 
     const resetPageParam = () => {
         const params = new URLSearchParams(searchParams.toString());
@@ -58,7 +78,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                 setSitesFetchState('loading');
             }
 
-            if (!currentCountryId && countryCode !== 'Global') {
+            if (!currentCountryId && !isGlobalCountryCode(countryCode, countryName)) {
                 if (isMounted) {
                     setLoadingSites(false);
                     setSitesFetchState('idle');
@@ -114,7 +134,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
     useEffect(() => {
         const controller = new AbortController();
 
-        if (countryId) {
+        if (hasSpecificCountrySelection && countryId) {
             const loadStates = async () => {
                 setLoadingStates(true);
                 try {
@@ -141,7 +161,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
         return () => {
             controller.abort();
         };
-    }, [countryId]);
+    }, [countryId, hasSpecificCountrySelection]);
 
     useEffect(() => {
         if (!hasManualState && detectedStateId && !selectedStateId) {
@@ -160,6 +180,32 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
             image
         };
     });
+
+    const selectedCountryValue = useMemo(() => {
+        if (countryId) return countryId;
+        // Discovery note: fallback sets countryCode='Global' before a countryId exists.
+        // Resolve the dropdown value from options so UI reflects fallback selection.
+        if (!isResolved) return '';
+
+        const normalizedCode = normalizeCountryCode(countryCode);
+        if (!normalizedCode) return '';
+
+        const globalOption = initialCountries.find((country) => {
+            const code = String(country?.code || '').trim().toUpperCase();
+            const name = String(country?.name || '').trim().toLowerCase();
+            return code === 'GL' || name === 'global';
+        });
+
+        if (isGlobalCountryCode(normalizedCode, countryName)) {
+            return globalOption?.id || '';
+        }
+
+        const matched = initialCountries.find(
+            (country) =>
+                String(country?.code || '').trim().toUpperCase() === normalizedCode,
+        );
+        return matched?.id || '';
+    }, [countryCode, countryId, countryName, initialCountries, isResolved]);
 
     // Category Dropdown Options
     const categoryOptions = initialCategories.map(c => ({
@@ -222,13 +268,13 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                                 label="Select Country"
                                 placeholder="Choose a country..."
                                 options={countryOptions}
-                                value={countryId || ''}
+                                value={selectedCountryValue}
                                 onChange={handleCountryChange}
                             />
                         </div>
 
                         {/* State Dropdown - Only show if states exist or loading */}
-                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${countryId ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${hasSpecificCountrySelection ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
                             {/* Show if states exist or loading. If verified no states, maybe hide or show disabled? Better to show "No regions available" if loaded & empty? 
                                 Actually, sticking to standard dropdown behavior. */ }
                             <ModernDropdown
@@ -241,11 +287,11 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                                     setHasManualState(true);
                                     resetPageParam();
                                 }}
-                                disabled={!countryId || loadingStates || states.length === 0}
+                                disabled={!hasSpecificCountrySelection || loadingStates || states.length === 0}
                             />
                         </div>
 
-                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${countryId ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${hasSpecificCountrySelection ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
                             <ModernDropdown
                                 label="Filter by Category"
                                 placeholder="All Categories"
@@ -320,21 +366,26 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
             </div>
 
             {/* Category Grid Fallback / Promotion */}
-            {!countryId && (
-                <div className="container mx-auto px-4 mt-20">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                        {initialCategories.slice(0, 4).map(cat => (
-                            <button
-                                key={cat.id}
-                                onClick={() => setSelectedCategoryId(cat.id)}
-                                className="p-6 surface-card rounded-xl hover:border-blue-500/50 hover:bg-white/5 transition-all flex flex-col items-center gap-3 group"
-                            >
-                                <div className="p-3 bg-blue-500/10 rounded-full group-hover:bg-blue-500/20 transition-colors">
-                                    <Hash className="w-6 h-6 text-blue-500 dark:text-blue-400" />
-                                </div>
-                                <span className="font-medium capitalize text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-200">{cat.name}</span>
-                            </button>
-                        ))}
+            {!hasSpecificCountrySelection && (
+                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-20">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                        {initialCategories.slice(0, 4).map((cat) => {
+                            const Icon = getCategoryIcon(cat.name);
+                            return (
+                                <button
+                                    key={cat.id}
+                                    onClick={() => setSelectedCategoryId(cat.id)}
+                                    className="p-4 surface-card rounded-xl hover:border-blue-500/50 hover:bg-white/5 transition-all flex items-center gap-3 text-left group"
+                                >
+                                    <div className="h-10 w-10 rounded-lg bg-blue-500/10 group-hover:bg-blue-500/20 transition-colors flex items-center justify-center shrink-0">
+                                        <Icon className="w-5 h-5 text-blue-500 dark:text-blue-400" />
+                                    </div>
+                                    <span className="font-medium text-slate-700 dark:text-slate-200 group-hover:text-blue-600 dark:group-hover:text-blue-200 leading-snug">
+                                        {cat.name}
+                                    </span>
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
             )}

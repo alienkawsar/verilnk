@@ -68,6 +68,13 @@ const withSynonyms = (words) => {
     return expanded;
 };
 const escapeFilterValue = (value) => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+const normalizeCountryIso = (value) => {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (normalized === 'GLOBAL' || normalized === 'WW')
+        return 'GL';
+    return normalized;
+};
+const isGlobalCountryIso = (value) => normalizeCountryIso(value) === 'GL';
 const getOrgPriority = (organization) => organization?.priority ?? client_1.OrgPriority.NORMAL;
 const toOrgPriorityRank = (organization) => exports.ORG_PRIORITY_RANK_MAP[getOrgPriority(organization)] ?? exports.ORG_PRIORITY_RANK_MAP.NORMAL;
 const toLegacyPriorityScore = (organization) => LEGACY_PRIORITY_SCORE_MAP[getOrgPriority(organization)] ?? LEGACY_PRIORITY_SCORE_MAP.NORMAL;
@@ -313,8 +320,10 @@ const sortExactMatches = (hits) => [...hits].sort((a, b) => {
 });
 const buildScopeFilter = (filters) => {
     const parts = [];
-    const countryIso = escapeFilterValue(filters.countryIso);
-    parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    const countryIso = escapeFilterValue(normalizeCountryIso(filters.countryIso));
+    if (!isGlobalCountryIso(filters.countryIso)) {
+        parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    }
     parts.push(`isApproved = ${filters.isApproved}`);
     parts.push('isVisible = true');
     if (filters.categoryId) {
@@ -329,10 +338,12 @@ const buildScopeFilter = (filters) => {
 };
 const buildCategoryExpansionFilter = (filters, detectedCategory) => {
     const parts = [];
-    const countryIso = escapeFilterValue(filters.countryIso);
+    const countryIso = escapeFilterValue(normalizeCountryIso(filters.countryIso));
     const categoryId = escapeFilterValue(detectedCategory.id);
     const categorySlug = escapeFilterValue(detectedCategory.slug);
-    parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    if (!isGlobalCountryIso(filters.countryIso)) {
+        parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    }
     parts.push(`isApproved = ${filters.isApproved}`);
     parts.push('isVisible = true');
     parts.push(`((categoryId = \"${categoryId}\" OR category_id = \"${categoryId}\") OR (categorySlug = \"${categorySlug}\" OR category_slug = \"${categorySlug}\"))`);
@@ -362,9 +373,9 @@ const resolveCountryIso = async (countryInput) => {
             where: { id: raw },
             select: { code: true }
         });
-        return country?.code?.toUpperCase() || null;
+        return country?.code ? normalizeCountryIso(country.code) : null;
     }
-    return raw.toUpperCase();
+    return normalizeCountryIso(raw);
 };
 exports.resolveCountryIso = resolveCountryIso;
 const resolveStateCode = async (stateId) => {

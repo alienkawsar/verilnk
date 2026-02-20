@@ -196,7 +196,7 @@ export default function StatesSection() {
                                 <th className="p-4 font-medium">State Name</th>
                                 <th className="p-4 font-medium">Code</th>
                                 <th className="p-4 font-medium">Country</th>
-                                <th className="p-4 font-medium text-right">Actions</th>
+                                <th className="p-4 w-28 font-medium text-right">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
@@ -223,8 +223,8 @@ export default function StatesSection() {
                                             <MapPin className="w-3 h-3" />
                                             {countries.find(c => c.id === state.countryId)?.code}
                                         </td>
-                                        <td className="p-4">
-                                            <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <td className="p-4 w-28">
+                                            <div className="flex items-center justify-end gap-2 opacity-100">
                                                 <button
                                                     onClick={() => openEditModal(state)}
                                                     className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-400/10 transition-colors"

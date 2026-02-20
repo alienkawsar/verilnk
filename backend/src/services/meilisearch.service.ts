@@ -157,6 +157,12 @@ const withSynonyms = (words: string[]): Set<string> => {
 };
 
 const escapeFilterValue = (value: string): string => value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+const normalizeCountryIso = (value: string): string => {
+    const normalized = String(value || '').trim().toUpperCase();
+    if (normalized === 'GLOBAL' || normalized === 'WW') return 'GL';
+    return normalized;
+};
+const isGlobalCountryIso = (value: string): boolean => normalizeCountryIso(value) === 'GL';
 
 const getOrgPriority = (organization?: Organization | null): OrgPriority =>
     organization?.priority ?? OrgPriority.NORMAL;
@@ -436,9 +442,10 @@ const sortExactMatches = (hits: any[]): any[] =>
 
 const buildScopeFilter = (filters: SearchFilters): string => {
     const parts: string[] = [];
-    const countryIso = escapeFilterValue(filters.countryIso);
-
-    parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    const countryIso = escapeFilterValue(normalizeCountryIso(filters.countryIso));
+    if (!isGlobalCountryIso(filters.countryIso)) {
+        parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    }
     parts.push(`isApproved = ${filters.isApproved}`);
     parts.push('isVisible = true');
 
@@ -460,11 +467,13 @@ const buildCategoryExpansionFilter = (
     detectedCategory: DetectedCategory
 ): string => {
     const parts: string[] = [];
-    const countryIso = escapeFilterValue(filters.countryIso);
+    const countryIso = escapeFilterValue(normalizeCountryIso(filters.countryIso));
     const categoryId = escapeFilterValue(detectedCategory.id);
     const categorySlug = escapeFilterValue(detectedCategory.slug);
 
-    parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    if (!isGlobalCountryIso(filters.countryIso)) {
+        parts.push(`(countryIso = \"${countryIso}\" OR country_code = \"${countryIso}\")`);
+    }
     parts.push(`isApproved = ${filters.isApproved}`);
     parts.push('isVisible = true');
     parts.push(
@@ -501,10 +510,10 @@ export const resolveCountryIso = async (countryInput: string): Promise<string | 
             where: { id: raw },
             select: { code: true }
         });
-        return country?.code?.toUpperCase() || null;
+        return country?.code ? normalizeCountryIso(country.code) : null;
     }
 
-    return raw.toUpperCase();
+    return normalizeCountryIso(raw);
 };
 
 export const resolveStateCode = async (stateId?: string): Promise<string | undefined> => {

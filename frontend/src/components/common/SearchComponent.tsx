@@ -10,6 +10,7 @@ import { useAuth } from '@/context/AuthContext';
 import ReportModal from '../ReportModal';
 import LoginModal from '../auth/LoginModal';
 import SignupModal from '../auth/SignupModal';
+import { normalizeCountryCode } from '@/lib/utils';
 
 interface SearchResult {
     id: string;
@@ -22,6 +23,7 @@ interface SearchResult {
 
 export default function SearchComponent() {
     const { countryCode, stateId } = useCountry();
+    const countryIso = normalizeCountryCode(countryCode);
     const { user } = useAuth();
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<SearchResult[]>([]);
@@ -45,7 +47,7 @@ export default function SearchComponent() {
                 abortRef.current.abort();
             }
 
-            if (trimmed.length > 1 && countryCode && countryCode !== 'Global') {
+            if (trimmed.length > 1 && countryIso) {
                 const requestId = ++requestIdRef.current;
                 const controller = new AbortController();
                 abortRef.current = controller;
@@ -53,7 +55,7 @@ export default function SearchComponent() {
                 try {
                     const data = await searchSites({
                         q: trimmed,
-                        country: countryCode,
+                        country: countryIso,
                         stateId: stateId || undefined,
                         limit: 5
                     }, controller.signal);
@@ -83,7 +85,7 @@ export default function SearchComponent() {
                 abortRef.current.abort();
             }
         };
-    }, [query, countryCode, stateId]);
+    }, [query, countryIso, stateId]);
 
     // Click outside to close
     useEffect(() => {
@@ -98,11 +100,11 @@ export default function SearchComponent() {
 
     const handleSearch = (e: React.FormEvent) => {
         e.preventDefault();
-        if (query.trim() && countryCode && countryCode !== 'Global') {
+        if (query.trim() && countryIso) {
             setShowResults(false);
             const params = new URLSearchParams();
             params.set('q', query.trim());
-            params.set('country', countryCode);
+            params.set('country', countryIso);
             if (stateId) params.set('state', stateId);
             router.push(`/search?${params.toString()}`);
         }
@@ -153,7 +155,7 @@ export default function SearchComponent() {
                             <button
                                 type="button"
                                 onClick={() => setQuery('')}
-                                className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-black/5 text-slate-400 hover:text-slate-600 dark:border-white/10 dark:hover:text-slate-200 transition-colors"
+                                className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-black/5 text-slate-400 hover:text-slate-600 dark:border-white/10 dark:hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-primary)]/50"
                                 aria-label="Clear search"
                             >
                                 <X className="w-4 h-4" />
@@ -161,7 +163,7 @@ export default function SearchComponent() {
                         )}
                         <button
                             type="submit"
-                            className="h-9 w-9 inline-flex items-center justify-center rounded-xl btn-primary shadow-md hover:shadow-lg transition-all"
+                            className="h-[38px] w-[38px] inline-flex items-center justify-center rounded-full btn-primary shadow-md hover:shadow-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-primary)]/50"
                             aria-label="Search"
                             title="Search"
                         >
@@ -229,7 +231,7 @@ export default function SearchComponent() {
                         href={`/search?${(() => {
                             const params = new URLSearchParams();
                             params.set('q', query);
-                            params.set('country', countryCode);
+                            if (countryIso) params.set('country', countryIso);
                             if (stateId) params.set('state', stateId);
                             return params.toString();
                         })()}`}
