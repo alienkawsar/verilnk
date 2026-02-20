@@ -89,6 +89,33 @@ interface Organization {
   deleteReason?: string | null;
 }
 
+const BILLING_TERM_OPTIONS = [
+  { value: 'MONTHLY', label: 'Monthly' },
+  { value: 'ANNUAL', label: 'Annual' },
+] as const;
+
+const SELF_SERVE_MONTHLY_PRICE_CENTS: Record<'BASIC' | 'PRO' | 'BUSINESS', number> = {
+  BASIC: 4900,
+  PRO: 9900,
+  BUSINESS: 19900,
+};
+
+const isSelfServePlan = (
+  planType: string,
+): planType is 'BASIC' | 'PRO' | 'BUSINESS' => {
+  return planType === 'BASIC' || planType === 'PRO' || planType === 'BUSINESS';
+};
+
+const resolveSelfServeAmountCents = (
+  planType: 'BASIC' | 'PRO' | 'BUSINESS',
+  billingTerm: 'MONTHLY' | 'ANNUAL',
+) => {
+  const monthlyAmount = SELF_SERVE_MONTHLY_PRICE_CENTS[planType];
+  return billingTerm === 'ANNUAL'
+    ? Math.round(monthlyAmount * 12 * 0.9)
+    : monthlyAmount;
+};
+
 const adminOrgFormControlClass =
   'w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-4 py-2 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-[#187DE9]/35 focus:border-[#187DE9]/40 transition-colors';
 
@@ -300,10 +327,15 @@ export default function OrganizationsSection({
     stateId: '',
     categoryId: '',
     type: 'PUBLIC',
+    // Discovery note (frontend/src/components/admin/sections/OrganizationsSection.tsx):
+    // Create/Edit form state previously had no org priority field, so payloads could not persist selected priority.
+    priority: 'NORMAL',
     about: '',
     logo: '',
     planType: 'FREE',
     planStatus: 'ACTIVE',
+    billingTerm: 'MONTHLY' as 'MONTHLY' | 'ANNUAL',
+    amountCents: '',
     durationPreset: '30',
     customDays: '',
     priorityOverride: 'HIGH',
@@ -318,6 +350,7 @@ export default function OrganizationsSection({
     stateId: '',
     categoryId: '',
     type: 'PUBLIC',
+    priority: 'NORMAL',
     about: '',
     logo: '',
     loginEmail: '',
@@ -665,6 +698,7 @@ export default function OrganizationsSection({
       stateId: org.state?.id || org.stateId || '',
       categoryId: org.category?.id || org.categoryId || '',
       type: org.type || 'PUBLIC',
+      priority: org.priority || 'NORMAL',
       about: org.about || '',
       logo:
         org.logo && !org.logo.includes('via.placeholder.com') ? org.logo : '',
@@ -808,10 +842,17 @@ export default function OrganizationsSection({
       // Exclude loginEmail from organization update
       const { loginEmail, ...orgData } = editForm;
 
-      await updateOrganization(editingOrg.id, {
+      const updatedOrg = await updateOrganization(editingOrg.id, {
         ...orgData,
         logo: finalLogo,
       });
+      if (updatedOrg?.id) {
+        setOrganizations((prev) =>
+          prev.map((org) =>
+            org.id === updatedOrg.id ? { ...org, ...updatedOrg } : org,
+          ),
+        );
+      }
 
       // Also save plan if it was modified
       try {
@@ -916,17 +957,42 @@ export default function OrganizationsSection({
     if (priorityTargetIds.length === 0) return;
     setSaving(true);
     try {
+      const expiresAtIso =
+        targetDuration > 0
+          ? new Date(
+              Date.now() + targetDuration * 24 * 60 * 60 * 1000,
+            ).toISOString()
+          : undefined;
       if (priorityTargetIds.length === 1) {
-        await updateOrganizationPriority(
+        const updatedOrg = await updateOrganizationPriority(
           priorityTargetIds[0],
           targetPriority,
           targetDuration,
         );
+        if (updatedOrg?.id) {
+          setOrganizations((prev) =>
+            prev.map((org) =>
+              org.id === updatedOrg.id ? { ...org, ...updatedOrg } : org,
+            ),
+          );
+        }
       } else {
         await bulkUpdateOrganizationPriority(
           priorityTargetIds,
           targetPriority,
           targetDuration,
+        );
+        const targetIds = new Set(priorityTargetIds);
+        setOrganizations((prev) =>
+          prev.map((org) =>
+            targetIds.has(org.id)
+              ? {
+                  ...org,
+                  priority: targetPriority as Organization['priority'],
+                  priorityExpiresAt: expiresAtIso,
+                }
+              : org,
+          ),
         );
       }
 
@@ -961,6 +1027,19 @@ export default function OrganizationsSection({
     if (label === 'HIGH') return 3;
     if (label === 'MEDIUM') return 2;
     if (label === 'NORMAL') return 1;
+    return 0;
+  };
+
+  const resolveCreateBillingAmountCents = () => {
+    if (isSelfServePlan(createForm.planType)) {
+      return resolveSelfServeAmountCents(createForm.planType, createForm.billingTerm);
+    }
+
+    if (createForm.planType === 'ENTERPRISE') {
+      const parsed = Number.parseInt(createForm.amountCents, 10);
+      return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+    }
+
     return 0;
   };
 
@@ -1100,10 +1179,30 @@ export default function OrganizationsSection({
     }
     setCreating(true);
     try {
-      const durationDays = resolveDurationDays({
-        durationPreset: createForm.durationPreset,
-        customDays: createForm.customDays,
-      });
+      const selectedPlanType = createForm.planType;
+      const isPaidPlan = selectedPlanType !== 'FREE';
+      const billingDurationDays = createForm.billingTerm === 'ANNUAL' ? 365 : 30;
+      const resolvedDurationDays = isPaidPlan
+        ? billingDurationDays
+        : resolveDurationDays({
+            durationPreset: createForm.durationPreset,
+            customDays: createForm.customDays,
+          });
+      const resolvedAmountCents = resolveCreateBillingAmountCents();
+
+      if (
+        selectedPlanType === 'ENTERPRISE' &&
+        createForm.planStatus === 'ACTIVE' &&
+        resolvedAmountCents <= 0
+      ) {
+        showToast(
+          'Enterprise plan requires an invoice amount greater than 0',
+          'error',
+        );
+        setCreating(false);
+        return;
+      }
+
       const payload = {
         name: createForm.name,
         email: createForm.email,
@@ -1115,13 +1214,16 @@ export default function OrganizationsSection({
         stateId: createForm.stateId || undefined,
         categoryId: createForm.categoryId,
         type: createForm.type,
+        priority: createForm.priority,
         about: createForm.about || undefined,
         logo: createForm.logo || undefined,
-        planType: createForm.planType,
+        planType: selectedPlanType,
         planStatus: createForm.planStatus,
-        durationDays: durationDays > 0 ? durationDays : 0,
+        durationDays: resolvedDurationDays > 0 ? resolvedDurationDays : 0,
+        billingTerm: isPaidPlan ? createForm.billingTerm : undefined,
+        amountCents: isPaidPlan ? resolvedAmountCents : undefined,
         priorityOverride:
-          createForm.planType === 'ENTERPRISE'
+          selectedPlanType === 'ENTERPRISE'
             ? mapPriorityOverrideToValue(createForm.priorityOverride)
             : null,
       };
@@ -1140,10 +1242,13 @@ export default function OrganizationsSection({
         stateId: '',
         categoryId: '',
         type: 'PUBLIC',
+        priority: 'NORMAL',
         about: '',
         logo: '',
         planType: 'FREE',
         planStatus: 'ACTIVE',
+        billingTerm: 'MONTHLY',
+        amountCents: '',
         durationPreset: '30',
         customDays: '',
         priorityOverride: 'HIGH',
@@ -1796,6 +1901,23 @@ export default function OrganizationsSection({
                     <option value='NON_PROFIT'>Non-profit</option>
                   </select>
                 </div>
+              </div>
+              <div className='space-y-2'>
+                <label className='text-sm text-slate-600 dark:text-slate-400'>
+                  Priority
+                </label>
+                <select
+                  value={editForm.priority}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, priority: e.target.value })
+                  }
+                  className={adminOrgFormControlClass}
+                >
+                  <option value='LOW'>Low</option>
+                  <option value='NORMAL'>Normal</option>
+                  <option value='MEDIUM'>Medium</option>
+                  <option value='HIGH'>High</option>
+                </select>
               </div>
 
               <div className='space-y-2'>
@@ -2642,21 +2764,40 @@ export default function OrganizationsSection({
                   </select>
                 </div>
               </div>
-              <div className='space-y-2'>
-                <label className='text-sm text-slate-600 dark:text-slate-400'>
-                  Type
-                </label>
-                <select
-                  value={createForm.type}
-                  onChange={(e) =>
-                    setCreateForm({ ...createForm, type: e.target.value })
-                  }
-                  className={adminOrgFormControlClass}
-                >
-                  <option value='PUBLIC'>Public</option>
-                  <option value='PRIVATE'>Private</option>
-                  <option value='NON_PROFIT'>Non Profit</option>
-                </select>
+              <div className='grid grid-cols-2 gap-4'>
+                <div className='space-y-2'>
+                  <label className='text-sm text-slate-600 dark:text-slate-400'>
+                    Type
+                  </label>
+                  <select
+                    value={createForm.type}
+                    onChange={(e) =>
+                      setCreateForm({ ...createForm, type: e.target.value })
+                    }
+                    className={adminOrgFormControlClass}
+                  >
+                    <option value='PUBLIC'>Public</option>
+                    <option value='PRIVATE'>Private</option>
+                    <option value='NON_PROFIT'>Non Profit</option>
+                  </select>
+                </div>
+                <div className='space-y-2'>
+                  <label className='text-sm text-slate-600 dark:text-slate-400'>
+                    Priority
+                  </label>
+                  <select
+                    value={createForm.priority}
+                    onChange={(e) =>
+                      setCreateForm({ ...createForm, priority: e.target.value })
+                    }
+                    className={adminOrgFormControlClass}
+                  >
+                    <option value='LOW'>Low</option>
+                    <option value='NORMAL'>Normal</option>
+                    <option value='MEDIUM'>Medium</option>
+                    <option value='HIGH'>High</option>
+                  </select>
+                </div>
               </div>
               <div className='grid grid-cols-2 gap-4'>
                 <div className='space-y-2'>
@@ -2665,9 +2806,35 @@ export default function OrganizationsSection({
                   </label>
                   <select
                     value={createForm.planType}
-                    onChange={(e) =>
-                      setCreateForm({ ...createForm, planType: e.target.value })
-                    }
+                    onChange={(e) => {
+                      const nextPlanType = e.target.value;
+                      setCreateForm((prev) => {
+                        if (isSelfServePlan(nextPlanType)) {
+                          const nextAmount = resolveSelfServeAmountCents(
+                            nextPlanType,
+                            prev.billingTerm,
+                          );
+                          return {
+                            ...prev,
+                            planType: nextPlanType,
+                            amountCents: String(nextAmount),
+                          };
+                        }
+
+                        if (nextPlanType === 'FREE') {
+                          return {
+                            ...prev,
+                            planType: nextPlanType,
+                            amountCents: '',
+                          };
+                        }
+
+                        return {
+                          ...prev,
+                          planType: nextPlanType,
+                        };
+                      });
+                    }}
                     className={adminOrgFormControlClass}
                   >
                     <option value='FREE'>FREE</option>
@@ -2697,49 +2864,124 @@ export default function OrganizationsSection({
                   </select>
                 </div>
               </div>
-              <div className='grid grid-cols-2 gap-4'>
-                <div className='space-y-2'>
-                  <label className='text-sm text-slate-600 dark:text-slate-400'>
-                    Plan Duration
-                  </label>
-                  <select
-                    value={createForm.durationPreset}
-                    onChange={(e) =>
-                      setCreateForm({
-                        ...createForm,
-                        durationPreset: e.target.value,
-                      })
-                    }
-                    className={adminOrgFormControlClass}
-                  >
-                    <option value='7'>7 Days</option>
-                    <option value='15'>15 Days</option>
-                    <option value='30'>30 Days</option>
-                    <option value='custom'>Custom</option>
-                  </select>
-                </div>
-                {createForm.durationPreset === 'custom' ? (
+              {createForm.planType === 'FREE' ? (
+                <div className='grid grid-cols-2 gap-4'>
                   <div className='space-y-2'>
                     <label className='text-sm text-slate-600 dark:text-slate-400'>
-                      Custom Days
+                      Plan Duration
                     </label>
-                    <input
-                      type='number'
-                      min='0'
-                      value={createForm.customDays}
+                    <select
+                      value={createForm.durationPreset}
                       onChange={(e) =>
                         setCreateForm({
                           ...createForm,
-                          customDays: e.target.value,
+                          durationPreset: e.target.value,
                         })
                       }
                       className={adminOrgFormControlClass}
-                    />
+                    >
+                      <option value='7'>7 Days</option>
+                      <option value='15'>15 Days</option>
+                      <option value='30'>30 Days</option>
+                      <option value='custom'>Custom</option>
+                    </select>
                   </div>
-                ) : (
-                  <div />
-                )}
-              </div>
+                  {createForm.durationPreset === 'custom' ? (
+                    <div className='space-y-2'>
+                      <label className='text-sm text-slate-600 dark:text-slate-400'>
+                        Custom Days
+                      </label>
+                      <input
+                        type='number'
+                        min='0'
+                        value={createForm.customDays}
+                        onChange={(e) =>
+                          setCreateForm({
+                            ...createForm,
+                            customDays: e.target.value,
+                          })
+                        }
+                        className={adminOrgFormControlClass}
+                      />
+                    </div>
+                  ) : (
+                    <div />
+                  )}
+                </div>
+              ) : (
+                <div className='grid grid-cols-2 gap-4'>
+                  <div className='space-y-2'>
+                    <label className='text-sm text-slate-600 dark:text-slate-400'>
+                      Billing Term
+                    </label>
+                    <select
+                      value={createForm.billingTerm}
+                      onChange={(e) => {
+                        const nextBillingTerm = e.target.value as
+                          | 'MONTHLY'
+                          | 'ANNUAL';
+                        setCreateForm((prev) => {
+                          if (isSelfServePlan(prev.planType)) {
+                            const nextAmount = resolveSelfServeAmountCents(
+                              prev.planType,
+                              nextBillingTerm,
+                            );
+                            return {
+                              ...prev,
+                              billingTerm: nextBillingTerm,
+                              amountCents: String(nextAmount),
+                            };
+                          }
+
+                          return {
+                            ...prev,
+                            billingTerm: nextBillingTerm,
+                          };
+                        });
+                      }}
+                      className={adminOrgFormControlClass}
+                    >
+                      {BILLING_TERM_OPTIONS.map((term) => (
+                        <option key={term.value} value={term.value}>
+                          {term.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {createForm.planType === 'ENTERPRISE' ? (
+                    <div className='space-y-2'>
+                      <label className='text-sm text-slate-600 dark:text-slate-400'>
+                        Invoice Amount (cents)
+                      </label>
+                      <input
+                        type='number'
+                        min='1'
+                        value={createForm.amountCents}
+                        onChange={(e) =>
+                          setCreateForm({
+                            ...createForm,
+                            amountCents: e.target.value,
+                          })
+                        }
+                        placeholder='e.g. 120000'
+                        className={adminOrgFormControlClass}
+                      />
+                    </div>
+                  ) : (
+                    <div className='space-y-2'>
+                      <label className='text-sm text-slate-600 dark:text-slate-400'>
+                        Invoice Amount
+                      </label>
+                      <div
+                        className={`${adminOrgFormControlClass} bg-slate-50 dark:bg-slate-900/60 flex items-center`}
+                      >
+                        ${(resolveCreateBillingAmountCents() / 100).toFixed(2)}{' '}
+                        USD
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               {createForm.planType === 'ENTERPRISE' && (
                 <div className='space-y-2'>
                   <label className='text-sm text-slate-600 dark:text-slate-400'>

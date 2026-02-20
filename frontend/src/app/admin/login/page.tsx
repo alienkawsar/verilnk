@@ -6,6 +6,7 @@ import axios from 'axios';
 import { Lock, AlertCircle } from 'lucide-react';
 import { PasswordInput } from '@/components/ui/PasswordInput';
 import { LoadingSpinner } from '@/components/ui/Loading';
+import { fetchAdminMe } from '@/lib/api';
 
 export default function AdminLoginPage() {
     const [email, setEmail] = useState('');
@@ -24,8 +25,16 @@ export default function AdminLoginPage() {
             // Call the Proxy Route
             // This sets the HttpOnly cookie on the Next.js domain
             await axios.post('/api/auth/admin/login', { email, password });
-
-            router.replace('/admin/dashboard');
+            let destination = '/admin/dashboard';
+            try {
+                const me = await fetchAdminMe();
+                if (me?.user?.role === 'ACCOUNTS') {
+                    destination = '/admin/billing';
+                }
+            } catch {
+                // Fallback to dashboard if role fetch fails after login.
+            }
+            router.replace(destination);
         } catch (err: unknown) {
             let msg = 'Login failed. Please check server connection.';
 

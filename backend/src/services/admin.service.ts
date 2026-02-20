@@ -30,6 +30,7 @@ export const getAllAdmins = async (filters: { role?: AdminRole; search?: string 
             firstName: true,
             lastName: true,
             role: true,
+            isActive: true,
             createdAt: true,
             updatedAt: true,
         },
@@ -44,7 +45,7 @@ import { AuditActionType } from '@prisma/client';
 
 export const createAdmin = async (
     data: { email: string; password: string; firstName: string; lastName: string; role: AdminRole },
-    auditContext?: { adminId: string; ip?: string; userAgent?: string }
+    auditContext?: { adminId: string; role?: string; ip?: string; userAgent?: string }
 ): Promise<Omit<Admin, 'password'>> => {
     const existingAdmin = await prisma.admin.findUnique({ where: { email: data.email } });
     if (existingAdmin) {
@@ -62,12 +63,14 @@ export const createAdmin = async (
     });
 
     if (auditContext) {
+        const targetRoleLabel = admin.role === AdminRole.ACCOUNTS ? 'ACCOUNTS admin' : 'admin';
         auditService.logAction({
             adminId: auditContext.adminId,
+            actorRole: auditContext.role,
             action: AuditActionType.CREATE,
             entity: 'Admin',
             targetId: admin.id,
-            details: `Created admin ${admin.email} with role ${admin.role}`,
+            details: `Created ${targetRoleLabel} ${admin.email}`,
             snapshot: admin,
             ipAddress: auditContext.ip,
             userAgent: auditContext.userAgent
@@ -82,7 +85,7 @@ export const createAdmin = async (
 export const updateAdmin = async (
     id: string,
     data: Partial<{ email: string; firstName: string; lastName: string; role: AdminRole; password?: string }>,
-    auditContext?: { adminId: string; ip?: string; userAgent?: string }
+    auditContext?: { adminId: string; role?: string; ip?: string; userAgent?: string }
 ): Promise<Omit<Admin, 'password'>> => {
     // ... existing validation checks ...
     if (data.email) {
@@ -107,12 +110,14 @@ export const updateAdmin = async (
     });
 
     if (auditContext) {
+        const targetRoleLabel = admin.role === AdminRole.ACCOUNTS ? 'ACCOUNTS admin' : 'admin';
         auditService.logAction({
             adminId: auditContext.adminId,
+            actorRole: auditContext.role,
             action: AuditActionType.UPDATE,
             entity: 'Admin',
             targetId: admin.id,
-            details: `Updated admin profile for ${admin.email}`,
+            details: `Updated ${targetRoleLabel} ${admin.email}`,
             snapshot: { before: beforeState, after: admin },
             ipAddress: auditContext.ip,
             userAgent: auditContext.userAgent
@@ -127,7 +132,7 @@ export const updateAdmin = async (
 export const deleteAdmin = async (
     id: string,
     currentAdminId: string,
-    auditContext?: { ip?: string; userAgent?: string }
+    auditContext?: { role?: string; ip?: string; userAgent?: string }
 ): Promise<void> => {
     if (id === currentAdminId) {
         throw new Error('You cannot delete your own account');
@@ -138,6 +143,7 @@ export const deleteAdmin = async (
 
     auditService.logAction({
         adminId: currentAdminId,
+        actorRole: auditContext?.role,
         action: AuditActionType.DELETE,
         entity: 'Admin',
         targetId: id,
@@ -150,4 +156,47 @@ export const deleteAdmin = async (
 
 export const getAdminById = async (id: string): Promise<Admin | null> => {
     return prisma.admin.findUnique({ where: { id } });
+};
+
+export const setAdminActiveStatus = async (
+    id: string,
+    isActive: boolean,
+    auditContext: { adminId: string; role?: string; ip?: string; userAgent?: string }
+): Promise<Omit<Admin, 'password'>> => {
+    const beforeState = await prisma.admin.findUnique({ where: { id } });
+    if (!beforeState) {
+        throw new Error('Admin not found');
+    }
+
+    if (beforeState.id === auditContext.adminId && !isActive) {
+        throw new Error('You cannot deactivate your own account');
+    }
+
+    if (beforeState.isActive === isActive) {
+        const { password, ...sameResult } = beforeState;
+        return sameResult;
+    }
+
+    const admin = await prisma.admin.update({
+        where: { id },
+        data: { isActive }
+    });
+
+    const statusLabel = isActive ? 'activated' : 'deactivated';
+    const targetRoleLabel = admin.role === AdminRole.ACCOUNTS ? 'ACCOUNTS admin' : 'admin';
+
+    await auditService.logAction({
+        adminId: auditContext.adminId,
+        actorRole: auditContext.role,
+        action: AuditActionType.UPDATE,
+        entity: 'Admin',
+        targetId: admin.id,
+        details: `${targetRoleLabel} ${statusLabel}: ${admin.email}`,
+        snapshot: { before: beforeState, after: admin },
+        ipAddress: auditContext.ip,
+        userAgent: auditContext.userAgent
+    });
+
+    const { password, ...result } = admin;
+    return result;
 };

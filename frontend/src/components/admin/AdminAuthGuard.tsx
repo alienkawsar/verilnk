@@ -25,7 +25,7 @@ export default function AdminAuthGuard({ children }: { children: React.ReactNode
         const checkAuth = async () => {
             try {
                 const data = await fetchAdminMe();
-                if (!['SUPER_ADMIN', 'MODERATOR', 'VERIFIER'].includes(data.user.role)) {
+                if (!['SUPER_ADMIN', 'MODERATOR', 'VERIFIER', 'ACCOUNTS'].includes(data.user.role)) {
                     await logoutAdmin();
                     router.push('/admin/login');
                     return;

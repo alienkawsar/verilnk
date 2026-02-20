@@ -13,6 +13,7 @@ router.post('/reindex', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERA
 // Admin Management (Super Admin Only)
 router.get('/', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminController.getAdmins);
 router.post('/', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminController.createAdmin);
+router.patch('/:id/status', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminController.updateAdminStatus);
 router.patch('/:id', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminController.updateAdmin);
 router.delete('/:id', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), adminController.deleteAdmin);
 router.get('/sessions', authenticateAdmin, authorizeRole(['SUPER_ADMIN']), sessionController.getAdminSessions);
@@ -50,7 +51,7 @@ router.post('/tags', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERATOR
 router.put('/categories/:id/tags', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERATOR']), categoryController.setCategoryTags);
 
 // Self Management (All Admins)
-router.patch('/me/profile', authenticateAdmin, adminController.updateProfile);
+router.patch('/me/profile', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), adminController.updateProfile);
 
 // Enterprise Management (Super Admin Only)
 import * as adminEnterpriseController from '../controllers/admin.enterprise.controller';

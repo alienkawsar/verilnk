@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
@@ -18,6 +51,7 @@ const rateLimit_middleware_1 = require("../middleware/rateLimit.middleware");
 const recaptcha_service_1 = require("../services/recaptcha.service");
 const jwt_1 = require("../config/jwt");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
+const auditService = __importStar(require("../services/audit.service"));
 const router = express_1.default.Router();
 const ADMIN_SESSION_HOURS = 8;
 const ORG_SESSION_HOURS = 8;
@@ -365,6 +399,9 @@ router.post('/admin/login', rateLimit_middleware_1.strictRateLimiter, async (req
         if (!admin) {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
+        if (!admin.isActive) {
+            return res.status(403).json({ message: 'Admin account is deactivated' });
+        }
         const isMatch = await bcryptjs_1.default.compare(password, admin.password);
         if (!isMatch) {
             await (0, session_service_1.logSecurityEvent)({
@@ -481,6 +518,19 @@ router.post('/admin/login', rateLimit_middleware_1.strictRateLimiter, async (req
                 lastName: admin.lastName
             },
             ...buildSessionResponse(decoded)
+        });
+        await auditService.logAction({
+            adminId: admin.id,
+            actorRole: admin.role,
+            action: client_1.AuditActionType.LOGIN,
+            entity: 'AdminAuth',
+            targetId: admin.id,
+            details: `${admin.role} admin login`,
+            snapshot: {
+                role: admin.role
+            },
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent']
         });
     }
     catch (error) {

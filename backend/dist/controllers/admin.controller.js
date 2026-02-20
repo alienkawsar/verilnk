@@ -33,25 +33,29 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.bulkDeleteSites = exports.changePassword = exports.updateProfile = exports.deleteAdmin = exports.updateAdmin = exports.createAdmin = exports.getAdmins = exports.reindexSearch = void 0;
+exports.bulkDeleteSites = exports.updateAdminStatus = exports.changePassword = exports.updateProfile = exports.deleteAdmin = exports.updateAdmin = exports.createAdmin = exports.getAdmins = exports.reindexSearch = void 0;
 const meilisearchService = __importStar(require("../services/meilisearch.service"));
 const adminService = __importStar(require("../services/admin.service"));
 const zod_1 = require("zod");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
+const ADMIN_ROLE_VALUES = ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER', 'ACCOUNTS'];
 // Schemas
 const createAdminSchema = zod_1.z.object({
     email: zod_1.z.string().email(),
     password: zod_1.z.string().regex(passwordPolicy_1.STRONG_PASSWORD_REGEX, passwordPolicy_1.STRONG_PASSWORD_MESSAGE),
     firstName: zod_1.z.string().min(1),
     lastName: zod_1.z.string().min(1),
-    role: zod_1.z.enum(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER'])
+    role: zod_1.z.enum(ADMIN_ROLE_VALUES)
 });
 const updateAdminSchema = zod_1.z.object({
     email: zod_1.z.string().email().optional(),
     firstName: zod_1.z.string().min(1).optional(),
     lastName: zod_1.z.string().min(1).optional(),
-    role: zod_1.z.enum(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']).optional(),
+    role: zod_1.z.enum(ADMIN_ROLE_VALUES).optional(),
     password: zod_1.z.string().regex(passwordPolicy_1.STRONG_PASSWORD_REGEX, passwordPolicy_1.STRONG_PASSWORD_MESSAGE).optional(),
+});
+const updateAdminStatusSchema = zod_1.z.object({
+    isActive: zod_1.z.boolean()
 });
 const reindexSearch = async (req, res) => {
     try {
@@ -89,8 +93,11 @@ const createAdmin = async (req, res) => {
         const data = createAdminSchema.parse(req.body);
         // @ts-ignore
         const creatorId = req.user.id;
+        // @ts-ignore
+        const creatorRole = req.user.role;
         const admin = await adminService.createAdmin(data, {
             adminId: creatorId,
+            role: creatorRole,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -111,8 +118,11 @@ const updateAdmin = async (req, res) => {
         const data = updateAdminSchema.parse(req.body);
         // @ts-ignore
         const currentAdminId = req.user.id; // The one performing the update
+        // @ts-ignore
+        const currentAdminRole = req.user.role;
         const admin = await adminService.updateAdmin(id, data, {
             adminId: currentAdminId,
+            role: currentAdminRole,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -132,7 +142,10 @@ const deleteAdmin = async (req, res) => {
         const { id } = req.params;
         // @ts-ignore
         const currentAdminId = req.user.id;
+        // @ts-ignore
+        const currentAdminRole = req.user.role;
         await adminService.deleteAdmin(id, currentAdminId, {
+            role: currentAdminRole,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -147,9 +160,12 @@ const updateProfile = async (req, res) => {
     try {
         // @ts-ignore
         const id = req.user.id;
+        // @ts-ignore
+        const role = req.user.role;
         const data = updateAdminSchema.parse(req.body);
         const admin = await adminService.updateAdmin(id, data, {
             adminId: id, // Self update
+            role,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -173,6 +189,31 @@ const changePassword = async (req, res) => {
     res.status(501).json({ message: 'Use update profile endpoint' });
 };
 exports.changePassword = changePassword;
+const updateAdminStatus = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const payload = updateAdminStatusSchema.parse(req.body);
+        // @ts-ignore
+        const actorId = req.user.id;
+        // @ts-ignore
+        const actorRole = req.user.role;
+        const admin = await adminService.setAdminActiveStatus(id, payload.isActive, {
+            adminId: actorId,
+            role: actorRole,
+            ip: req.ip,
+            userAgent: req.headers['user-agent']
+        });
+        res.json(admin);
+    }
+    catch (error) {
+        if (error instanceof zod_1.z.ZodError) {
+            res.status(400).json({ errors: error.issues });
+            return;
+        }
+        res.status(400).json({ message: error.message || 'Error updating admin status' });
+    }
+};
+exports.updateAdminStatus = updateAdminStatus;
 // Site Management (Bulk)
 const bulkDeleteSites = async (req, res) => {
     try {

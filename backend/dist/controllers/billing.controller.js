@@ -47,6 +47,7 @@ const mockCheckoutSchema = zod_1.z.object({
     amountCents: zod_1.z.number().int().positive(),
     currency: zod_1.z.string().optional(),
     durationDays: zod_1.z.number().int().positive().optional(),
+    billingTerm: zod_1.z.enum(BILLING_TERM_VALUES).optional(),
     billingEmail: zod_1.z.string().email().optional(),
     billingName: zod_1.z.string().optional(),
     simulate: zod_1.z.enum(['success', 'failure']).optional()

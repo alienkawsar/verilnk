@@ -2,7 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import { SessionActorType, SecurityEventType, SecurityEventSeverity } from '@prisma/client';
+import { AuditActionType, SessionActorType, SecurityEventType, SecurityEventSeverity } from '@prisma/client';
 import { createSession, getSessionByJti, logSecurityEvent, updateSessionExpiry, countRecentFailedLogins, revokeSessionByJti } from '../services/session.service';
 import { z } from 'zod';
 import { prisma } from '../db/client';
@@ -13,6 +13,7 @@ import { strictRateLimiter } from '../middleware/rateLimit.middleware';
 import { verifyCaptcha } from '../services/recaptcha.service';
 import { getJwtSecret } from '../config/jwt';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX, generateStrongPassword } from '../utils/passwordPolicy';
+import * as auditService from '../services/audit.service';
 
 const router = express.Router();
 
@@ -392,6 +393,10 @@ router.post('/admin/login', strictRateLimiter, async (req, res) => {
             return res.status(400).json({ message: 'Invalid credentials' });
         }
 
+        if (!admin.isActive) {
+            return res.status(403).json({ message: 'Admin account is deactivated' });
+        }
+
         const isMatch = await bcrypt.compare(password, admin.password);
         if (!isMatch) {
             await logSecurityEvent({
@@ -514,6 +519,20 @@ router.post('/admin/login', strictRateLimiter, async (req, res) => {
                 lastName: admin.lastName
             },
             ...buildSessionResponse(decoded)
+        });
+
+        await auditService.logAction({
+            adminId: admin.id,
+            actorRole: admin.role,
+            action: AuditActionType.LOGIN,
+            entity: 'AdminAuth',
+            targetId: admin.id,
+            details: `${admin.role} admin login`,
+            snapshot: {
+                role: admin.role
+            },
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent']
         });
     } catch (error) {
         if (error instanceof z.ZodError) {

@@ -15,7 +15,9 @@ export const sanitizeReturnTo = (value: string | null | undefined): string | nul
 };
 
 export const getDefaultPostLoginRoute = (user: RedirectUser): string => {
+    if (user.role === 'ACCOUNTS') return '/admin/billing';
     if (user.role === 'SUPER_ADMIN') return '/admin/dashboard';
+    if (user.role === 'MODERATOR' || user.role === 'VERIFIER') return '/admin/dashboard';
     if (user.organizationId && user.planType === 'ENTERPRISE') return '/enterprise';
     if (user.organizationId) return '/org/dashboard';
     return '/dashboard';

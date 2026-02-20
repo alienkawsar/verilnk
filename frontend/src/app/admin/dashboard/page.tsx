@@ -26,7 +26,7 @@ import {
 import { Skeleton } from '@/components/ui/Skeleton';
 import { logoutAdmin, fetchAdminMe } from '@/lib/api';
 import { getInitials } from '@/lib/utils';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { ThemeToggle } from '@/components/ui/ThemeToggle';
 import { useTheme } from '@/context/ThemeContext';
 
@@ -86,10 +86,13 @@ export default function AdminDashboard({
     firstName?: string;
     lastName?: string;
     email: string;
-    role: string;
+    role: 'SUPER_ADMIN' | 'MODERATOR' | 'VERIFIER' | 'ACCOUNTS';
   } | null>(null);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const router = useRouter();
+  const pathname = usePathname();
+  const isBillingRoute = pathname.startsWith('/admin/billing');
+  const shouldShowBillingFallbackNav = !adminUser && isBillingRoute;
 
   useEffect(() => {
     if (!mounted) return;
@@ -122,10 +125,16 @@ export default function AdminDashboard({
       .then((data) => {
         if (data?.user) {
           setAdminUser(data.user);
+          if (data.user.role === 'ACCOUNTS') {
+            setActiveSection('BILLING');
+            if (!pathname.startsWith('/admin/billing')) {
+              router.replace('/admin/billing');
+            }
+          }
         }
       })
       .catch(console.error);
-  }, []);
+  }, [pathname, router]);
 
   const handleLogout = async () => {
     try {
@@ -214,14 +223,14 @@ export default function AdminDashboard({
     },
     {
       id: 'BILLING',
-      name: 'Billing',
+      name: 'Sales & Billing',
       icon: Receipt,
-      roles: ['SUPER_ADMIN'],
+      roles: ['SUPER_ADMIN', 'ACCOUNTS'],
     },
   ];
 
   // Group Definitions
-  const sidebarGroups = [
+  const defaultSidebarGroups = [
     {
       title: 'Queues & Reports',
       items: ['SITES', 'REPORTS', 'REQUESTS'],
@@ -240,9 +249,24 @@ export default function AdminDashboard({
     },
   ];
 
-  const navItems = potentialNavItems.filter(
-    (item) => adminUser && item.roles.includes(adminUser.role),
-  );
+  const sidebarGroups = adminUser?.role === 'ACCOUNTS' || shouldShowBillingFallbackNav
+    ? [
+        {
+          title: 'Sales & Billing',
+          items: ['BILLING'],
+        },
+      ]
+    : defaultSidebarGroups;
+
+  // Discovery note (frontend/src/app/admin/dashboard/page.tsx):
+  // /admin/billing is the only ACCOUNTS route in admin; there is no separate /admin/sales route.
+  // Keep one sidebar item and preserve a billing-only fallback nav during /admin/billing hydration.
+  const canAccessNavItem = (item: (typeof potentialNavItems)[number]) => {
+    if (adminUser) return item.roles.includes(adminUser.role);
+    return shouldShowBillingFallbackNav && item.id === 'BILLING';
+  };
+
+  const navItems = potentialNavItems.filter(canAccessNavItem);
 
   const renderSection = () => {
     switch (activeSection) {
@@ -283,12 +307,15 @@ export default function AdminDashboard({
         if (adminUser?.role !== 'SUPER_ADMIN') return <SitesSection />;
         return <EnterpriseSection />;
       case 'BILLING':
-        if (adminUser?.role !== 'SUPER_ADMIN') return <SitesSection />;
+        // Keep billing route stable during role hydration:
+        // falling back to SitesSection here triggers /api/requests calls that are correctly forbidden for ACCOUNTS.
+        if (adminUser && adminUser.role !== 'SUPER_ADMIN' && adminUser.role !== 'ACCOUNTS') return <SitesSection />;
         return <BillingSection />;
       case 'ACCOUNT':
+        if (adminUser?.role === 'ACCOUNTS') return <BillingSection />;
         return <AccountSection user={adminUser} />;
       default:
-        return <SitesSection />;
+        return adminUser?.role === 'ACCOUNTS' ? <BillingSection /> : <SitesSection />;
     }
   };
 
@@ -374,10 +401,7 @@ export default function AdminDashboard({
             // Filter items in this group that the user has access to
             const groupItems = group.items
               .map((id) => potentialNavItems.find((i) => i.id === id))
-              .filter(
-                (item) =>
-                  item && adminUser && item.roles.includes(adminUser.role),
-              );
+              .filter((item) => item && canAccessNavItem(item));
 
             if (groupItems.length === 0) return null;
 
@@ -466,10 +490,7 @@ export default function AdminDashboard({
             <ThemeToggle />
 
             {/* Profile Dropdown/Button */}
-            <button
-              onClick={() => setActiveSection('ACCOUNT')}
-              className={`flex items-center gap-3 transition-opacity hover:opacity-80 ${activeSection === 'ACCOUNT' ? 'opacity-80' : ''}`}
-            >
+            {adminUser?.role === 'ACCOUNTS' ? (
               <div className='w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/20'>
                 {adminUser
                   ? getInitials(
@@ -480,7 +501,23 @@ export default function AdminDashboard({
                     )
                   : '...'}
               </div>
-            </button>
+            ) : (
+              <button
+                onClick={() => setActiveSection('ACCOUNT')}
+                className={`flex items-center gap-3 transition-opacity hover:opacity-80 ${activeSection === 'ACCOUNT' ? 'opacity-80' : ''}`}
+              >
+                <div className='w-10 h-10 rounded-full bg-blue-600 flex items-center justify-center text-sm font-bold text-white shadow-lg shadow-blue-500/20 dark:shadow-blue-900/20'>
+                  {adminUser
+                    ? getInitials(
+                        adminUser.firstName,
+                        adminUser.lastName,
+                        undefined,
+                        adminUser.email,
+                      )
+                    : '...'}
+                </div>
+              </button>
+            )}
           </div>
         </header>
 

@@ -104,7 +104,7 @@ const updateOrgSchema = zod_1.z.object({
     countryId: zod_1.z.string().uuid().optional(),
     stateId: zod_1.z.union([zod_1.z.string().uuid(), zod_1.z.string().length(0), zod_1.z.null()]).optional(),
     categoryId: zod_1.z.union([zod_1.z.string().uuid(), zod_1.z.string().length(0), zod_1.z.null()]).optional(),
-    priority: zod_1.z.enum(['HIGH', 'MEDIUM', 'NORMAL', 'LOW']).optional(),
+    priority: zod_1.z.preprocess((value) => (typeof value === 'string' ? value.trim().toUpperCase() : value), zod_1.z.enum(['HIGH', 'MEDIUM', 'NORMAL', 'LOW'])).optional(),
     isRestricted: zod_1.z.boolean().optional()
 });
 const updatePlanSchema = zod_1.z.object({
@@ -117,6 +117,8 @@ const updatePlanSchema = zod_1.z.object({
     enterpriseMaxApiKeys: zod_1.z.number().int().min(1).max(1000000).optional().nullable(),
     enterpriseMaxMembers: zod_1.z.number().int().min(1).max(1000000).optional().nullable()
 });
+const BILLING_TERM_VALUES = ['MONTHLY', 'ANNUAL'];
+const ORG_PRIORITY_VALUES = ['HIGH', 'MEDIUM', 'NORMAL', 'LOW'];
 const adminCreateOrgSchema = zod_1.z.object({
     name: zod_1.z.string().min(1),
     email: zod_1.z.string().email(),
@@ -133,6 +135,11 @@ const adminCreateOrgSchema = zod_1.z.object({
     planType: zod_1.z.nativeEnum(client_2.PlanType).optional(),
     planStatus: zod_1.z.nativeEnum(client_2.PlanStatus).optional(),
     durationDays: zod_1.z.number().int().nonnegative().optional(),
+    billingTerm: zod_1.z.enum(BILLING_TERM_VALUES).optional(),
+    amountCents: zod_1.z.number().int().positive().optional(),
+    // Discovery note (backend/src/controllers/organization.controller.ts):
+    // Create payload priority was previously omitted from this schema and dropped before service write.
+    priority: zod_1.z.preprocess((value) => (typeof value === 'string' ? value.trim().toUpperCase() : value), zod_1.z.enum(ORG_PRIORITY_VALUES)).optional(),
     priorityOverride: zod_1.z.number().int().optional().nullable(),
     enterpriseMaxWorkspaces: zod_1.z.number().int().min(1).max(1000000).optional().nullable(),
     enterpriseMaxLinkedOrgs: zod_1.z.number().int().min(1).max(1000000).optional().nullable(),
@@ -695,11 +702,12 @@ const updateOrganizationPriority = async (req, res) => {
     try {
         const { id } = req.params;
         const { priority, durationDays } = req.body;
-        if (!['HIGH', 'MEDIUM', 'NORMAL', 'LOW'].includes(priority)) {
+        const normalizedPriority = typeof priority === 'string' ? priority.trim().toUpperCase() : priority;
+        if (!ORG_PRIORITY_VALUES.includes(normalizedPriority)) {
             res.status(400).json({ message: 'Invalid priority value' });
             return;
         }
-        const org = await orgService.updateOrganizationPriority(id, priority, durationDays);
+        const org = await orgService.updateOrganizationPriority(id, normalizedPriority, durationDays);
         res.json(org);
     }
     catch (error) {
@@ -710,15 +718,16 @@ exports.updateOrganizationPriority = updateOrganizationPriority;
 const bulkUpdateOrganizationPriority = async (req, res) => {
     try {
         const { ids, priority, durationDays } = req.body;
+        const normalizedPriority = typeof priority === 'string' ? priority.trim().toUpperCase() : priority;
         if (!Array.isArray(ids) || ids.length === 0) {
             res.status(400).json({ message: 'Invalid or empty IDs array' });
             return;
         }
-        if (!['HIGH', 'MEDIUM', 'NORMAL', 'LOW'].includes(priority)) {
+        if (!ORG_PRIORITY_VALUES.includes(normalizedPriority)) {
             res.status(400).json({ message: 'Invalid priority value' });
             return;
         }
-        const result = await orgService.bulkUpdateOrganizationPriority(ids, priority, durationDays);
+        const result = await orgService.bulkUpdateOrganizationPriority(ids, normalizedPriority, durationDays);
         res.json({
             message: `Priority updated for ${result.count} organizations`,
             count: result.count,

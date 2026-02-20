@@ -47,6 +47,7 @@ const client_3 = require("@prisma/client");
 const client_4 = require("@prisma/client");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
 const enterprise_quota_service_1 = require("./enterprise-quota.service");
+const billing_pricing_service_1 = require("./billing-pricing.service");
 const organization_visibility_service_1 = require("./organization-visibility.service");
 const checkAndExpirePriorities = async () => {
     // 1. Find expired priorities
@@ -391,6 +392,15 @@ const adminCreateOrganization = async (data, auditContext) => {
     const planType = data.planType ?? client_2.PlanType.FREE;
     let planStatus = data.planStatus ?? client_2.PlanStatus.ACTIVE;
     const now = new Date();
+    const billingTerm = (0, billing_pricing_service_1.resolveBillingTerm)(data.billingTerm || null, data.durationDays);
+    const shouldProvisionPaidPlan = planType !== client_2.PlanType.FREE && planStatus === client_2.PlanStatus.ACTIVE;
+    const normalizedAmountCents = shouldProvisionPaidPlan
+        ? (0, billing_pricing_service_1.resolvePlanChargeAmountCents)({
+            planType,
+            billingTerm,
+            requestedAmountCents: data.amountCents
+        })
+        : null;
     let planStartAt = now;
     let planEndAt = null;
     let supportTier = PLAN_SUPPORT_TIER[planType] ?? client_2.SupportTier.NONE;
@@ -429,7 +439,9 @@ const adminCreateOrganization = async (data, auditContext) => {
                 stateId: data.stateId || null,
                 categoryId: data.categoryId,
                 status: client_2.OrgStatus.APPROVED,
-                priority: 'NORMAL',
+                // Discovery note (backend/src/services/organization.service.ts):
+                // Priority was hardcoded to NORMAL here, so admin-selected priority never persisted on create.
+                priority: data.priority ?? 'NORMAL',
                 type: data.type || 'PUBLIC',
                 about: data.about || null,
                 logo: data.logo || null,
@@ -500,7 +512,57 @@ const adminCreateOrganization = async (data, auditContext) => {
             await (0, meilisearch_service_1.indexSite)(fullSite);
         }
     }
-    return result;
+    let billingProvision = null;
+    // Discovery note (backend/src/services/organization.service.ts):
+    // Admin org creation previously only set Organization.planType/planStatus and skipped billing models.
+    // ACCOUNTS dashboard reads Subscription/Invoice rows, so paid orgs without those rows were invisible.
+    if (shouldProvisionPaidPlan) {
+        const billingService = await Promise.resolve().then(() => __importStar(require('./billing.service')));
+        const billingResult = await billingService.provisionOrganizationPlanFromCheckout({
+            organizationId: result.org.id,
+            planType,
+            billingTerm,
+            amountCents: normalizedAmountCents || undefined,
+            durationDays: data.durationDays,
+            billingEmail: result.org.email,
+            billingName: result.org.name,
+            idempotencyKey: `admin-org-create:${result.org.id}:${planType}:${billingTerm}`
+        });
+        const invoice = billingResult?.invoice || null;
+        const subscription = billingResult?.subscription || null;
+        billingProvision = {
+            invoiceId: invoice?.id || null,
+            invoiceNumber: invoice?.invoiceNumber || null,
+            subscriptionId: subscription?.id || null,
+            amountCents: typeof billingResult?.amountCents === 'number' ? billingResult.amountCents : normalizedAmountCents,
+            billingTerm
+        };
+        if (auditContext) {
+            await auditService.logAction({
+                adminId: auditContext.adminId,
+                actorRole: auditContext.role,
+                action: client_3.AuditActionType.OTHER,
+                entity: 'OrganizationBilling',
+                targetId: result.org.id,
+                details: `ORG_CREATED_WITH_PLAN orgId=${result.org.id} plan=${planType} billingTerm=${billingTerm} amountCents=${billingProvision.amountCents || 0}`,
+                snapshot: {
+                    orgId: result.org.id,
+                    plan: planType,
+                    billingTerm,
+                    amount: billingProvision.amountCents,
+                    invoiceNumber: billingProvision.invoiceNumber,
+                    invoiceId: billingProvision.invoiceId,
+                    subscriptionId: billingProvision.subscriptionId
+                },
+                ipAddress: auditContext.ip,
+                userAgent: auditContext.userAgent
+            });
+        }
+    }
+    return {
+        ...result,
+        billingProvision
+    };
 };
 exports.adminCreateOrganization = adminCreateOrganization;
 // Public Profile (Sanitized)

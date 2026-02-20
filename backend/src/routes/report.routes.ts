@@ -79,7 +79,7 @@ router.post('/', authenticateUser, async (req: any, res) => {
 // Existing Admin Dashboard likely has its own auth.
 // I'll check `admin.routes.ts` or similar if it exists.
 
-router.get('/', authenticateAdmin, async (req, res) => {
+router.get('/', authenticateAdmin, authorizeRole(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']), async (req, res) => {
     // TODO: Add Admin Authentication Middleware
     try {
         const reports = await prisma.report.findMany({

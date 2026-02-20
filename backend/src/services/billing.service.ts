@@ -11,6 +11,12 @@ import {
 import crypto from 'crypto';
 import * as organizationService from './organization.service';
 import { computeInvoiceIntegrity, validateInvoiceIntegrity } from './billing-security.service';
+import {
+    BillingTerm,
+    billingTermToDurationDays,
+    resolveBillingTerm,
+    resolvePlanChargeAmountCents
+} from './billing-pricing.service';
 
 const PAYMENT_MODE = (process.env.PAYMENT_MODE || 'mock').toLowerCase();
 
@@ -68,6 +74,7 @@ export const createMockCheckout = async (params: {
     amountCents: number;
     currency?: string;
     durationDays?: number;
+    billingTerm?: BillingTerm;
     billingEmail?: string;
     billingName?: string;
     idempotencyKey?: string;
@@ -77,13 +84,16 @@ export const createMockCheckout = async (params: {
         throw new Error('Mock checkout is disabled');
     }
 
-    if (params.planType === PlanType.FREE) {
-        throw new Error('FREE plan does not require checkout');
-    }
-
-    if (!params.amountCents || params.amountCents <= 0) {
-        throw new Error('Amount must be greater than zero');
-    }
+    const billingTerm = resolveBillingTerm(params.billingTerm || null, params.durationDays);
+    const durationDays = typeof params.durationDays === 'number' && Number.isFinite(params.durationDays) && params.durationDays > 0
+        ? Math.floor(params.durationDays)
+        : billingTermToDurationDays(billingTerm);
+    const amountCents = resolvePlanChargeAmountCents({
+        planType: params.planType,
+        billingTerm,
+        requestedAmountCents: params.amountCents
+    });
+    const currency = params.currency || 'USD';
 
     const org = await prisma.organization.findUnique({ where: { id: params.organizationId } });
     if (!org) {
@@ -98,9 +108,10 @@ export const createMockCheckout = async (params: {
     const payloadHash = computeHash({
         organizationId: params.organizationId,
         planType: params.planType,
-        amountCents: params.amountCents,
-        currency: params.currency || 'USD',
-        durationDays: params.durationDays || null
+        amountCents,
+        currency,
+        billingTerm,
+        durationDays
     });
 
     if (params.idempotencyKey) {
@@ -127,14 +138,15 @@ export const createMockCheckout = async (params: {
 
     const invoiceMetadata = {
         planType: params.planType,
-        durationDays: params.durationDays || null,
+        billingTerm,
+        durationDays,
         organizationId: params.organizationId
     };
 
     const invoiceIntegrityHash = computeInvoiceIntegrity({
         planType: params.planType,
-        amountCents: params.amountCents,
-        currency: params.currency || 'USD',
+        amountCents,
+        currency,
         organizationId: params.organizationId
     });
 
@@ -142,8 +154,8 @@ export const createMockCheckout = async (params: {
         data: {
             billingAccountId: billingAccount.id,
             status: InvoiceStatus.OPEN,
-            amountCents: params.amountCents,
-            currency: params.currency || 'USD',
+            amountCents,
+            currency,
             invoiceNumber: buildInvoiceNumber(),
             metadata: invoiceMetadata as any,
             integrityHash: invoiceIntegrityHash
@@ -155,8 +167,8 @@ export const createMockCheckout = async (params: {
             billingAccountId: billingAccount.id,
             invoiceId: invoice.id,
             status: PaymentAttemptStatus.PENDING,
-            amountCents: params.amountCents,
-            currency: params.currency || 'USD',
+            amountCents,
+            currency,
             gateway: BillingGateway.MOCK,
             gatewayPaymentId: buildMockId('mock_pay'),
             idempotencyKey: params.idempotencyKey,
@@ -175,6 +187,51 @@ export const createMockCheckout = async (params: {
         paymentAttempt,
         invoice,
         callbackUrl: '/api/billing/mock/callback'
+    };
+};
+
+export const provisionOrganizationPlanFromCheckout = async (params: {
+    organizationId: string;
+    planType: PlanType;
+    billingTerm?: BillingTerm;
+    amountCents?: number;
+    currency?: string;
+    durationDays?: number;
+    billingEmail?: string;
+    billingName?: string;
+    idempotencyKey?: string;
+}) => {
+    // Discovery note (backend/src/services/billing.service.ts):
+    // Public /billing/mock/checkout is the canonical invoice+subscription flow.
+    // Super Admin org creation reuses this path to avoid divergent billing logic.
+    const billingTerm = resolveBillingTerm(params.billingTerm || null, params.durationDays);
+    const durationDays = typeof params.durationDays === 'number' && Number.isFinite(params.durationDays) && params.durationDays > 0
+        ? Math.floor(params.durationDays)
+        : billingTermToDurationDays(billingTerm);
+    const amountCents = resolvePlanChargeAmountCents({
+        planType: params.planType,
+        billingTerm,
+        requestedAmountCents: params.amountCents
+    });
+
+    const checkoutResult = await createMockCheckout({
+        organizationId: params.organizationId,
+        planType: params.planType,
+        amountCents,
+        currency: params.currency || 'USD',
+        durationDays,
+        billingTerm,
+        billingEmail: params.billingEmail,
+        billingName: params.billingName,
+        idempotencyKey: params.idempotencyKey,
+        simulate: 'success'
+    });
+
+    return {
+        ...checkoutResult,
+        billingTerm,
+        durationDays,
+        amountCents
     };
 };
 
@@ -266,12 +323,19 @@ export const processMockCallback = async (params: {
         return { paymentAttempt, invoice };
     }
 
-    const metadata = (attempt.invoice.metadata || {}) as { planType?: PlanType; durationDays?: number | null };
+    const metadata = (attempt.invoice.metadata || {}) as {
+        planType?: PlanType;
+        billingTerm?: BillingTerm;
+        durationDays?: number | null;
+    };
     const planType = metadata.planType;
     if (!planType) {
         throw new Error('Plan type missing from invoice metadata');
     }
-    const durationDays = metadata.durationDays ?? 30;
+    const durationDays = typeof metadata.durationDays === 'number' && Number.isFinite(metadata.durationDays)
+        ? Math.max(1, Math.floor(metadata.durationDays))
+        : 30;
+    const billingTerm = resolveBillingTerm(metadata.billingTerm || null, durationDays);
 
     const subscriptionPeriodEnd = new Date(now);
     subscriptionPeriodEnd.setDate(subscriptionPeriodEnd.getDate() + durationDays);
@@ -315,7 +379,11 @@ export const processMockCallback = async (params: {
                 currency: attempt.currency,
                 startedAt: now,
                 currentPeriodStart: now,
-                currentPeriodEnd: subscriptionPeriodEnd
+                currentPeriodEnd: subscriptionPeriodEnd,
+                metadata: {
+                    billingTerm,
+                    durationDays
+                } as any
             }
         })
     ]);

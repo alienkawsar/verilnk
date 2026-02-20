@@ -4,21 +4,27 @@ import * as adminService from '../services/admin.service';
 import { z } from 'zod';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '../utils/passwordPolicy';
 
+const ADMIN_ROLE_VALUES = ['SUPER_ADMIN', 'MODERATOR', 'VERIFIER', 'ACCOUNTS'] as const;
+
 // Schemas
 const createAdminSchema = z.object({
     email: z.string().email(),
     password: z.string().regex(STRONG_PASSWORD_REGEX, STRONG_PASSWORD_MESSAGE),
     firstName: z.string().min(1),
     lastName: z.string().min(1),
-    role: z.enum(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER'])
+    role: z.enum(ADMIN_ROLE_VALUES)
 });
 
 const updateAdminSchema = z.object({
     email: z.string().email().optional(),
     firstName: z.string().min(1).optional(),
     lastName: z.string().min(1).optional(),
-    role: z.enum(['SUPER_ADMIN', 'MODERATOR', 'VERIFIER']).optional(),
+    role: z.enum(ADMIN_ROLE_VALUES).optional(),
     password: z.string().regex(STRONG_PASSWORD_REGEX, STRONG_PASSWORD_MESSAGE).optional(),
+});
+
+const updateAdminStatusSchema = z.object({
+    isActive: z.boolean()
 });
 
 export const reindexSearch = async (req: Request, res: Response): Promise<void> => {
@@ -55,9 +61,12 @@ export const createAdmin = async (req: Request, res: Response): Promise<void> =>
         const data = createAdminSchema.parse(req.body);
         // @ts-ignore
         const creatorId = req.user.id;
+        // @ts-ignore
+        const creatorRole = req.user.role;
 
         const admin = await adminService.createAdmin(data, {
             adminId: creatorId,
+            role: creatorRole,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -77,9 +86,12 @@ export const updateAdmin = async (req: Request, res: Response): Promise<void> =>
         const data = updateAdminSchema.parse(req.body);
         // @ts-ignore
         const currentAdminId = req.user.id; // The one performing the update
+        // @ts-ignore
+        const currentAdminRole = req.user.role;
 
         const admin = await adminService.updateAdmin(id as string, data, {
             adminId: currentAdminId,
+            role: currentAdminRole,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -98,7 +110,10 @@ export const deleteAdmin = async (req: Request, res: Response): Promise<void> =>
         const { id } = req.params;
         // @ts-ignore
         const currentAdminId = req.user.id;
+        // @ts-ignore
+        const currentAdminRole = req.user.role;
         await adminService.deleteAdmin(id as string, currentAdminId, {
+            role: currentAdminRole,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -112,10 +127,13 @@ export const updateProfile = async (req: Request, res: Response): Promise<void> 
     try {
         // @ts-ignore
         const id = req.user.id;
+        // @ts-ignore
+        const role = req.user.role;
         const data = updateAdminSchema.parse(req.body);
 
         const admin = await adminService.updateAdmin(id, data, {
             adminId: id, // Self update
+            role,
             ip: req.ip,
             userAgent: req.headers['user-agent']
         });
@@ -136,6 +154,32 @@ export const changePassword = async (req: Request, res: Response): Promise<void>
     // For MVP, reused updateAdmin via updateProfile or direct update is fine.
     // Let's rely on updateProfile for self, updateAdmin for super admin.
     res.status(501).json({ message: 'Use update profile endpoint' });
+};
+
+export const updateAdminStatus = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const { id } = req.params;
+        const payload = updateAdminStatusSchema.parse(req.body);
+        // @ts-ignore
+        const actorId = req.user.id;
+        // @ts-ignore
+        const actorRole = req.user.role;
+
+        const admin = await adminService.setAdminActiveStatus(id as string, payload.isActive, {
+            adminId: actorId,
+            role: actorRole,
+            ip: req.ip,
+            userAgent: req.headers['user-agent']
+        });
+
+        res.json(admin);
+    } catch (error: any) {
+        if (error instanceof z.ZodError) {
+            res.status(400).json({ errors: error.issues });
+            return;
+        }
+        res.status(400).json({ message: error.message || 'Error updating admin status' });
+    }
 };
 
 // Site Management (Bulk)
