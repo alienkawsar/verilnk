@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
+const decodeBase64 = (value: string): string => {
+    if (typeof globalThis.atob === 'function') {
+        return globalThis.atob(value);
+    }
+    return Buffer.from(value, 'base64').toString('binary');
+};
+
 const decodeRoleFromToken = (token?: string): string | null => {
     if (!token) return null;
     try {
@@ -9,7 +16,7 @@ const decodeRoleFromToken = (token?: string): string | null => {
         const payload = parts[1];
         const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
         const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
-        const decoded = atob(`${normalized}${pad}`);
+        const decoded = decodeBase64(`${normalized}${pad}`);
         const parsed = JSON.parse(decoded) as { role?: string };
         return parsed.role || null;
     } catch {

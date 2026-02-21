@@ -2204,7 +2204,7 @@ const exportWorkspaceAnalyticsHandler = async (req, res) => {
         }));
         await logEnterpriseAdminActionIfApplicable(req, client_1.AuditActionType.OTHER, 'WorkspaceAnalyticsExport', `ANALYTICS_EXPORTED workspaceId=${id} format=${format} range=${range}`, id);
         if (format === 'pdf') {
-            const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'workspace', id, 'pdf', generatedAt);
+            const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'workspace', id, 'pdf', generatedAt, `${range}d`);
             const pdfBuffer = await (0, analytics_report_export_service_1.buildAnalyticsReportPdfBuffer)({
                 entityName,
                 rangeLabel: `Last ${rangeDays} days`,
@@ -2214,16 +2214,18 @@ const exportWorkspaceAnalyticsHandler = async (req, res) => {
                 totalCtr: data.summary.totals.ctr,
                 rows
             });
+            applyNoStoreHeaders(res);
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(filename));
             res.setHeader('Content-Length', pdfBuffer.length);
             res.send(pdfBuffer);
             return;
         }
-        const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'workspace', id, 'csv', generatedAt);
+        const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'workspace', id, 'csv', generatedAt, `${range}d`);
         const csv = (0, analytics_report_export_service_1.buildAnalyticsReportCsv)(rows);
+        applyNoStoreHeaders(res);
         res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(filename));
         res.send(csv);
     }
     catch (error) {
@@ -2267,7 +2269,12 @@ const downloadEnterpriseInvoicePdfHandler = async (req, res) => {
                                 email: true,
                                 website: true,
                                 address: true,
-                                planType: true
+                                planType: true,
+                                country: {
+                                    select: {
+                                        code: true
+                                    }
+                                }
                             }
                         }
                     }
@@ -2307,11 +2314,14 @@ const downloadEnterpriseInvoicePdfHandler = async (req, res) => {
             invoiceNumber,
             invoiceDate: invoice.createdAt,
             status: invoice.status,
+            dueAt: invoice.dueAt,
             paidAt: invoice.paidAt,
             periodStart,
             periodEnd,
             planName,
             planType: planName,
+            billingGateway: invoice.billingAccount.gateway,
+            billToCountryCode: invoice.billingAccount.organization.country?.code || null,
             currency: invoice.currency || 'USD',
             amountCents: invoice.amountCents,
             discountCents,
@@ -2331,6 +2341,7 @@ const downloadEnterpriseInvoicePdfHandler = async (req, res) => {
             invoiceId: invoice.id,
             invoiceDate: invoice.createdAt
         });
+        applyNoStoreHeaders(res);
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(filename));
         res.status(200).send(pdfBuffer);

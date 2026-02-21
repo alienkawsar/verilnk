@@ -52,9 +52,13 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
     const [loadingSites, setLoadingSites] = useState(false);
     const [totalSites, setTotalSites] = useState(0);
     const [sitesFetchState, setSitesFetchState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+    const isGlobalSelection = isGlobalCountryCode(countryCode, countryName);
     const hasSpecificCountrySelection =
         Boolean(countryId) &&
-        !isGlobalCountryCode(countryCode, countryName);
+        !isGlobalSelection;
+    const hasCategoryOptions = initialCategories.length > 0;
+    const isCategoryFilterDisabled = !hasCategoryOptions;
+    const isStateFilterDisabled = !hasSpecificCountrySelection || loadingStates || states.length === 0;
 
     const resetPageParam = () => {
         const params = new URLSearchParams(searchParams.toString());
@@ -90,7 +94,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                 // If specific country selected
                 const params: any = {};
                 if (currentCountryId) params.countryId = currentCountryId;
-                if (selectedStateId) params.stateId = selectedStateId;
+                if (hasSpecificCountrySelection && selectedStateId) params.stateId = selectedStateId;
                 if (selectedCategoryId) params.categoryId = selectedCategoryId;
 
                 const data = await fetchSitesPaginated({ ...params, page, limit: PAGE_LIMIT }, controller.signal);
@@ -128,7 +132,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
             isMounted = false;
             controller.abort();
         };
-    }, [countryId, selectedStateId, selectedCategoryId, countryCode, page]); // Removed countryName from dependency to avoid extra re-renders if name changes but Id doesn't? No, context updates both.
+    }, [countryId, selectedStateId, selectedCategoryId, countryCode, hasSpecificCountrySelection, page]); // Removed countryName from dependency to avoid extra re-renders if name changes but Id doesn't? No, context updates both.
 
     // Load States on Country Change
     useEffect(() => {
@@ -164,11 +168,11 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
     }, [countryId, hasSpecificCountrySelection]);
 
     useEffect(() => {
-        if (!hasManualState && detectedStateId && !selectedStateId) {
+        if (hasSpecificCountrySelection && !hasManualState && detectedStateId && !selectedStateId) {
             setSelectedStateId(detectedStateId);
             resetPageParam();
         }
-    }, [detectedStateId, hasManualState, selectedStateId]);
+    }, [detectedStateId, hasManualState, hasSpecificCountrySelection, selectedStateId]);
 
     // Country Dropdown Options
     const countryOptions = initialCountries.map(c => {
@@ -223,6 +227,21 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
         value: s.id
     }));
     stateOptions.unshift({ id: '', label: 'All States/Regions', value: '' });
+    const statePlaceholder = loadingStates
+        ? "Loading..."
+        : isGlobalSelection
+            ? "State (not available for Global)"
+            : !countryId
+                ? "Select a country first"
+                : states.length === 0
+                    ? "No states available"
+                    : "All States/Regions";
+
+    useEffect(() => {
+        if (isStateFilterDisabled && selectedStateId) {
+            setSelectedStateId('');
+        }
+    }, [isStateFilterDisabled, selectedStateId]);
 
     const handleCountryChange = (id: string) => {
         const country = initialCountries.find(c => c.id === id);
@@ -274,12 +293,12 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                         </div>
 
                         {/* State Dropdown - Only show if states exist or loading */}
-                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${hasSpecificCountrySelection ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${isStateFilterDisabled ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
                             {/* Show if states exist or loading. If verified no states, maybe hide or show disabled? Better to show "No regions available" if loaded & empty? 
                                 Actually, sticking to standard dropdown behavior. */ }
                             <ModernDropdown
                                 label="Filter by State/Province"
-                                placeholder={loadingStates ? "Loading..." : "All States/Regions"}
+                                placeholder={statePlaceholder}
                                 options={stateOptions}
                                 value={selectedStateId}
                                 onChange={(value) => {
@@ -287,11 +306,11 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                                     setHasManualState(true);
                                     resetPageParam();
                                 }}
-                                disabled={!hasSpecificCountrySelection || loadingStates || states.length === 0}
+                                disabled={isStateFilterDisabled}
                             />
                         </div>
 
-                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${hasSpecificCountrySelection ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                        <div className={`w-full lg:w-1/4 transition-all duration-300 ${isCategoryFilterDisabled ? 'opacity-50 pointer-events-none' : 'opacity-100'}`}>
                             <ModernDropdown
                                 label="Filter by Category"
                                 placeholder="All Categories"
@@ -301,6 +320,7 @@ export default function HomeClient({ initialCountries, initialCategories }: Home
                                     setSelectedCategoryId(value);
                                     resetPageParam();
                                 }}
+                                disabled={isCategoryFilterDisabled}
                             />
                         </div>
                         <div className="w-full lg:w-1/4 pb-2 text-slate-500 text-sm">

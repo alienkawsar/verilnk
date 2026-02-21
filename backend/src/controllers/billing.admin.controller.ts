@@ -184,6 +184,9 @@ const downloadInvoicePdfByScope = async (
         });
 
         res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.setHeader('Content-Disposition', buildInvoiceContentDisposition(pdf.filename));
         res.status(200).send(pdf.pdfBuffer);
     } catch (error: any) {
@@ -428,6 +431,9 @@ export const downloadBillingInvoicePdf = async (req: Request, res: Response): Pr
         });
 
         res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.setHeader('Content-Disposition', buildInvoiceContentDisposition(pdf.filename));
         res.status(200).send(pdf.pdfBuffer);
     } catch (error: any) {

@@ -38,6 +38,7 @@ const analyticsService = __importStar(require("../services/analytics.service"));
 const entitlement_service_1 = require("../services/entitlement.service");
 const client_1 = require("../db/client");
 const analytics_report_export_service_1 = require("../services/analytics-report-export.service");
+const invoice_filename_service_1 = require("../services/invoice-filename.service");
 // Helper to get string from query param (handles Express query types)
 const getQueryString = (param, defaultValue) => {
     if (param === undefined || param === null)
@@ -242,14 +243,17 @@ const exportAnalytics = async (req, res) => {
             ctr: stat.views > 0 ? (stat.clicks / stat.views) * 100 : 0
         }));
         if (format === 'csv') {
-            const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'organization', orgId, 'csv', generatedAt);
+            const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'organization', orgId, 'csv', generatedAt, validRange);
             const csv = (0, analytics_report_export_service_1.buildAnalyticsReportCsv)(rows);
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(filename));
             res.send(csv);
         }
         else if (format === 'pdf') {
-            const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'organization', orgId, 'pdf', generatedAt);
+            const filename = (0, analytics_report_export_service_1.buildAnalyticsReportFilename)(entityName, 'organization', orgId, 'pdf', generatedAt, validRange);
             const totalCtr = data.summary.totalViews > 0
                 ? (data.summary.totalClicks / data.summary.totalViews) * 100
                 : 0;
@@ -262,8 +266,11 @@ const exportAnalytics = async (req, res) => {
                 totalCtr,
                 rows
             });
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(filename));
             res.setHeader('Content-Length', pdfBuffer.length);
             res.send(pdfBuffer);
             return;

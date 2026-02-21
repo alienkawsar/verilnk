@@ -2,6 +2,7 @@ import { Suspense } from 'react';
 import { fetchCategories, searchSites } from '@/lib/api';
 import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
+import { isGlobalCountryCode } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -77,6 +78,8 @@ async function SearchResults({
     const PAGE_LIMIT = 15;
     let pageNum = Number(page) || 1;
     if (pageNum < 1) pageNum = 1;
+    const isGlobalSearch = isGlobalCountryCode(country);
+    const effectiveState = isGlobalSearch ? undefined : state;
 
     let sites: Site[] = [];
     let total = 0;
@@ -98,7 +101,7 @@ async function SearchResults({
             const results = (await searchSites({
                 q: q || '', // Empty query matches all in Meili if correctly configured (or we rely on filters)
                 country,
-                stateId: state,
+                stateId: effectiveState,
                 category,
                 page: pageNum,
                 limit: PAGE_LIMIT
@@ -109,7 +112,7 @@ async function SearchResults({
                 const params = new URLSearchParams();
                 if (q) params.set('q', q);
                 if (country) params.set('country', country);
-                if (state) params.set('state', state);
+                if (effectiveState) params.set('state', effectiveState);
                 if (category) params.set('category', category);
                 params.set('page', String(totalPages));
                 redirect(`/search?${params.toString()}`);

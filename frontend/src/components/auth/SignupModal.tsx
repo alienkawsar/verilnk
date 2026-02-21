@@ -12,12 +12,13 @@ interface SignupModalProps {
     isOpen: boolean;
     onClose: () => void;
     onSwitchToLogin: () => void;
+    defaultType?: SignupType;
 }
 
 type SignupType = 'INDIVIDUAL' | 'ORGANIZATION';
 
-export default function SignupModal({ isOpen, onClose, onSwitchToLogin }: SignupModalProps) {
-    const [signupType, setSignupType] = useState<SignupType>('INDIVIDUAL');
+export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultType = 'INDIVIDUAL' }: SignupModalProps) {
+    const [signupType, setSignupType] = useState<SignupType>(defaultType);
     const { executeRecaptcha } = useGoogleReCaptcha();
 
     // Individual Form State
@@ -62,6 +63,12 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin }: Signup
     const [fetchingStates, setFetchingStates] = useState(false);
 
     const { login } = useAuth();
+
+    React.useEffect(() => {
+        if (isOpen) {
+            setSignupType(defaultType);
+        }
+    }, [isOpen, defaultType]);
 
     // Fetch initial data
     React.useEffect(() => {

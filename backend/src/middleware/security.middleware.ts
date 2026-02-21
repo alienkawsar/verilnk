@@ -30,5 +30,6 @@ export const corsOptions: cors.CorsOptions = {
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma'],
+    exposedHeaders: ['Content-Disposition', 'Content-Length', 'Content-Type'],
     credentials: true,
 };

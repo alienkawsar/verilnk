@@ -48,16 +48,22 @@ function NavbarContent() {
     setImgError(false);
   }, [flagImage]);
 
-  // Open Login Modal if ?login=true is present
+  // Open Login Modal if ?login=true is present.
+  // Discovery note (frontend/src/components/layout/Navbar.tsx):
+  // /signin redirects to this query-driven modal path, so "forceLogin=true" is needed
+  // for "sign in as organization" when an individual user session already exists.
   useEffect(() => {
     if (searchParams?.get('login') !== 'true') {
       return;
     }
 
-    if (user) {
+    const forceLogin = searchParams?.get('forceLogin') === 'true';
+
+    if (user && !forceLogin) {
       const params = new URLSearchParams(searchParams.toString());
       params.delete('login');
       params.delete('returnTo');
+      params.delete('forceLogin');
       const nextQuery = params.toString();
       const nextUrl = nextQuery ? `${pathname}?${nextQuery}` : (pathname || '/');
       window.history.replaceState({}, '', nextUrl);

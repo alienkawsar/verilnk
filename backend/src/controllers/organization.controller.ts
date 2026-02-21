@@ -280,7 +280,12 @@ export const downloadMyOrganizationInvoicePdf = async (req: Request, res: Respon
                                 email: true,
                                 website: true,
                                 address: true,
-                                planType: true
+                                planType: true,
+                                country: {
+                                    select: {
+                                        code: true
+                                    }
+                                }
                             }
                         }
                     }
@@ -329,11 +334,14 @@ export const downloadMyOrganizationInvoicePdf = async (req: Request, res: Respon
             invoiceNumber,
             invoiceDate: invoice.createdAt,
             status: invoice.status,
+            dueAt: invoice.dueAt,
             paidAt: invoice.paidAt,
             periodStart,
             periodEnd,
             planName,
             planType: planName,
+            billingGateway: invoice.billingAccount.gateway,
+            billToCountryCode: invoice.billingAccount.organization.country?.code || null,
             currency: invoice.currency || 'USD',
             amountCents: invoice.amountCents,
             discountCents,
@@ -354,6 +362,9 @@ export const downloadMyOrganizationInvoicePdf = async (req: Request, res: Respon
             invoiceId: invoice.id,
             invoiceDate: invoice.createdAt
         });
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.setHeader('Content-Type', 'application/pdf');
         res.setHeader(
             'Content-Disposition',

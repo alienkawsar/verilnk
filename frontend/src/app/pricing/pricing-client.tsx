@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, Fragment } from 'react';
+import { useEffect, useMemo, useState, Fragment } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrencyFromCents } from '@/lib/currency';
+import SignupModal from '@/components/auth/SignupModal';
 import {
   Check,
   ShieldCheck,
@@ -13,7 +14,9 @@ import {
   LifeBuoy,
   ChevronDown,
   Minus,
-  Users
+  Users,
+  Lock,
+  Building2
 } from 'lucide-react';
 
 const plans = [
@@ -226,11 +229,96 @@ const RenderFeatureValue = ({ value }: { value: string | boolean }) => {
   return <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{value}</span>;
 };
 
+type UpgradePlan = 'BASIC' | 'PRO' | 'BUSINESS';
+type BillingCycle = 'monthly' | 'annual';
+
+const UPGRADE_PLAN_VALUES = new Set<UpgradePlan>(['BASIC', 'PRO', 'BUSINESS']);
+
+const isUpgradePlan = (value: string | null | undefined): value is UpgradePlan =>
+  Boolean(value && UPGRADE_PLAN_VALUES.has(value as UpgradePlan));
+
+const normalizeUpgradeBilling = (value: string | null | undefined): BillingCycle =>
+  value === 'annual' ? 'annual' : 'monthly';
+
 export default function PricingClient() {
   const [openIndex, setOpenIndex] = useState<number | null>(0);
-  const [billingCycle, setBillingCycle] = useState<'monthly' | 'annual'>('monthly');
-  const { user } = useAuth();
+  const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
+  const { user, loading } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [orgRequiredOpen, setOrgRequiredOpen] = useState(false);
+  const [orgSignupOpen, setOrgSignupOpen] = useState(false);
+  const [pendingUpgrade, setPendingUpgrade] = useState<{ plan: UpgradePlan; billing: BillingCycle } | null>(null);
+
+  const upgradePlanFromQuery = searchParams.get('upgradePlan');
+  const upgradeBillingFromQuery = normalizeUpgradeBilling(searchParams.get('upgradeBilling'));
+  const shouldOpenOrgSignup = searchParams.get('createOrg') === 'true';
+
+  const clearUpgradeIntentParams = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete('upgradePlan');
+    params.delete('upgradeBilling');
+    params.delete('createOrg');
+    const next = params.toString();
+    router.replace(next ? `/pricing?${next}` : '/pricing');
+  };
+
+  const resolveUpgradePlanFromHref = (href: string): UpgradePlan | null => {
+    try {
+      const parsed = new URL(href, 'http://localhost');
+      const plan = parsed.searchParams.get('plan');
+      if (!isUpgradePlan(plan)) return null;
+      return plan;
+    } catch {
+      return null;
+    }
+  };
+
+  const buildUpgradeIntentPath = (plan: UpgradePlan, cycle: BillingCycle, includeCreateOrg: boolean = false) => {
+    const params = new URLSearchParams();
+    params.set('upgradePlan', plan);
+    params.set('upgradeBilling', cycle);
+    if (includeCreateOrg) {
+      params.set('createOrg', 'true');
+    }
+    return `/pricing?${params.toString()}`;
+  };
+
+  const pendingUpgradeIntentPath = useMemo(() => {
+    if (!pendingUpgrade) return '/pricing';
+    return buildUpgradeIntentPath(pendingUpgrade.plan, pendingUpgrade.billing);
+  }, [pendingUpgrade]);
+
+  useEffect(() => {
+    if (shouldOpenOrgSignup) {
+      setOrgSignupOpen(true);
+    }
+  }, [shouldOpenOrgSignup]);
+
+  useEffect(() => {
+    if (!isUpgradePlan(upgradePlanFromQuery) || loading) {
+      return;
+    }
+
+    const intentPlan = upgradePlanFromQuery;
+    const intentBilling = upgradeBillingFromQuery;
+    if (billingCycle !== intentBilling) {
+      setBillingCycle(intentBilling);
+    }
+
+    if (!user) {
+      router.replace(`/signin?next=${encodeURIComponent(buildUpgradeIntentPath(intentPlan, intentBilling))}`);
+      return;
+    }
+
+    if (!user.organizationId) {
+      setPendingUpgrade({ plan: intentPlan, billing: intentBilling });
+      setOrgRequiredOpen(true);
+      return;
+    }
+
+    router.replace(`/org/upgrade?plan=${intentPlan}&billing=${intentBilling}`);
+  }, [upgradePlanFromQuery, upgradeBillingFromQuery, loading, user, router, billingCycle]);
 
   const handleUpgrade = (href: string, isContact?: boolean) => {
     if (isContact) {
@@ -238,8 +326,17 @@ export default function PricingClient() {
       return;
     }
 
+    const targetPlan = resolveUpgradePlanFromHref(href);
+    const intentPath = targetPlan ? buildUpgradeIntentPath(targetPlan, billingCycle) : '/pricing';
+
     if (!user) {
-      router.push(`/?login=true&returnTo=${encodeURIComponent('/pricing')}`); // Redirect to home with login trigger and return path
+      router.push(`/?login=true&returnTo=${encodeURIComponent(intentPath)}`); // Redirect to home with login trigger and return path
+      return;
+    }
+
+    if (!user.organizationId && targetPlan) {
+      setPendingUpgrade({ plan: targetPlan, billing: billingCycle });
+      setOrgRequiredOpen(true);
       return;
     }
 
@@ -266,8 +363,32 @@ export default function PricingClient() {
     return billingCycle === 'annual' ? '/yr' : '/mo';
   };
 
+  const handleSignInAsOrganization = () => {
+    setOrgRequiredOpen(false);
+    const next = pendingUpgradeIntentPath;
+    router.push(`/signin?next=${encodeURIComponent(next)}&force=true`);
+  };
+
+  const handleCreateOrganization = () => {
+    setOrgRequiredOpen(false);
+    if (pendingUpgrade) {
+      router.push(buildUpgradeIntentPath(pendingUpgrade.plan, pendingUpgrade.billing, true));
+      return;
+    }
+    router.push('/pricing?createOrg=true');
+  };
+
+  const handleBackToPricing = () => {
+    setOrgRequiredOpen(false);
+    setPendingUpgrade(null);
+    clearUpgradeIntentParams();
+  };
+
   return (
     <div className='min-h-screen bg-slate-50 dark:bg-slate-900 pb-20'>
+      {/* Discovery note (frontend/src/app/pricing/pricing-client.tsx):
+          Upgrade CTA previously only checked "logged in" and allowed individual users to continue.
+          Existing real routes: sign-in entry /signin (redirects to /?login=true...), organization upgrade /org/upgrade, pricing page /pricing. */}
       <div className='pt-24 pb-16 px-4'>
         <div className='max-w-7xl mx-auto px-4 text-center'>
           <div className='inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 text-xs font-semibold uppercase tracking-wide'>
@@ -284,16 +405,20 @@ export default function PricingClient() {
 
           {/* Billing Toggle */}
           <div className="mt-10 flex justify-center items-center">
-            <div className="relative inline-flex items-center p-1 rounded-full bg-slate-200/50 dark:bg-white/5 border border-slate-200/50 dark:border-white/10 backdrop-blur-md">
+            {/* Discovery note (frontend/src/app/pricing/pricing-client.tsx):
+               Billing toggle is a custom segmented control using plain <button> elements.
+               Reused search-input radius token from frontend/src/components/home/SearchBar.tsx: rounded-2xl.
+               Previous toggle height was driven by p-1 + button py-2.5 (taller pill); updated to compact h-10 shell with h-8 segments. */}
+            <div className="relative inline-flex h-10 items-center p-1 rounded-2xl bg-slate-100/85 dark:bg-slate-800/60 border border-[var(--app-border)] backdrop-blur-md shadow-sm">
               {/* Sliding Active Chip */}
               <div
-                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-full shadow-sm transition-all duration-200 ease-out bg-white dark:bg-white/10 dark:border dark:border-white/15 ${billingCycle === 'monthly' ? 'left-1' : 'left-[50%]'
+                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-xl shadow-sm transition-all duration-200 ease-out bg-white dark:bg-slate-700/80 border border-slate-200/70 dark:border-slate-600/70 ${billingCycle === 'monthly' ? 'left-1' : 'left-[50%]'
                   }`}
               />
 
               <button
                 onClick={() => setBillingCycle('monthly')}
-                className={`relative z-10 w-32 py-2.5 text-sm font-semibold transition-colors duration-200 rounded-full ${billingCycle === 'monthly'
+                className={`relative z-10 h-8 w-[134px] px-3 text-sm font-semibold transition-colors duration-200 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/45 ${billingCycle === 'monthly'
                     ? 'text-slate-900 dark:text-[#EAF0FF]'
                     : 'text-slate-500 dark:text-white/60 hover:text-slate-700 dark:hover:text-white/80'
                   }`}
@@ -302,14 +427,14 @@ export default function PricingClient() {
               </button>
               <button
                 onClick={() => setBillingCycle('annual')}
-                className={`relative z-10 w-36 py-2.5 text-sm font-semibold transition-colors duration-200 rounded-full flex items-center justify-center gap-2 ${billingCycle === 'annual'
+                className={`relative z-10 h-8 w-[134px] px-3 text-sm font-semibold transition-colors duration-200 rounded-xl flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/45 ${billingCycle === 'annual'
                     ? 'text-slate-900 dark:text-[#EAF0FF]'
                     : 'text-slate-500 dark:text-white/60 hover:text-slate-700 dark:hover:text-white/80'
                   }`}
               >
                 Annual
                 {billingCycle === 'annual' && (
-                  <span className="bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-400/20 text-[10px] px-2 py-0.5 rounded-full font-bold leading-none animate-in fade-in zoom-in duration-200">
+                  <span className="bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-400/20 text-[10px] px-1.5 py-0.5 rounded-lg font-bold leading-none animate-in fade-in zoom-in duration-200">
                     -10%
                   </span>
                 )}
@@ -505,6 +630,70 @@ export default function PricingClient() {
           </div>
         </div>
       </div>
+
+      {orgRequiredOpen && (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="relative w-full max-w-lg surface-card rounded-2xl border border-[var(--app-border)] shadow-2xl p-6 sm:p-7">
+            {/* Discovery note (frontend/src/app/pricing/pricing-client.tsx):
+                Organization-required modal is rendered directly on Pricing and already uses modal token rounded-2xl.
+                Action row refactored to vertical hierarchy (primary/secondary/tertiary) with full-width controls. */}
+            <div className="flex items-start gap-4">
+              <div className="h-12 w-12 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+                <Lock className="w-5 h-5" />
+              </div>
+              <div className="min-w-0 max-w-md">
+                <h3 className="text-xl font-semibold text-slate-900 dark:text-white">
+                  Organization account required
+                </h3>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                  Organization account required. Please sign in to your organization account or create one.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={handleSignInAsOrganization}
+                className="w-full h-11 btn-primary px-4 rounded-lg text-sm font-medium inline-flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/45"
+              >
+                <ShieldCheck className="w-4 h-4" />
+                Sign in as Organization
+              </button>
+              <button
+                type="button"
+                onClick={handleCreateOrganization}
+                className="w-full h-11 px-4 rounded-lg border border-[var(--app-border)] text-[var(--app-text-secondary)] hover:bg-[var(--app-surface-hover)] text-sm font-medium inline-flex items-center justify-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/35"
+              >
+                <Building2 className="w-4 h-4" />
+                Create Organization
+              </button>
+              <div className="pt-1 border-t border-[var(--app-border)]/70">
+                <button
+                  type="button"
+                  onClick={handleBackToPricing}
+                  className="w-full h-10 px-4 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-[var(--app-surface-hover)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/30"
+                >
+                  Back to Pricing
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <SignupModal
+        isOpen={orgSignupOpen}
+        defaultType="ORGANIZATION"
+        onClose={() => {
+          setOrgSignupOpen(false);
+          const params = new URLSearchParams(searchParams.toString());
+          params.delete('createOrg');
+          const next = params.toString();
+          router.replace(next ? `/pricing?${next}` : '/pricing');
+        }}
+        onSwitchToLogin={handleSignInAsOrganization}
+      />
     </div>
   );
 }

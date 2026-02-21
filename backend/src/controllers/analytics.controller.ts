@@ -7,6 +7,7 @@ import {
     buildAnalyticsReportFilename,
     buildAnalyticsReportPdfBuffer
 } from '../services/analytics-report-export.service';
+import { buildInvoiceContentDisposition } from '../services/invoice-filename.service';
 
 // Helper to get string from query param (handles Express query types)
 const getQueryString = (param: unknown, defaultValue: string): string => {
@@ -235,13 +236,16 @@ export const exportAnalytics = async (req: Request, res: Response) => {
         }));
 
         if (format === 'csv') {
-            const filename = buildAnalyticsReportFilename(entityName, 'organization', orgId, 'csv', generatedAt);
+            const filename = buildAnalyticsReportFilename(entityName, 'organization', orgId, 'csv', generatedAt, validRange);
             const csv = buildAnalyticsReportCsv(rows);
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
             res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Disposition', buildInvoiceContentDisposition(filename));
             res.send(csv);
         } else if (format === 'pdf') {
-            const filename = buildAnalyticsReportFilename(entityName, 'organization', orgId, 'pdf', generatedAt);
+            const filename = buildAnalyticsReportFilename(entityName, 'organization', orgId, 'pdf', generatedAt, validRange);
             const totalCtr = data.summary.totalViews > 0
                 ? (data.summary.totalClicks / data.summary.totalViews) * 100
                 : 0;
@@ -254,8 +258,11 @@ export const exportAnalytics = async (req: Request, res: Response) => {
                 totalCtr,
                 rows
             });
+            res.setHeader('Cache-Control', 'no-store');
+            res.setHeader('Pragma', 'no-cache');
+            res.setHeader('Expires', '0');
             res.setHeader('Content-Type', 'application/pdf');
-            res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+            res.setHeader('Content-Disposition', buildInvoiceContentDisposition(filename));
             res.setHeader('Content-Length', pdfBuffer.length);
             res.send(pdfBuffer);
             return;

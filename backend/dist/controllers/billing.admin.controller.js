@@ -192,6 +192,9 @@ const downloadInvoicePdfByScope = async (req, res, scope) => {
             userAgent: req.headers['user-agent']
         });
         res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(pdf.filename));
         res.status(200).send(pdf.pdfBuffer);
     }
@@ -425,6 +428,9 @@ const downloadBillingInvoicePdf = async (req, res) => {
             userAgent: req.headers['user-agent']
         });
         res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Cache-Control', 'no-store');
+        res.setHeader('Pragma', 'no-cache');
+        res.setHeader('Expires', '0');
         res.setHeader('Content-Disposition', (0, invoice_filename_service_1.buildInvoiceContentDisposition)(pdf.filename));
         res.status(200).send(pdf.pdfBuffer);
     }

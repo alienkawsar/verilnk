@@ -34,6 +34,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.buildInvoicePdfBuffer = void 0;
+const invoice_wording_registry_1 = require("./invoice-wording-registry");
 const formatDate = (value) => {
     if (!value)
         return 'N/A';
@@ -63,50 +64,33 @@ const getInvoiceStatusTheme = (status) => {
         return {
             normalized: 'PAID',
             label: 'PAID',
-            textColor: '#0F9D58',
-            backgroundColor: '#E9F7EF',
-            borderColor: '#0F9D58'
-        };
-    }
-    if (normalized === 'OPEN') {
-        return {
-            normalized: 'OPEN',
-            label: 'DUE',
-            textColor: '#B45309',
-            backgroundColor: '#FEF3C7',
-            borderColor: '#B45309'
+            textColor: '#2E6B4E'
         };
     }
     if (normalized === 'VOID') {
         return {
             normalized: 'VOID',
             label: 'VOID',
-            textColor: '#8B1E1E',
-            backgroundColor: '#FDECEC',
-            borderColor: '#8B1E1E'
+            textColor: '#8A2C2C'
         };
     }
     if (normalized === 'REFUNDED') {
         return {
             normalized: 'REFUNDED',
             label: 'REFUNDED',
-            textColor: '#1E40AF',
-            backgroundColor: '#E0E7FF',
-            borderColor: '#1E40AF'
+            textColor: '#9A3412'
         };
     }
     return {
         normalized: 'DRAFT',
         label: 'DRAFT',
-        textColor: '#374151',
-        backgroundColor: '#F3F4F6',
-        borderColor: '#374151'
+        textColor: '#475569'
     };
 };
 const buildInvoicePdfBuffer = async (input) => {
     const PDFDocument = (await Promise.resolve().then(() => __importStar(require('pdfkit')))).default;
     return new Promise((resolve, reject) => {
-        const doc = new PDFDocument({ size: 'A4', margin: 48 });
+        const doc = new PDFDocument({ size: input.pageSize || 'A4', margin: 48 });
         const chunks = [];
         doc.on('data', (chunk) => chunks.push(chunk));
         doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -122,6 +106,27 @@ const buildInvoicePdfBuffer = async (input) => {
         const slate100 = '#f8fafc';
         const brandDark = '#101627';
         const brandBlue = '#187DE9';
+        const typeScale = {
+            base: 10,
+            invoiceTitle: 18,
+            sectionHeading: 12,
+            label: 9,
+            body: 10,
+            tableHeader: 9,
+            footnote: 8,
+            totalsLabel: 10,
+            grandTotal: 14,
+            status: 13
+        };
+        const lineHeight = {
+            body: 1.35,
+            heading: 1.2
+        };
+        const bodyLineGap = typeScale.base * (lineHeight.body - 1);
+        const headingLineGap = typeScale.sectionHeading * (lineHeight.heading - 1);
+        const headerPadding = 14;
+        const blockGap = 8;
+        const amountFeatures = { features: ['tnum'] };
         const statusTheme = getInvoiceStatusTheme(input.status);
         const discountCents = Math.max(0, input.discountCents || 0);
         const taxCents = Math.max(0, input.taxCents || 0);
@@ -145,47 +150,49 @@ const buildInvoicePdfBuffer = async (input) => {
             ? input.subtotalCents
             : (lineItemsSubtotal > 0 ? lineItemsSubtotal : input.amountCents + discountCents - taxCents)));
         const planLabel = (input.planName || input.planType || 'ENTERPRISE').toString();
+        const billingMode = (0, invoice_wording_registry_1.resolveInvoiceBillingMode)({
+            planType: input.planType,
+            billingGateway: input.billingGateway
+        });
+        const footerWording = (0, invoice_wording_registry_1.buildInvoiceFooterWording)({
+            billingMode,
+            status: input.status,
+            dueAt: input.dueAt,
+            taxCents,
+            currency: input.currency,
+            recipientCountryCode: input.billToCountryCode,
+            notes: input.notes
+        });
         let y = margin;
         const rightColumnWidth = 240;
         const rightColumnX = margin + pageWidth - rightColumnWidth;
-        doc.font('Helvetica-Bold').fontSize(26).fillColor(brandDark).text('Veri', margin, y, {
+        const headerTopY = y + 4;
+        const brandContactTopY = headerTopY + 30;
+        doc.font('Helvetica-Bold').fontSize(26).fillColor(brandDark).text('Veri', margin, headerTopY, {
             continued: true
         });
         doc.fillColor(brandBlue).text('Lnk');
-        doc.font('Helvetica').fontSize(9).fillColor(slate500)
-            .text('support@verilnk.com', margin, y + 30)
-            .text('https://verilnk.com', margin, y + 42);
-        doc.font('Helvetica-Bold').fontSize(24).fillColor(slate900).text('INVOICE', rightColumnX, y, {
+        doc.font('Helvetica').fontSize(typeScale.label).fillColor(slate500)
+            .text('support@verilnk.com', margin, brandContactTopY)
+            .text('https://verilnk.com', margin, brandContactTopY + 12);
+        doc.font('Helvetica-Bold').fontSize(typeScale.invoiceTitle).fillColor(slate900).text('INVOICE', rightColumnX, headerTopY, {
             width: rightColumnWidth,
             align: 'right'
         });
-        const metaLabelWidth = 80;
-        let metaY = y + 34;
+        const metaLabelWidth = 84;
+        const metaRowHeight = 16;
+        let metaY = y + headerPadding + 20;
         const drawHeaderMeta = (label, value) => {
-            doc.font('Helvetica').fontSize(9).fillColor(slate500).text(label, rightColumnX, metaY, { width: metaLabelWidth });
-            doc.font('Helvetica-Bold').fontSize(9).fillColor(slate900).text(value, rightColumnX + metaLabelWidth, metaY, {
+            doc.font('Helvetica-Bold').fontSize(typeScale.label).fillColor(slate500).text(label, rightColumnX, metaY, { width: metaLabelWidth });
+            doc.font('Helvetica').fontSize(typeScale.body).fillColor(slate900).text(value, rightColumnX + metaLabelWidth, metaY, {
                 width: rightColumnWidth - metaLabelWidth,
-                align: 'right'
+                align: 'right',
+                lineGap: bodyLineGap
             });
-            metaY += 14;
+            metaY += metaRowHeight;
         };
         drawHeaderMeta('Invoice #', input.invoiceNumber);
-        drawHeaderMeta('Date', formatDate(input.invoiceDate));
-        const badgePaddingX = 10;
-        const badgePaddingY = 4;
-        doc.font('Helvetica-Bold').fontSize(9);
-        const badgeTextWidth = doc.widthOfString(statusTheme.label);
-        const badgeWidth = badgeTextWidth + badgePaddingX * 2;
-        const badgeHeight = 18;
-        const badgeX = rightColumnX + rightColumnWidth - badgeWidth;
-        const badgeY = metaY + 2;
-        doc.roundedRect(badgeX, badgeY, badgeWidth, badgeHeight, 6)
-            .fillAndStroke(statusTheme.backgroundColor, statusTheme.borderColor);
-        doc.fillColor(statusTheme.textColor).text(statusTheme.label, badgeX, badgeY + badgePaddingY, {
-            width: badgeWidth,
-            align: 'center'
-        });
-        metaY = badgeY + badgeHeight + 6;
+        drawHeaderMeta('Issue Date', formatDate(input.invoiceDate));
         drawHeaderMeta('Plan', planLabel);
         drawHeaderMeta('Period', input.periodStart || input.periodEnd
             ? `${formatDate(input.periodStart)} - ${formatDate(input.periodEnd)}`
@@ -193,34 +200,50 @@ const buildInvoicePdfBuffer = async (input) => {
         if (statusTheme.normalized === 'PAID' && input.paidAt) {
             drawHeaderMeta('Paid on', formatDate(input.paidAt));
         }
-        y = Math.max(metaY, y + 86);
+        const statusY = y + headerPadding + 44;
+        doc.font('Helvetica-Bold')
+            .fontSize(typeScale.status)
+            .fillColor(statusTheme.textColor)
+            .text(statusTheme.label, margin, statusY, {
+            width: 160,
+            lineGap: headingLineGap
+        });
+        const statusBottomY = statusY + typeScale.status * lineHeight.heading;
+        y = Math.max(metaY, statusBottomY, y + 86);
         doc.moveTo(margin, y).lineTo(margin + pageWidth, y).lineWidth(1.5).strokeColor(brandBlue).stroke();
-        y += 18;
+        y += headerPadding;
         const billToWidth = Math.floor(pageWidth * 0.58);
         const metaGap = 20;
         const detailsX = margin + billToWidth + metaGap;
         const detailsWidth = pageWidth - billToWidth - metaGap;
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(slate600).text('Bill To', margin, y);
-        let billY = y + 16;
-        doc.font('Helvetica-Bold').fontSize(12).fillColor(slate900).text(input.billTo.name || 'Organization Account', margin, billY, { width: billToWidth });
-        billY = doc.y + 2;
+        doc.font('Helvetica-Bold').fontSize(typeScale.sectionHeading).fillColor(slate600).text('Bill To', margin, y, {
+            lineGap: headingLineGap
+        });
+        let billY = y + 18;
+        doc.font('Helvetica-Bold').fontSize(typeScale.sectionHeading).fillColor(slate900).text(input.billTo.name || 'Organization Account', margin, billY, { width: billToWidth, lineGap: headingLineGap });
+        billY = doc.y + blockGap;
         const billLines = [
             toLineValue(input.billTo.email),
             toLineValue(input.billTo.website),
             toLineValue(input.billTo.address)
         ].filter(Boolean);
-        doc.font('Helvetica').fontSize(10).fillColor(slate700);
+        doc.font('Helvetica').fontSize(typeScale.body).fillColor(slate700);
         for (const line of billLines) {
-            doc.text(line, margin, billY, { width: billToWidth });
-            billY = doc.y + 1;
+            doc.text(line, margin, billY, { width: billToWidth, lineGap: bodyLineGap });
+            billY = doc.y + 2;
         }
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(slate600).text('Invoice Details', detailsX, y);
-        doc.font('Helvetica').fontSize(10).fillColor(slate700).text(`Plan: ${planLabel}`, detailsX, y + 16, { width: detailsWidth });
-        doc.text(`Billing period: ${input.periodStart || input.periodEnd ? `${formatDate(input.periodStart)} - ${formatDate(input.periodEnd)}` : 'N/A'}`, detailsX, y + 30, { width: detailsWidth });
+        doc.font('Helvetica-Bold').fontSize(typeScale.sectionHeading).fillColor(slate600).text('Invoice Details', detailsX, y, {
+            lineGap: headingLineGap
+        });
+        doc.font('Helvetica').fontSize(typeScale.body).fillColor(slate700).text(`Plan: ${planLabel}`, detailsX, y + 18, {
+            width: detailsWidth,
+            lineGap: bodyLineGap
+        });
+        doc.text(`Billing period: ${input.periodStart || input.periodEnd ? `${formatDate(input.periodStart)} - ${formatDate(input.periodEnd)}` : 'N/A'}`, detailsX, y + 34, { width: detailsWidth, lineGap: bodyLineGap });
         if (statusTheme.normalized === 'PAID' && input.paidAt) {
-            doc.text(`Paid on: ${formatDate(input.paidAt)}`, detailsX, y + 44, { width: detailsWidth });
+            doc.text(`Paid on: ${formatDate(input.paidAt)}`, detailsX, y + 50, { width: detailsWidth, lineGap: bodyLineGap });
         }
-        y = Math.max(billY, y + 56) + 18;
+        y = Math.max(billY, y + 60) + (blockGap * 2);
         const descWidth = Math.floor(pageWidth * 0.5);
         const qtyWidth = 48;
         const unitWidth = 96;
@@ -232,15 +255,15 @@ const buildInvoicePdfBuffer = async (input) => {
         const bottomLimit = doc.page.height - doc.page.margins.bottom;
         const drawTableHeader = () => {
             doc.rect(margin, y, pageWidth, 24).fill(slate100);
-            doc.font('Helvetica-Bold').fontSize(9).fillColor(slate700);
+            doc.font('Helvetica-Bold').fontSize(typeScale.tableHeader).fillColor(slate700);
             doc.text('Description', colDescX + 8, y + 7, { width: descWidth - 12 });
             doc.text('Qty', colQtyX + 8, y + 7, { width: qtyWidth - 12 });
             doc.text('Unit price', colUnitX + 8, y + 7, { width: unitWidth - 12 });
-            doc.text('Amount', colTotalX + 8, y + 7, { width: totalWidth - 12, align: 'right' });
+            doc.text('Amount', colTotalX + 8, y + 7, { width: totalWidth - 12, align: 'right', ...amountFeatures });
             y += 24;
         };
         drawTableHeader();
-        doc.font('Helvetica-Bold').fontSize(9).fillColor(slate700);
+        doc.font('Helvetica').fontSize(typeScale.body).fillColor(slate900);
         for (const item of normalizedLineItems) {
             const descriptionHeight = doc.heightOfString(item.description, {
                 width: descWidth - 12
@@ -255,15 +278,17 @@ const buildInvoicePdfBuffer = async (input) => {
             doc.font('Helvetica').fontSize(10).fillColor(slate900).text(item.description, colDescX + 8, y + 8, { width: descWidth - 12 });
             doc.text(String(item.qty), colQtyX + 8, y + 8, { width: qtyWidth - 12 });
             doc.text(formatMoney(item.unitPriceCents, input.currency), colUnitX + 8, y + 8, {
-                width: unitWidth - 12
+                width: unitWidth - 12,
+                ...amountFeatures
             });
             doc.text(formatMoney(item.totalCents, input.currency), colTotalX + 8, y + 8, {
                 width: totalWidth - 12,
-                align: 'right'
+                align: 'right',
+                ...amountFeatures
             });
             y += rowHeight;
         }
-        y += 18;
+        y += blockGap * 2;
         const summaryWidth = 240;
         const summaryX = margin + pageWidth - summaryWidth;
         const summaryRows = [{ label: 'Subtotal', amount: subtotalCents }];
@@ -273,23 +298,42 @@ const buildInvoicePdfBuffer = async (input) => {
         if (taxCents > 0) {
             summaryRows.push({ label: 'Tax', amount: taxCents });
         }
-        summaryRows.push({ label: 'Total', amount: input.amountCents, strong: true });
-        const summaryHeight = 28 + summaryRows.length * 18;
+        summaryRows.push({ label: 'Total', amount: input.amountCents, isGrandTotal: true });
+        const summaryBaseRowHeight = 20;
+        const summaryGrandRowHeight = 28;
+        const summaryHeaderHeight = 32;
+        const summaryRowsHeight = summaryRows.reduce((height, row) => height + (row.isGrandTotal ? summaryGrandRowHeight : summaryBaseRowHeight), 0);
+        const summaryHeight = summaryHeaderHeight + summaryRowsHeight + 6;
         if (y + summaryHeight + 90 > bottomLimit) {
             doc.addPage();
             y = margin;
         }
         doc.roundedRect(summaryX, y, summaryWidth, summaryHeight, 8).strokeColor(slate200).lineWidth(1).stroke();
-        doc.font('Helvetica-Bold').fontSize(10).fillColor(slate700).text('Summary', summaryX + 12, y + 10);
-        let rowY = y + 30;
+        doc.font('Helvetica-Bold').fontSize(typeScale.sectionHeading).fillColor(slate700).text('Summary', summaryX + 12, y + 10, {
+            lineGap: headingLineGap
+        });
+        let rowY = y + summaryHeaderHeight;
         for (const row of summaryRows) {
-            doc.font(row.strong ? 'Helvetica-Bold' : 'Helvetica').fontSize(row.strong ? 10.5 : 9.5).fillColor(row.strong ? slate900 : slate700)
+            if (row.isGrandTotal) {
+                doc.moveTo(summaryX + 12, rowY - 4)
+                    .lineTo(summaryX + summaryWidth - 12, rowY - 4)
+                    .lineWidth(1)
+                    .strokeColor(slate300)
+                    .stroke();
+            }
+            doc.font(row.isGrandTotal ? 'Helvetica-Bold' : 'Helvetica')
+                .fontSize(row.isGrandTotal ? typeScale.totalsLabel : typeScale.body)
+                .fillColor(row.isGrandTotal ? slate900 : slate700)
                 .text(row.label, summaryX + 12, rowY, { width: 100 });
-            doc.text(formatMoney(row.amount, input.currency), summaryX + 12, rowY, {
+            doc.font(row.isGrandTotal ? 'Helvetica-Bold' : 'Helvetica')
+                .fontSize(row.isGrandTotal ? typeScale.grandTotal : typeScale.body)
+                .fillColor(row.isGrandTotal ? slate900 : slate700)
+                .text(formatMoney(row.amount, input.currency), summaryX + 12, rowY, {
                 width: summaryWidth - 24,
-                align: 'right'
+                align: 'right',
+                ...amountFeatures
             });
-            rowY += 18;
+            rowY += row.isGrandTotal ? summaryGrandRowHeight : summaryBaseRowHeight;
         }
         y += summaryHeight + 24;
         if (y + 72 > bottomLimit) {
@@ -297,11 +341,16 @@ const buildInvoicePdfBuffer = async (input) => {
             y = margin;
         }
         doc.moveTo(margin, y).lineTo(margin + pageWidth, y).lineWidth(1).strokeColor(slate300).stroke();
-        y += 12;
-        doc.font('Helvetica').fontSize(9).fillColor(slate500).text(input.notes
-            || 'Thank you for your business. Payment terms: Due on receipt.\nFor billing assistance, contact support@verilnk.com.', margin, y, { width: pageWidth });
-        y = doc.y + 8;
-        doc.font('Helvetica').fontSize(8.5).fillColor(slate500).text('This invoice is system-generated and valid without a signature.', margin, y, { width: pageWidth });
+        y += blockGap + 4;
+        doc.font('Helvetica').fontSize(typeScale.footnote).fillColor(slate500);
+        for (const line of footerWording.lines) {
+            doc.text(line, margin, y, { width: pageWidth, align: 'left', lineGap: 2 });
+            y = doc.y + 2;
+        }
+        doc.text(footerWording.versionLine, margin, y + 2, {
+            width: pageWidth,
+            align: 'left'
+        });
         doc.end();
     });
 };

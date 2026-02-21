@@ -46,20 +46,49 @@ const sanitizeEntityNameForFilename = (value) => {
     if (!value)
         return '';
     return value
-        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[^\x00-\x7F]/g, '')
         .trim()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '');
+        .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, ' ')
+        .replace(/\s+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
 };
 exports.sanitizeEntityNameForFilename = sanitizeEntityNameForFilename;
-const buildAnalyticsReportFilename = (entityName, fallbackPrefix, fallbackId, extension, generatedAt = new Date()) => {
+const normalizeRangeLabelForFilename = (rangeLabel) => {
+    const raw = String(rangeLabel || '').trim().toLowerCase();
+    if (!raw)
+        return '30d';
+    if (/^\d+d$/.test(raw))
+        return raw;
+    if (/^\d+$/.test(raw))
+        return `${raw}d`;
+    const lastDaysMatch = raw.match(/^last[\s_-]+(\d+)[\s_-]+days?$/);
+    if (lastDaysMatch?.[1]) {
+        return `${lastDaysMatch[1]}d`;
+    }
+    const customRangeMatch = raw.match(/^custom[-_]?(\d{4}-?\d{2}-?\d{2})[-_](\d{4}-?\d{2}-?\d{2})$/);
+    if (customRangeMatch) {
+        const start = customRangeMatch[1].replace(/-/g, '');
+        const end = customRangeMatch[2].replace(/-/g, '');
+        return `custom-${start}-${end}`;
+    }
+    const sanitized = raw
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '');
+    return sanitized || 'custom';
+};
+const buildAnalyticsReportFilename = (entityName, fallbackPrefix, fallbackId, extension, generatedAt = new Date(), rangeLabel) => {
     const dateStamp = (0, exports.formatLocalDateYYYYMMDD)(generatedAt);
+    const rangeToken = normalizeRangeLabelForFilename(rangeLabel);
     const safeEntityName = (0, exports.sanitizeEntityNameForFilename)(entityName);
-    const safeFallbackId = (0, exports.sanitizeEntityNameForFilename)(fallbackId) || fallbackId.toLowerCase();
-    const baseName = safeEntityName || `${fallbackPrefix}-${safeFallbackId}` || FALLBACK_NAME;
-    return `${baseName}_Analytics_Report_${dateStamp}.${extension}`;
+    const safeFallbackPrefix = (0, exports.sanitizeEntityNameForFilename)(fallbackPrefix) || FALLBACK_NAME;
+    const safeFallbackId = (0, exports.sanitizeEntityNameForFilename)(fallbackId)?.slice(0, 12)
+        || String(fallbackId || '').slice(0, 12)
+        || 'unknown';
+    const baseName = safeEntityName || `${safeFallbackPrefix}_${safeFallbackId}`;
+    return `${baseName}_Analytics_${rangeToken}_${dateStamp}.${extension}`;
 };
 exports.buildAnalyticsReportFilename = buildAnalyticsReportFilename;
 const buildAnalyticsReportCsv = (rows) => {

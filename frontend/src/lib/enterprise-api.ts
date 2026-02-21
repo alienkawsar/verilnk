@@ -8,8 +8,24 @@ import {
     startConnectivityRequest,
     shouldTrackConnectivityRequest
 } from './connectivity-tracker';
+import {
+    formatLocalDateYYYYMMDD,
+    resolveDownloadFilename,
+    triggerBlobDownload
+} from './download-utils';
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+
+const normalizeAnalyticsRangeToken = (range: string | null | undefined): string => {
+    const raw = String(range || '').trim().toLowerCase();
+    if (!raw) return '30d';
+    if (/^\d+d$/.test(raw)) return raw;
+    if (/^\d+$/.test(raw)) return `${raw}d`;
+    return raw
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '') || '30d';
+};
 
 export type EnterpriseQuotaResource = 'API_KEYS' | 'WORKSPACES' | 'LINKED_ORGS' | 'MEMBERS';
 
@@ -917,19 +933,12 @@ export async function exportEnterpriseAnalytics(
         throw new Error(error.message || 'Export failed');
     }
 
-    const contentDisposition = response.headers.get('content-disposition') || '';
-    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-    const filename = filenameMatch?.[1] || `workspace-analytics-${range}.${format}`;
-
     const blob = await response.blob();
-    const objectUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(objectUrl);
+    const rangeToken = normalizeAnalyticsRangeToken(range);
+    const fallbackDate = formatLocalDateYYYYMMDD(new Date());
+    const fallbackFilename = `workspace-${workspaceId.slice(0, 8)}_Analytics_${rangeToken}_${fallbackDate}.${format}`;
+    const filename = resolveDownloadFilename(response.headers.get('content-disposition'), fallbackFilename);
+    triggerBlobDownload(blob, filename);
 
     return { success: true };
 }
@@ -1021,19 +1030,11 @@ export async function downloadEnterpriseInvoice(invoiceId: string): Promise<{ su
         throw new Error(error.message || 'Invoice download failed');
     }
 
-    const contentDisposition = response.headers.get('content-disposition') || '';
-    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-    const filename = filenameMatch?.[1] || `verilnk-invoice-${invoiceId}.pdf`;
-
     const blob = await response.blob();
-    const objectUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(objectUrl);
+    const fallbackDate = formatLocalDateYYYYMMDD(new Date());
+    const fallbackFilename = `Organization-${invoiceId.slice(0, 8)}_Invoice-INV-${invoiceId.slice(0, 8).toUpperCase()}_${fallbackDate}.pdf`;
+    const filename = resolveDownloadFilename(response.headers.get('content-disposition'), fallbackFilename);
+    triggerBlobDownload(blob, filename);
 
     return { success: true };
 }

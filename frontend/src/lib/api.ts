@@ -4,6 +4,11 @@ import {
     startConnectivityRequest,
     shouldTrackConnectivityRequest
 } from './connectivity-tracker';
+import {
+    formatLocalDateYYYYMMDD,
+    resolveDownloadFilename,
+    triggerBlobDownload
+} from './download-utils';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
@@ -73,39 +78,51 @@ type InvoiceFilenameFallbackInput = {
 const sanitizeFilenameSlug = (value: string | null | undefined): string => {
     if (!value) return '';
     return value
-        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[^\x00-\x7F]/g, '')
         .trim()
-        .replace(/[^a-z0-9\s-]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-')
-        .replace(/^-+|-+$/g, '');
+        .replace(/[<>:"/\\|?*\u0000-\u001F]+/g, ' ')
+        .replace(/\s+/g, '_')
+        .replace(/_+/g, '_')
+        .replace(/^_+|_+$/g, '');
 };
 
-const formatFilenameDate = (value?: string | Date | null): string => {
-    const date = value ? new Date(value) : new Date();
-    if (Number.isNaN(date.getTime())) return new Date().toISOString().slice(0, 10);
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-};
+const formatFilenameDate = () => formatLocalDateYYYYMMDD(new Date());
 
 const buildInvoiceToken = (invoiceNumber: string | null | undefined, invoiceId: string): string => {
-    const raw = (invoiceNumber || '').trim();
-    const cleaned = raw
-        .replace(/^inv[-_\s]*/i, '')
-        .replace(/[^a-zA-Z0-9-]/g, '')
+    const raw = (invoiceNumber || '').trim() || `INV-${invoiceId.slice(0, 8).toUpperCase()}`;
+    const cleaned = sanitizeFilenameSlug(raw)
+        .replace(/_/g, '-')
         .replace(/-+/g, '-')
         .replace(/^-+|-+$/g, '');
-    return cleaned ? `INV-${cleaned.toUpperCase()}` : `INV-${invoiceId.slice(0, 8).toUpperCase()}`;
+    return cleaned || `INV-${invoiceId.slice(0, 8).toUpperCase()}`;
 };
 
 const buildInvoiceFallbackFilename = (invoiceId: string, fallback?: InvoiceFilenameFallbackInput): string => {
     const orgSlug = sanitizeFilenameSlug(fallback?.organizationName)
-        || `org-${(fallback?.organizationId || invoiceId).slice(0, 8).toLowerCase()}`;
+        || `Organization-${(fallback?.organizationId || invoiceId).slice(0, 8).toUpperCase()}`;
     const invoiceToken = buildInvoiceToken(fallback?.invoiceNumber, invoiceId);
-    const dateToken = formatFilenameDate(fallback?.invoiceDate);
-    return `${orgSlug}_${invoiceToken}_${dateToken}.pdf`;
+    const dateToken = formatFilenameDate();
+    return `${orgSlug}_Invoice-${invoiceToken}_${dateToken}.pdf`;
+};
+
+const normalizeAnalyticsRangeToken = (range: string | null | undefined): string => {
+    const raw = String(range || '').trim().toLowerCase();
+    if (!raw) return '30d';
+    if (/^\d+d$/.test(raw)) return raw;
+    if (/^\d+$/.test(raw)) return `${raw}d`;
+
+    const customRangeMatch = raw.match(/^custom[-_]?(\d{4}-?\d{2}-?\d{2})[-_](\d{4}-?\d{2}-?\d{2})$/);
+    if (customRangeMatch) {
+        const start = customRangeMatch[1].replace(/-/g, '');
+        const end = customRangeMatch[2].replace(/-/g, '');
+        return `custom-${start}-${end}`;
+    }
+
+    return raw
+        .replace(/[^a-z0-9-]/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-+|-+$/g, '') || 'custom';
 };
 
 const sanitizeQueryParams = <T extends Record<string, unknown>>(params?: T): Partial<T> => {
@@ -165,19 +182,12 @@ export const downloadOrganizationInvoicePdf = async (invoiceId: string, fallback
         throw new Error(error.message || 'Invoice download failed');
     }
 
-    const contentDisposition = response.headers.get('content-disposition') || '';
-    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-    const filename = filenameMatch?.[1] || buildInvoiceFallbackFilename(invoiceId, fallback);
-
     const blob = await response.blob();
-    const objectUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(objectUrl);
+    const filename = resolveDownloadFilename(
+        response.headers.get('content-disposition'),
+        buildInvoiceFallbackFilename(invoiceId, fallback)
+    );
+    triggerBlobDownload(blob, filename);
 
     return { success: true };
 };
@@ -897,19 +907,12 @@ export const downloadAdminBillingInvoicePdf = async (invoiceId: string, fallback
         throw new Error(error.message || 'Invoice download failed');
     }
 
-    const contentDisposition = response.headers.get('content-disposition') || '';
-    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-    const filename = filenameMatch?.[1] || buildInvoiceFallbackFilename(invoiceId, fallback);
-
     const blob = await response.blob();
-    const objectUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(objectUrl);
+    const filename = resolveDownloadFilename(
+        response.headers.get('content-disposition'),
+        buildInvoiceFallbackFilename(invoiceId, fallback)
+    );
+    triggerBlobDownload(blob, filename);
 };
 
 const downloadBillingCsv = async (path: string, filename: string, params?: Record<string, unknown>) => {
@@ -1018,19 +1021,12 @@ const downloadAdminInvoicePdf = async (
         throw new Error(error.message || 'Invoice download failed');
     }
 
-    const contentDisposition = response.headers.get('content-disposition') || '';
-    const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
-    const filename = filenameMatch?.[1] || buildInvoiceFallbackFilename(invoiceId, fallback);
-
     const blob = await response.blob();
-    const objectUrl = window.URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = objectUrl;
-    link.setAttribute('download', filename);
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    window.URL.revokeObjectURL(objectUrl);
+    const filename = resolveDownloadFilename(
+        response.headers.get('content-disposition'),
+        buildInvoiceFallbackFilename(invoiceId, fallback)
+    );
+    triggerBlobDownload(blob, filename);
 };
 
 export const downloadAdminOrganizationInvoicePdf = async (invoiceId: string, fallback?: InvoiceFilenameFallbackInput) => {
@@ -1331,20 +1327,14 @@ export const exportAnalytics = async (orgId: string, format: 'csv' | 'pdf' = 'cs
             responseType: 'blob'
         });
 
-        const contentDisposition = response.headers?.['content-disposition'] || '';
-        const filenameMatch = String(contentDisposition).match(/filename=\"?([^\";]+)\"?/i);
-        const filename = filenameMatch?.[1] || `analytics-report-${range}.${format}`;
+        const contentDisposition = response.headers?.['content-disposition'];
+        const rangeToken = normalizeAnalyticsRangeToken(range);
+        const fallbackDate = formatLocalDateYYYYMMDD(new Date());
+        const fallbackFilename = `organization-${orgId.slice(0, 8)}_Analytics_${rangeToken}_${fallbackDate}.${format}`;
+        const filename = resolveDownloadFilename(contentDisposition, fallbackFilename);
         const mimeType = format === 'pdf' ? 'application/pdf' : 'text/csv';
         const blob = new Blob([response.data], { type: mimeType });
-        const url = window.URL.createObjectURL(blob);
-
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', filename);
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-        window.URL.revokeObjectURL(url);
+        triggerBlobDownload(blob, filename);
 
         return { success: true };
     } catch (error: any) {

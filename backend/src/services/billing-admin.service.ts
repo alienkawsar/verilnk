@@ -142,6 +142,7 @@ const INVOICE_INCLUDE = {
     billingAccount: {
         select: {
             id: true,
+            gateway: true,
             billingEmail: true,
             billingName: true,
             taxId: true,
@@ -152,7 +153,12 @@ const INVOICE_INCLUDE = {
                     email: true,
                     website: true,
                     address: true,
-                    planType: true
+                    planType: true,
+                    country: {
+                        select: {
+                            code: true
+                        }
+                    }
                 }
             }
         }
@@ -982,11 +988,14 @@ export const buildInvoicePdfForAdmin = async (invoiceId: string, scope: AdminInv
         invoiceNumber,
         invoiceDate: invoice.createdAt,
         status: invoice.status,
+        dueAt: invoice.dueAt,
         paidAt: invoice.paidAt,
         periodStart,
         periodEnd,
         planName: planType,
         planType,
+        billingGateway: invoice.billingAccount.gateway,
+        billToCountryCode: invoice.billingAccount.organization.country?.code || null,
         currency: invoice.currency || 'USD',
         amountCents: invoice.amountCents,
         discountCents: toIntOrZero(metadata.discountCents),
