@@ -41,51 +41,102 @@ class AudioProcessor {
      * Process audio blob:
      * 1. Convert to Mono
      * 2. Resample to 16000 Hz
-     * 3. Trim silence (Start/End)
+     * 3. Optionally trim silence with guardrails
      * 4. Normalize loudness
      * @param blob Input Audio Blob (usually WebM)
      * @returns Processed WAV Blob
      */
-    async process(blob: Blob): Promise<Blob> {
+    async process(blob: Blob, hintMimeType?: string): Promise<Blob> {
         if (!this.loaded) await this.load();
         const ffmpeg = this.ffmpeg!;
 
-        const inputName = 'input.webm';
-        const outputName = 'output.wav';
-
-        await ffmpeg.writeFile(inputName, await fetchFile(blob));
-
-        // Filter Chain:
-        // 1. silenceremove (Start): remove silence at start
-        // 2. areverse: reverse audio to process end
-        // 3. silenceremove (Start of reversed = End of original): remove silence at new start
-        // 4. areverse: reverse back
-        // 5. loudnorm: Loudness normalization
-
-        // Thresholds: -40dB for silence.
-        const filters = [
-            'silenceremove=start_periods=1:start_threshold=-40dB',
+        const resolvedMime = (hintMimeType || blob.type || '').toLowerCase();
+        const inputExt = resolvedMime.includes('ogg')
+            ? 'ogg'
+            : resolvedMime.includes('mp4')
+                ? 'mp4'
+                : resolvedMime.includes('wav')
+                    ? 'wav'
+                    : 'webm';
+        const inputName = `input.${inputExt}`;
+        const pass1Name = 'output.wav';
+        const pass2Name = 'output_trimmed.wav';
+        const loudnormFilter = 'loudnorm=I=-16:TP=-1.0:LRA=11';
+        const conservativeTrimFilter = [
+            'silenceremove=start_periods=1:start_threshold=-55dB',
             'areverse',
-            'silenceremove=start_periods=1:start_threshold=-40dB',
+            'silenceremove=start_periods=1:start_threshold=-55dB',
             'areverse',
-            'loudnorm=I=-16:TP=-1.0:LRA=11'
+            loudnormFilter
         ].join(',');
 
-        await ffmpeg.exec([
-            '-i', inputName,
-            '-ac', '1',          // Mono
-            '-ar', '16000',      // 16kHz
-            '-af', filters,      // Filters
-            outputName
-        ]);
+        const estimateDurationSeconds = (size: number) => {
+            if (size <= 44) return 0;
+            return (size - 44) / 32000; // WAV mono 16kHz PCM16 => 32000 bytes/sec
+        };
 
-        const data = await ffmpeg.readFile(outputName);
+        const minDurationSeconds = 0.6;
+        const minTrimEligibleSeconds = 1.2;
+        const minSafeBytes = Math.ceil(minDurationSeconds * 32000) + 44;
 
-        // Cleanup to free memory
-        await ffmpeg.deleteFile(inputName);
-        await ffmpeg.deleteFile(outputName);
+        let pass1Data: Uint8Array = new Uint8Array();
+        let selectedData: Uint8Array = new Uint8Array();
+        let usedTrim = false;
 
-        return new Blob([data as any], { type: 'audio/wav' });
+        try {
+            await ffmpeg.writeFile(inputName, await fetchFile(blob));
+
+            // Pass 1: safe conversion only (no trimming).
+            await ffmpeg.exec([
+                '-i', inputName,
+                '-ac', '1',
+                '-ar', '16000',
+                '-af', loudnormFilter,
+                '-c:a', 'pcm_s16le',
+                pass1Name
+            ]);
+
+            pass1Data = await ffmpeg.readFile(pass1Name) as Uint8Array;
+            selectedData = pass1Data;
+
+            const pass1Duration = estimateDurationSeconds(pass1Data.byteLength);
+            if (pass1Duration >= minTrimEligibleSeconds) {
+                try {
+                    await ffmpeg.exec([
+                        '-i', inputName,
+                        '-ac', '1',
+                        '-ar', '16000',
+                        '-af', conservativeTrimFilter,
+                        '-c:a', 'pcm_s16le',
+                        pass2Name
+                    ]);
+
+                    const pass2Data = await ffmpeg.readFile(pass2Name) as Uint8Array;
+                    const pass2Duration = estimateDurationSeconds(pass2Data.byteLength);
+                    if (pass2Data.byteLength >= minSafeBytes && pass2Duration >= minDurationSeconds) {
+                        selectedData = pass2Data;
+                        usedTrim = true;
+                    }
+                } catch {
+                    selectedData = pass1Data;
+                }
+            }
+        } finally {
+            await ffmpeg.deleteFile(inputName).catch(() => { });
+            await ffmpeg.deleteFile(pass1Name).catch(() => { });
+            await ffmpeg.deleteFile(pass2Name).catch(() => { });
+        }
+
+        if (process.env.NODE_ENV === 'development') {
+            console.info('[voice/audio-processor]', {
+                inputExt,
+                inputBytes: blob.size,
+                outputBytes: selectedData.byteLength,
+                usedTrim
+            });
+        }
+
+        return new Blob([selectedData as any], { type: 'audio/wav' });
     }
 }
 
