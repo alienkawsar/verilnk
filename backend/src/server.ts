@@ -1,15 +1,17 @@
 import dotenv from 'dotenv';
 dotenv.config();
 
-import app from './app';
 import { prisma } from './db/client';
 import { initializeMeilisearch } from './services/meilisearch.service';
 import { ensureJwtSecret } from './config/jwt';
+import { validatePaymentConfiguration } from './config/payment.config';
 
 const PORT = process.env.PORT || 8000;
 console.log("DB_URL present:", !!process.env.DATABASE_URL);
 console.log("Current Directory:", process.cwd());
 ensureJwtSecret();
+// Fail fast on invalid payment configuration before app bootstrap.
+validatePaymentConfiguration();
 
 async function checkDatabase() {
     try {
@@ -22,10 +24,18 @@ async function checkDatabase() {
     }
 }
 
-app.listen(PORT, async () => {
-    await checkDatabase();
-    await initializeMeilisearch();
-    console.log(`Server is running on port ${PORT}`);
+const startServer = async () => {
+    const { default: app } = await import('./app');
+    app.listen(PORT, async () => {
+        await checkDatabase();
+        await initializeMeilisearch();
+        console.log(`Server is running on port ${PORT}`);
+    });
+};
+
+void startServer().catch((error) => {
+    console.error('❌ Server bootstrap failed:', error);
+    process.exit(1);
 });
 
 const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {

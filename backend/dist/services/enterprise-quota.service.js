@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.assertEnterpriseQuotaByWorkspaceId = exports.assertEnterpriseQuotaByOrganizationId = exports.assertEnterpriseQuotaAvailable = exports.toEnterpriseLimitResponse = exports.isEnterpriseLimitReachedError = exports.EnterpriseLimitReachedError = exports.getEnterpriseQuotaSnapshotByWorkspaceId = exports.getEnterpriseQuotaSnapshotByOrganizationId = exports.resolveEnterpriseOrganizationIdForWorkspace = exports.normalizeEnterpriseQuotaLimits = exports.DEFAULT_ENTERPRISE_QUOTAS = void 0;
 const client_1 = require("@prisma/client");
 const client_2 = require("../db/client");
+const plan_lifecycle_service_1 = require("./plan-lifecycle.service");
 exports.DEFAULT_ENTERPRISE_QUOTAS = {
     maxWorkspaces: 10,
     maxLinkedOrgs: 50,
@@ -37,7 +38,12 @@ const hasActiveEnterprisePlan = (organization) => {
         return false;
     if (organization.isRestricted)
         return false;
-    if (organization.planEndAt && organization.planEndAt.getTime() < Date.now())
+    const lifecycle = (0, plan_lifecycle_service_1.computePlanLifecycleState)({
+        planType: organization.planType,
+        paidTermEndAt: organization.planEndAt || null,
+        now: new Date()
+    });
+    if (lifecycle.isExpired)
         return false;
     return true;
 };

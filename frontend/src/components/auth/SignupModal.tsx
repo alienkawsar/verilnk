@@ -16,6 +16,19 @@ interface SignupModalProps {
 }
 
 type SignupType = 'INDIVIDUAL' | 'ORGANIZATION';
+type SignupCountryOption = { id: string; name: string; code?: string | null };
+
+const signupSelectClass =
+    'w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500/40 disabled:opacity-50 disabled:cursor-not-allowed disabled:bg-slate-100 dark:disabled:bg-slate-800/40 disabled:text-slate-400 transition-colors [color-scheme:light] dark:[color-scheme:dark]';
+
+const signupSelectOptionClass = 'bg-white text-slate-900 dark:bg-slate-900 dark:text-slate-100';
+
+const isGlobalCountry = (country: SignupCountryOption | undefined): boolean => {
+    if (!country) return false;
+    const code = String(country.code || '').trim().toUpperCase();
+    const name = String(country.name || '').trim().toUpperCase();
+    return code === 'GL' || code === 'WW' || name === 'GLOBAL';
+};
 
 export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultType = 'INDIVIDUAL' }: SignupModalProps) {
     const [signupType, setSignupType] = useState<SignupType>(defaultType);
@@ -57,7 +70,7 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
     const [uploadedLogoUrl, setUploadedLogoUrl] = useState<string | null>(null);
     const [generalError, setGeneralError] = useState('');
     // Lookups
-    const [countries, setCountries] = useState<{ id: string, name: string }[]>([]);
+    const [countries, setCountries] = useState<SignupCountryOption[]>([]);
     const [states, setStates] = useState<{ id: string, name: string }[]>([]);
     const [categories, setCategories] = useState<{ id: string, name: string }[]>([]);
     const [fetchingStates, setFetchingStates] = useState(false);
@@ -83,6 +96,15 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
     // Fetch states when Country changes
     React.useEffect(() => {
         if (signupType === 'ORGANIZATION' && orgData.countryId) {
+            const selectedCountry = countries.find((country) => country.id === orgData.countryId);
+            if (isGlobalCountry(selectedCountry)) {
+                if (orgData.stateId) {
+                    setOrgData((prev) => ({ ...prev, stateId: '' }));
+                }
+                setStates([]);
+                return;
+            }
+
             setFetchingStates(true);
             import('@/lib/api').then(mod => {
                 if (mod.fetchStates) {
@@ -92,7 +114,15 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
         } else {
             setStates([]);
         }
-    }, [orgData.countryId, signupType]);
+    }, [orgData.countryId, orgData.stateId, signupType, countries]);
+
+    React.useEffect(() => {
+        if (signupType !== 'INDIVIDUAL') return;
+        const selectedCountry = countries.find((country) => country.id === formData.country);
+        if (isGlobalCountry(selectedCountry)) {
+            setFormData((prev) => ({ ...prev, country: '' }));
+        }
+    }, [signupType, formData.country, countries]);
 
     // Validation Wrappers
     const validateIndividualField = (name: string, value: string) => {
@@ -221,6 +251,12 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
             return;
         }
 
+        const selectedCountry = countries.find((country) => country.id === formData.country);
+        if (isGlobalCountry(selectedCountry)) {
+            setErrors((prev: any) => ({ ...prev, country: 'Please select a valid country' }));
+            return;
+        }
+
         setLoading(true);
         try {
             const res = await import('@/lib/api').then(mod => mod.signupUser({
@@ -343,6 +379,10 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
 
     if (!isOpen) return null;
 
+    const individualCountries = countries.filter((country) => !isGlobalCountry(country));
+    const selectedOrgCountry = countries.find((country) => country.id === orgData.countryId);
+    const orgCountryIsGlobal = isGlobalCountry(selectedOrgCountry);
+
     return (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <div className="relative w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-2xl p-8 overflow-hidden max-h-[90vh] overflow-y-auto">
@@ -409,9 +449,9 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
                             <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Country</label>
                             <select name="country" value={formData.country} onChange={(e) => {
                                 handleIndividualChange(e as any);
-                            }} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm">
-                                <option value="">Select Country</option>
-                                {countries.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            }} className={signupSelectClass}>
+                                <option className={signupSelectOptionClass} value="">Select Country</option>
+                                {individualCountries.map(c => <option className={signupSelectOptionClass} key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                             {errors.country && <p className="text-xs text-red-400 ml-1">{errors.country}</p>}
                         </div>
@@ -494,10 +534,10 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Org Type</label>
-                                <select name="type" value={orgData.type} onChange={handleOrgChange} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm">
-                                    <option value="PUBLIC">Public</option>
-                                    <option value="PRIVATE">Private</option>
-                                    <option value="NON_PROFIT">Non-profit</option>
+                                <select name="type" value={orgData.type} onChange={handleOrgChange} className={signupSelectClass}>
+                                    <option className={signupSelectOptionClass} value="PUBLIC">Public</option>
+                                    <option className={signupSelectOptionClass} value="PRIVATE">Private</option>
+                                    <option className={signupSelectOptionClass} value="NON_PROFIT">Non-profit</option>
                                 </select>
                             </div>
                             <div className="space-y-2">
@@ -544,9 +584,9 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
 
                         <div className="space-y-2">
                             <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Country</label>
-                            <select name="countryId" value={orgData.countryId} onChange={handleOrgChange} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm">
-                                <option value="">Select Country</option>
-                                {countries.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                            <select name="countryId" value={orgData.countryId} onChange={handleOrgChange} className={signupSelectClass}>
+                                <option className={signupSelectOptionClass} value="">Select Country</option>
+                                {countries.map(c => <option className={signupSelectOptionClass} key={c.id} value={c.id}>{c.name}</option>)}
                             </select>
                             {errors.countryId && <p className="text-xs text-red-400 ml-1">{errors.countryId}</p>}
                         </div>
@@ -558,18 +598,20 @@ export default function SignupModal({ isOpen, onClose, onSwitchToLogin, defaultT
                                     name="stateId"
                                     value={orgData.stateId}
                                     onChange={handleOrgChange}
-                                    disabled={!orgData.countryId || fetchingStates}
-                                    className="w-full bg-slate-800/50 border border-slate-700 rounded-lg px-3 py-2 text-white text-sm disabled:opacity-50"
+                                    disabled={!orgData.countryId || fetchingStates || orgCountryIsGlobal}
+                                    className={signupSelectClass}
                                 >
-                                    <option value="">Select State</option>
-                                    {states.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                                    <option className={signupSelectOptionClass} value="">
+                                        {orgCountryIsGlobal ? 'State not applicable for Global' : 'Select State'}
+                                    </option>
+                                    {states.map(s => <option className={signupSelectOptionClass} key={s.id} value={s.id}>{s.name}</option>)}
                                 </select>
                             </div>
                             <div className="space-y-2">
                                 <label className="text-xs font-medium text-slate-500 dark:text-slate-400 ml-1">Category</label>
-                                <select name="categoryId" value={orgData.categoryId} onChange={handleOrgChange} className="w-full bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-slate-900 dark:text-white text-sm">
-                                    <option value="">Select Category</option>
-                                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                <select name="categoryId" value={orgData.categoryId} onChange={handleOrgChange} className={signupSelectClass}>
+                                    <option className={signupSelectOptionClass} value="">Select Category</option>
+                                    {categories.map(c => <option className={signupSelectOptionClass} key={c.id} value={c.id}>{c.name}</option>)}
                                 </select>
                                 {errors.categoryId && <p className="text-xs text-red-400 ml-1">{errors.categoryId}</p>}
                             </div>

@@ -1233,7 +1233,25 @@ export const bulkUpdateOrganizationPlan = async (
     return res.data;
 };
 
-// Billing (Mock)
+export type CheckoutBillingCadence = 'MONTHLY' | 'ANNUAL';
+
+// Billing
+export const startCheckout = async (
+    data: {
+        plan: 'BASIC' | 'PRO' | 'BUSINESS';
+        billingCadence: CheckoutBillingCadence;
+    },
+    idempotencyKey?: string
+) => {
+    const res = await api.post('/billing/checkout', data, {
+        headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined
+    });
+    return res.data as {
+        redirectUrl: string;
+    };
+};
+
+// Billing (Legacy mock endpoints)
 export const createMockCheckout = async (data: { organizationId?: string; planType: string; amountCents: number; currency?: string; durationDays?: number; billingTerm?: 'MONTHLY' | 'ANNUAL'; billingEmail?: string; billingName?: string; simulate?: 'success' | 'failure' }, idempotencyKey?: string) => {
     const res = await api.post('/billing/mock/checkout', data, {
         headers: idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined
@@ -1246,7 +1264,7 @@ export const mockPaymentCallback = async (data: { paymentAttemptId: string; resu
     return res.data;
 };
 
-export const startTrial = async (data: { durationDays: number; planType?: string }) => {
+export const startTrial = async (data: { durationDays?: 14; planType?: string }) => {
     const res = await api.post('/billing/trial/start', data);
     return res.data;
 };

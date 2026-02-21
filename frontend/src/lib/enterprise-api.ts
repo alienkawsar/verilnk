@@ -350,6 +350,12 @@ export interface EnterpriseProfile {
     role: WorkspaceRole | null;
     canEdit: boolean;
     entitlements?: EnterpriseAccess['entitlements'] | null;
+    billingLifecycle?: {
+        paidTermEndAt?: string | null;
+        graceEndsAt?: string | null;
+        graceDays: number;
+        isInGrace: boolean;
+    } | null;
 }
 
 export interface EnterpriseProfileUpdateInput {

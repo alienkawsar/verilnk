@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import * as userService from '../services/user.service';
 import { z } from 'zod';
 import { STRONG_PASSWORD_MESSAGE, STRONG_PASSWORD_REGEX } from '../utils/passwordPolicy';
+import { prisma } from '../db/client';
 
 const createUserSchema = z.object({
     email: z.string().email(),
@@ -26,6 +27,25 @@ const updateUserSchema = z.object({
     requestLimitWindow: z.number().optional()
 });
 
+const isGlobalCountryValue = async (value?: string): Promise<boolean> => {
+    if (!value) return false;
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'GLOBAL' || normalized === 'GL' || normalized === 'WW') {
+        return true;
+    }
+
+    const asUuid = z.string().uuid().safeParse(value);
+    if (!asUuid.success) return false;
+
+    const country = await prisma.country.findUnique({
+        where: { id: value },
+        select: { code: true, name: true }
+    });
+    const code = String(country?.code || '').trim().toUpperCase();
+    const name = String(country?.name || '').trim().toUpperCase();
+    return code === 'GL' || code === 'WW' || name === 'GLOBAL';
+};
+
 export const getUsers = async (req: Request, res: Response): Promise<void> => {
     try {
         const { country, stateId, categoryId, type } = req.query;
@@ -47,6 +67,13 @@ export const getUsers = async (req: Request, res: Response): Promise<void> => {
 export const createUser = async (req: Request, res: Response): Promise<void> => {
     try {
         const data = createUserSchema.parse(req.body);
+        if (await isGlobalCountryValue(data.country)) {
+            res.status(400).json({
+                code: 'INVALID_COUNTRY',
+                message: 'Global is not allowed for user country'
+            });
+            return;
+        }
         // @ts-ignore
         const user = (req as any).user;
         const auditContext = user ? { adminId: user.id, ip: req.ip, userAgent: req.headers['user-agent'] } : undefined;
@@ -66,6 +93,13 @@ export const updateUser = async (req: Request, res: Response): Promise<void> => 
     try {
         const { id } = req.params;
         const data = updateUserSchema.parse(req.body);
+        if (await isGlobalCountryValue(data.country)) {
+            res.status(400).json({
+                code: 'INVALID_COUNTRY',
+                message: 'Global is not allowed for user country'
+            });
+            return;
+        }
 
         // @ts-ignore
         const requester = (req as any).user;

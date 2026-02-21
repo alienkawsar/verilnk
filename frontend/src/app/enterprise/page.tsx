@@ -330,6 +330,10 @@ export default function EnterprisePage() {
   const planEndAt = (
     profile?.organization as { planEndAt?: string | null } | null
   )?.planEndAt;
+  const graceEndAt = profile?.billingLifecycle?.graceEndsAt
+    ? new Date(profile.billingLifecycle.graceEndsAt)
+    : null;
+  const isInGrace = Boolean(profile?.billingLifecycle?.isInGrace && graceEndAt);
   const renewalLabel = planEndAt
     ? `Renews on: ${new Date(planEndAt).toLocaleDateString(undefined, {
         day: '2-digit',
@@ -1131,6 +1135,11 @@ export default function EnterprisePage() {
                 <p className='text-xs text-slate-500 dark:text-slate-400'>
                   {renewalLabel}
                 </p>
+                {isInGrace && graceEndAt && (
+                  <p className='text-xs text-amber-600 dark:text-amber-300 font-medium'>
+                    Payment overdue - grace ends on {graceEndAt.toLocaleDateString()}
+                  </p>
+                )}
                 {apiLimitSummary && (
                   <p className='text-xs text-slate-500 dark:text-slate-400'>
                     {apiLimitSummary}

@@ -96,6 +96,24 @@ const loginSchema = zod_1.z.object({
     captchaToken: zod_1.z.string().optional(),
     captchaAction: zod_1.z.string().optional(),
 });
+const isGlobalCountryValue = async (value) => {
+    if (!value)
+        return false;
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'GLOBAL' || normalized === 'GL' || normalized === 'WW') {
+        return true;
+    }
+    const asUuid = zod_1.z.string().uuid().safeParse(value);
+    if (!asUuid.success)
+        return false;
+    const country = await client_2.prisma.country.findUnique({
+        where: { id: value },
+        select: { code: true, name: true }
+    });
+    const code = String(country?.code || '').trim().toUpperCase();
+    const name = String(country?.name || '').trim().toUpperCase();
+    return code === 'GL' || code === 'WW' || name === 'GLOBAL';
+};
 // Signup
 router.post('/signup', rateLimit_middleware_1.strictRateLimiter, async (req, res) => {
     try {
@@ -114,6 +132,12 @@ router.post('/signup', rateLimit_middleware_1.strictRateLimiter, async (req, res
         const existingUser = await client_2.prisma.user.findUnique({ where: { email } });
         if (existingUser) {
             return res.status(400).json({ message: 'User already exists' });
+        }
+        if (await isGlobalCountryValue(country)) {
+            return res.status(400).json({
+                code: 'INVALID_COUNTRY',
+                message: 'Global is not allowed for individual signup'
+            });
         }
         const hashedPassword = await bcryptjs_1.default.hash(password, 10);
         const name = `${firstName} ${lastName}`;

@@ -10,6 +10,7 @@ exports.validateScopes = exports.ALL_SCOPES = exports.API_SCOPES = exports.canCr
 const client_1 = require("@prisma/client");
 const client_2 = require("../db/client");
 const enterprise_quota_service_1 = require("./enterprise-quota.service");
+const plan_lifecycle_service_1 = require("./plan-lifecycle.service");
 // ============================================
 // Constants
 // ============================================
@@ -123,10 +124,13 @@ const hasActiveEnterprisePlan = (org) => {
         return false;
     if (org.isRestricted)
         return false;
-    // Check expiry
-    if (org.planEndAt && org.planEndAt.getTime() < Date.now()) {
+    const lifecycle = (0, plan_lifecycle_service_1.computePlanLifecycleState)({
+        planType: org.planType,
+        paidTermEndAt: org.planEndAt || null,
+        now: new Date()
+    });
+    if (lifecycle.isExpired)
         return false;
-    }
     return true;
 };
 exports.hasActiveEnterprisePlan = hasActiveEnterprisePlan;

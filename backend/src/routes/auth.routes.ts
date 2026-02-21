@@ -69,6 +69,26 @@ const loginSchema = z.object({
     captchaAction: z.string().optional(),
 });
 
+const isGlobalCountryValue = async (value?: string): Promise<boolean> => {
+    if (!value) return false;
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'GLOBAL' || normalized === 'GL' || normalized === 'WW') {
+        return true;
+    }
+
+    const asUuid = z.string().uuid().safeParse(value);
+    if (!asUuid.success) return false;
+
+    const country = await prisma.country.findUnique({
+        where: { id: value },
+        select: { code: true, name: true }
+    });
+
+    const code = String(country?.code || '').trim().toUpperCase();
+    const name = String(country?.name || '').trim().toUpperCase();
+    return code === 'GL' || code === 'WW' || name === 'GLOBAL';
+};
+
 // Signup
 router.post('/signup', strictRateLimiter, async (req, res) => {
     try {
@@ -88,6 +108,13 @@ router.post('/signup', strictRateLimiter, async (req, res) => {
         const existingUser = await prisma.user.findUnique({ where: { email } });
         if (existingUser) {
             return res.status(400).json({ message: 'User already exists' });
+        }
+
+        if (await isGlobalCountryValue(country)) {
+            return res.status(400).json({
+                code: 'INVALID_COUNTRY',
+                message: 'Global is not allowed for individual signup'
+            });
         }
 
         const hashedPassword = await bcrypt.hash(password, 10);

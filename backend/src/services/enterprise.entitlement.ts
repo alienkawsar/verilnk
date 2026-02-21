@@ -13,6 +13,7 @@ import {
     getEnterpriseQuotaSnapshotByOrganizationId,
     normalizeEnterpriseQuotaLimits
 } from './enterprise-quota.service';
+import { computePlanLifecycleState } from './plan-lifecycle.service';
 
 // ============================================
 // Types
@@ -212,11 +213,12 @@ export const hasActiveEnterprisePlan = (org: {
     if (org.planStatus !== PlanStatus.ACTIVE) return false;
     if (org.status !== OrgStatus.APPROVED) return false;
     if (org.isRestricted) return false;
-
-    // Check expiry
-    if (org.planEndAt && org.planEndAt.getTime() < Date.now()) {
-        return false;
-    }
+    const lifecycle = computePlanLifecycleState({
+        planType: org.planType,
+        paidTermEndAt: org.planEndAt || null,
+        now: new Date()
+    });
+    if (lifecycle.isExpired) return false;
 
     return true;
 };

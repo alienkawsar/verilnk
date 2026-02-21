@@ -481,6 +481,8 @@ export default function OrgDashboard() {
     const planStatus = orgData?.planStatus || 'ACTIVE';
     const planEndAt = orgData?.planEndAt ? new Date(orgData.planEndAt) : null;
     const trialEndAt = entitlements?.trialEndsAt ? new Date(entitlements.trialEndsAt) : null;
+    const graceEndAt = entitlements?.graceEndsAt ? new Date(entitlements.graceEndsAt) : null;
+    const isInGrace = Boolean(entitlements?.isInGrace && graceEndAt);
     const linkedEnterpriseWorkspaceName = orgData?.linkedEnterpriseWorkspace?.name || orgData?.linkedEnterpriseWorkspace?.id || '';
     const planExpiryLabel = planEndAt ? planEndAt.toLocaleDateString() : 'No expiry';
     const planStatusLabel = entitlements?.isExpired ? 'EXPIRED' : planStatus;
@@ -592,6 +594,12 @@ export default function OrgDashboard() {
                                     <div className="text-xs text-emerald-600 dark:text-emerald-400 font-medium flex items-center gap-1">
                                         <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
                                         Trial ends {trialEndAt.toLocaleDateString()}
+                                    </div>
+                                )}
+                                {isInGrace && graceEndAt && (
+                                    <div className="text-xs text-amber-600 dark:text-amber-300 font-medium flex items-center gap-1">
+                                        <Clock className="w-3.5 h-3.5" />
+                                        Payment overdue - grace ends on {graceEndAt.toLocaleDateString()}
                                     </div>
                                 )}
 

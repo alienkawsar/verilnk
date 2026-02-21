@@ -33,7 +33,15 @@ exports.corsOptions = {
         }
     },
     methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Cache-Control', 'Pragma'],
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'Cache-Control',
+        'Pragma',
+        'Idempotency-Key',
+        'Stripe-Signature',
+        'X-Webhook-Signature'
+    ],
     exposedHeaders: ['Content-Disposition', 'Content-Length', 'Content-Type'],
     credentials: true,
 };

@@ -109,6 +109,10 @@ import {
     isWorkspaceLifecycleError,
     toWorkspaceLifecycleErrorResponse
 } from '../services/workspace-lifecycle.service';
+import {
+    computePlanLifecycleState,
+    isEnterpriseManagedSyncedOrganization
+} from '../services/plan-lifecycle.service';
 
 const router = Router();
 
@@ -2914,12 +2918,26 @@ router.get('/profile', async (req: AuthRequest, res: Response) => {
             return res.status(403).json({ message: 'Enterprise access required' });
         }
 
+        const graceSuppressed = await isEnterpriseManagedSyncedOrganization(context.organization.id);
+        const billingLifecycle = computePlanLifecycleState({
+            planType: context.organization.planType,
+            paidTermEndAt: context.organization.planEndAt || null,
+            now: new Date(),
+            graceSuppressed
+        });
+
         applyNoStoreHeaders(res);
         res.json({
             organization: context.organization,
             role: context.role,
             canEdit: context.canEdit,
-            entitlements: context.access.entitlements || null
+            entitlements: context.access.entitlements || null,
+            billingLifecycle: {
+                paidTermEndAt: billingLifecycle.paidTermEndAt,
+                graceEndsAt: billingLifecycle.graceEndsAt,
+                graceDays: billingLifecycle.graceDays,
+                isInGrace: billingLifecycle.isInGrace
+            }
         });
     } catch (error: any) {
         console.error('[Enterprise] Get profile error:', error);

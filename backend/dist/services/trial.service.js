@@ -33,12 +33,20 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.extendTrial = exports.getTrialStatus = exports.startTrial = exports.getActiveTrialForOrganization = void 0;
+exports.extendTrial = exports.getTrialStatus = exports.startTrial = exports.getActiveTrialForOrganization = exports.TrialServiceError = exports.PRO_TRIAL_DURATION_DAYS = void 0;
 const client_1 = require("../db/client");
 const client_2 = require("@prisma/client");
 const alertService = __importStar(require("./alert.service"));
-const ALLOWED_TRIAL_DURATIONS = [7, 14];
+exports.PRO_TRIAL_DURATION_DAYS = 14;
 const REMINDER_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
+class TrialServiceError extends Error {
+    constructor(code, message) {
+        super(message);
+        this.name = 'TrialServiceError';
+        this.code = code;
+    }
+}
+exports.TrialServiceError = TrialServiceError;
 const ensureBillingAccount = async (organizationId) => {
     return client_1.prisma.billingAccount.upsert({
         where: { organizationId },
@@ -104,10 +112,10 @@ exports.getActiveTrialForOrganization = getActiveTrialForOrganization;
 const startTrial = async (params) => {
     const planType = params.planType ?? client_2.PlanType.PRO;
     if (planType !== client_2.PlanType.PRO) {
-        throw new Error('Only PRO trials are supported');
+        throw new TrialServiceError('TRIAL_PLAN_INVALID', 'Only PRO trials are supported');
     }
-    if (!ALLOWED_TRIAL_DURATIONS.includes(params.durationDays)) {
-        throw new Error('Trial duration must be 7 or 14 days');
+    if (params.durationDays !== exports.PRO_TRIAL_DURATION_DAYS) {
+        throw new TrialServiceError('TRIAL_DURATION_INVALID', 'Trial duration must be 14 days');
     }
     const billingAccount = await ensureBillingAccount(params.organizationId);
     const existingTrial = await client_1.prisma.trialSession.findFirst({
@@ -115,7 +123,7 @@ const startTrial = async (params) => {
         orderBy: { createdAt: 'desc' }
     });
     if (existingTrial) {
-        throw new Error('Trial already used for this organization');
+        throw new TrialServiceError('TRIAL_ALREADY_USED', 'Trial already used for this organization');
     }
     const activeSubscription = await client_1.prisma.subscription.findFirst({
         where: {
@@ -124,7 +132,7 @@ const startTrial = async (params) => {
         }
     });
     if (activeSubscription) {
-        throw new Error('Active subscription found. Trial not available.');
+        throw new TrialServiceError('TRIAL_ACTIVE_SUBSCRIPTION', 'Active subscription found. Trial not available.');
     }
     const now = new Date();
     const endsAt = new Date(now);
@@ -142,14 +150,50 @@ const startTrial = async (params) => {
 };
 exports.startTrial = startTrial;
 const getTrialStatus = async (organizationId) => {
+    const now = new Date();
     const active = await (0, exports.getActiveTrialForOrganization)(organizationId);
-    if (active)
-        return { active: true, trial: active };
+    if (active) {
+        return {
+            active: true,
+            source: 'trial_session',
+            trial: active,
+            trialEndsAt: active.endsAt
+        };
+    }
+    const trialingSubscription = await client_1.prisma.subscription.findFirst({
+        where: {
+            status: client_2.SubscriptionStatus.TRIALING,
+            billingAccount: { organizationId }
+        },
+        orderBy: { trialEndsAt: 'desc' },
+        select: {
+            id: true,
+            status: true,
+            planType: true,
+            trialEndsAt: true,
+            currentPeriodEnd: true
+        }
+    });
+    const subscriptionTrialEndAt = trialingSubscription?.trialEndsAt || trialingSubscription?.currentPeriodEnd || null;
+    if (trialingSubscription && subscriptionTrialEndAt && subscriptionTrialEndAt.getTime() > now.getTime()) {
+        return {
+            active: true,
+            source: 'subscription',
+            trial: null,
+            subscription: trialingSubscription,
+            trialEndsAt: subscriptionTrialEndAt
+        };
+    }
     const latest = await client_1.prisma.trialSession.findFirst({
         where: { billingAccount: { organizationId } },
         orderBy: { createdAt: 'desc' }
     });
-    return { active: false, trial: latest };
+    return {
+        active: false,
+        source: 'none',
+        trial: latest,
+        trialEndsAt: latest?.endsAt || null
+    };
 };
 exports.getTrialStatus = getTrialStatus;
 const extendTrial = async (params) => {

@@ -22,6 +22,12 @@ interface User {
     requestLimitWindow?: number;
 }
 
+type CountryOption = {
+    id: string;
+    name?: string | null;
+    code?: string | null;
+};
+
 export default function UsersSection() {
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
@@ -340,6 +346,7 @@ export default function UsersSection() {
                         onClose={() => setIsModalOpen(false)}
                         initialData={editingUser}
                         onSave={loadUsers}
+                        countries={countries}
                     />
                 )
             }
@@ -347,7 +354,7 @@ export default function UsersSection() {
     );
 }
 
-function UserFormModal({ isOpen, onClose, initialData, onSave }: any) {
+function UserFormModal({ isOpen, onClose, initialData, onSave, countries = [] }: any) {
     const { showToast } = useToast();
     const [loading, setLoading] = useState(false);
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -362,6 +369,23 @@ function UserFormModal({ isOpen, onClose, initialData, onSave }: any) {
         requestLimitWindow: initialData?.requestLimitWindow || 1
     });
 
+    const isGlobalCountryValue = (value?: string) => {
+        const normalized = String(value || '').trim().toUpperCase();
+        if (!normalized) return false;
+        if (normalized === 'GLOBAL' || normalized === 'GL' || normalized === 'WW') return true;
+
+        const countryList: CountryOption[] = Array.isArray(countries) ? countries : [];
+        const matched = countryList.find((country) => {
+            const code = String(country.code || '').trim().toUpperCase();
+            const name = String(country.name || '').trim().toUpperCase();
+            return country.id === value || code === normalized || name === normalized;
+        });
+        if (!matched) return false;
+        const code = String(matched.code || '').trim().toUpperCase();
+        const name = String(matched.name || '').trim().toUpperCase();
+        return code === 'GL' || code === 'WW' || name === 'GLOBAL';
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         const shouldValidatePassword = !initialData || Boolean(formData.password);
@@ -371,6 +395,10 @@ function UserFormModal({ isOpen, onClose, initialData, onSave }: any) {
         }
         if (shouldValidatePassword && formData.password !== confirmPassword) {
             showToast('Passwords do not match', 'error');
+            return;
+        }
+        if (isGlobalCountryValue(formData.country)) {
+            showToast('Global is not allowed for user country', 'error');
             return;
         }
         setLoading(true);

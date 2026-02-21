@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import { formatCurrencyFromCents } from '@/lib/currency';
 import SignupModal from '@/components/auth/SignupModal';
+import BillingCadenceToggle from '@/components/billing/BillingCadenceToggle';
 import {
   Check,
   ShieldCheck,
@@ -405,41 +406,7 @@ export default function PricingClient() {
 
           {/* Billing Toggle */}
           <div className="mt-10 flex justify-center items-center">
-            {/* Discovery note (frontend/src/app/pricing/pricing-client.tsx):
-               Billing toggle is a custom segmented control using plain <button> elements.
-               Reused search-input radius token from frontend/src/components/home/SearchBar.tsx: rounded-2xl.
-               Previous toggle height was driven by p-1 + button py-2.5 (taller pill); updated to compact h-10 shell with h-8 segments. */}
-            <div className="relative inline-flex h-10 items-center p-1 rounded-2xl bg-slate-100/85 dark:bg-slate-800/60 border border-[var(--app-border)] backdrop-blur-md shadow-sm">
-              {/* Sliding Active Chip */}
-              <div
-                className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-xl shadow-sm transition-all duration-200 ease-out bg-white dark:bg-slate-700/80 border border-slate-200/70 dark:border-slate-600/70 ${billingCycle === 'monthly' ? 'left-1' : 'left-[50%]'
-                  }`}
-              />
-
-              <button
-                onClick={() => setBillingCycle('monthly')}
-                className={`relative z-10 h-8 w-[134px] px-3 text-sm font-semibold transition-colors duration-200 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/45 ${billingCycle === 'monthly'
-                    ? 'text-slate-900 dark:text-[#EAF0FF]'
-                    : 'text-slate-500 dark:text-white/60 hover:text-slate-700 dark:hover:text-white/80'
-                  }`}
-              >
-                Monthly
-              </button>
-              <button
-                onClick={() => setBillingCycle('annual')}
-                className={`relative z-10 h-8 w-[134px] px-3 text-sm font-semibold transition-colors duration-200 rounded-xl flex items-center justify-center gap-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#187DE9]/45 ${billingCycle === 'annual'
-                    ? 'text-slate-900 dark:text-[#EAF0FF]'
-                    : 'text-slate-500 dark:text-white/60 hover:text-slate-700 dark:hover:text-white/80'
-                  }`}
-              >
-                Annual
-                {billingCycle === 'annual' && (
-                  <span className="bg-emerald-100 dark:bg-emerald-500/15 text-emerald-600 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-400/20 text-[10px] px-1.5 py-0.5 rounded-lg font-bold leading-none animate-in fade-in zoom-in duration-200">
-                    -10%
-                  </span>
-                )}
-              </button>
-            </div>
+            <BillingCadenceToggle value={billingCycle} onChange={setBillingCycle} />
           </div>
 
         </div>

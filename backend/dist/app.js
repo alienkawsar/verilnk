@@ -35,7 +35,14 @@ app.use(security_middleware_1.securityHeaders);
 app.use((0, cors_1.default)(security_middleware_1.corsOptions));
 app.use(rateLimit_middleware_1.globalRateLimiter);
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
-app.use(express_1.default.json());
+app.use(express_1.default.json({
+    verify: (req, _res, buffer) => {
+        if (req.originalUrl?.startsWith('/api/billing/webhooks/stripe')) {
+            req.rawBody = buffer.toString('utf8');
+        }
+    }
+}));
+app.use(express_1.default.urlencoded({ extended: true }));
 app.use((0, cookie_parser_1.default)());
 app.use((0, timeout_middleware_1.requestTimeout)(20000));
 const auth_routes_1 = __importDefault(require("./routes/auth.routes"));

@@ -33,15 +33,18 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getTrialStatus = exports.startTrial = exports.mockCallback = exports.mockCheckout = void 0;
+exports.getTrialStatus = exports.startTrial = exports.mockCallback = exports.mockCheckout = exports.sslcommerzCancel = exports.sslcommerzFail = exports.sslcommerzSuccess = exports.stripeWebhook = exports.checkout = void 0;
 const zod_1 = require("zod");
 const client_1 = require("@prisma/client");
 const billingService = __importStar(require("../services/billing.service"));
 const client_2 = require("../db/client");
+const payment_config_1 = require("../config/payment.config");
 const trialService = __importStar(require("../services/trial.service"));
 const billing_security_service_1 = require("../services/billing-security.service");
 const enterprise_compliance_service_1 = require("../services/enterprise-compliance.service");
 const BILLING_TERM_VALUES = ['MONTHLY', 'ANNUAL'];
+const CHECKOUT_PLAN_VALUES = ['BASIC', 'PRO', 'BUSINESS'];
+const PAYMENT_MISCONFIGURED_MESSAGE = 'Payment system misconfigured. Please contact support.';
 const mockCheckoutSchema = zod_1.z.object({
     organizationId: zod_1.z.string().uuid().optional(),
     planType: zod_1.z.nativeEnum(client_1.PlanType),
@@ -58,9 +61,16 @@ const mockCallbackSchema = zod_1.z.object({
     result: zod_1.z.enum(['success', 'failure'])
 });
 const startTrialSchema = zod_1.z.object({
-    durationDays: zod_1.z.number().int().positive(),
+    durationDays: zod_1.z
+        .literal(trialService.PRO_TRIAL_DURATION_DAYS)
+        .optional()
+        .default(trialService.PRO_TRIAL_DURATION_DAYS),
     planType: zod_1.z.nativeEnum(client_1.PlanType).optional()
 });
+const checkoutSchema = zod_1.z.object({
+    plan: zod_1.z.enum(CHECKOUT_PLAN_VALUES),
+    billingCadence: zod_1.z.enum(BILLING_TERM_VALUES)
+}).strict();
 const resolveOrganizationId = async (actor) => {
     if (!actor)
         return null;
@@ -91,6 +101,111 @@ const assertBillingComplianceForOrganization = async (organizationId, actorRole)
         actorRole
     });
 };
+const resolveAppUrl = () => {
+    const appUrl = (process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:3000').trim();
+    return appUrl.replace(/\/+$/g, '');
+};
+const resolveSSLCommerzFailureRedirect = () => {
+    return `${resolveAppUrl()}/org/upgrade?status=failed`;
+};
+const handlePaymentConfigurationError = (error, res) => {
+    if (!(error instanceof payment_config_1.PaymentConfigurationError)) {
+        return false;
+    }
+    // Keep full diagnostics in logs while masking config internals from clients.
+    console.error('[Billing] Payment configuration error:', error);
+    res.status(500).json({ message: PAYMENT_MISCONFIGURED_MESSAGE });
+    return true;
+};
+const checkout = async (req, res) => {
+    try {
+        const payload = checkoutSchema.parse(req.body);
+        const actor = req.user;
+        if (actor?.role) {
+            res.status(403).json({ message: 'Checkout is limited to organization accounts' });
+            return;
+        }
+        const resolvedOrgId = await resolveOrganizationId(actor);
+        if (!resolvedOrgId) {
+            res.status(403).json({ message: 'Organization user required' });
+            return;
+        }
+        await assertBillingComplianceForOrganization(resolvedOrgId, 'OWNER');
+        const idempotencyKey = req.headers['idempotency-key'];
+        const result = await billingService.createCheckout({
+            organizationId: resolvedOrgId,
+            planType: payload.plan,
+            billingTerm: payload.billingCadence,
+            idempotencyKey
+        });
+        res.json({ redirectUrl: result.redirectUrl });
+    }
+    catch (error) {
+        if ((0, enterprise_compliance_service_1.isEnterpriseComplianceError)(error)) {
+            res.status(error.status).json((0, enterprise_compliance_service_1.toEnterpriseComplianceErrorResponse)(error));
+            return;
+        }
+        if (handlePaymentConfigurationError(error, res)) {
+            return;
+        }
+        if (error instanceof zod_1.z.ZodError) {
+            res.status(400).json({ errors: error.issues });
+            return;
+        }
+        res.status(400).json({ message: error.message || 'Checkout failed' });
+    }
+};
+exports.checkout = checkout;
+const stripeWebhook = async (req, res) => {
+    try {
+        const signature = req.headers['stripe-signature'];
+        const rawBody = req.rawBody;
+        if (typeof rawBody !== 'string' || rawBody.length === 0) {
+            res.status(400).json({ message: 'Missing raw webhook body' });
+            return;
+        }
+        const result = await billingService.handleStripeWebhook({
+            rawBody,
+            signature
+        });
+        res.json(result);
+    }
+    catch (error) {
+        if (handlePaymentConfigurationError(error, res)) {
+            return;
+        }
+        res.status(400).json({ message: error.message || 'Stripe webhook rejected' });
+    }
+};
+exports.stripeWebhook = stripeWebhook;
+const handleSSLCommerzCallback = async (req, res, kind) => {
+    try {
+        const payload = {
+            ...req.query,
+            ...(req.body || {})
+        };
+        const result = await billingService.processSSLCommerzCallback({ kind, payload });
+        res.redirect(302, result.redirectUrl);
+    }
+    catch (error) {
+        if (error instanceof payment_config_1.PaymentConfigurationError) {
+            console.error('[Billing] Payment configuration error during SSLCommerz callback:', error);
+        }
+        res.redirect(302, resolveSSLCommerzFailureRedirect());
+    }
+};
+const sslcommerzSuccess = async (req, res) => {
+    await handleSSLCommerzCallback(req, res, 'success');
+};
+exports.sslcommerzSuccess = sslcommerzSuccess;
+const sslcommerzFail = async (req, res) => {
+    await handleSSLCommerzCallback(req, res, 'fail');
+};
+exports.sslcommerzFail = sslcommerzFail;
+const sslcommerzCancel = async (req, res) => {
+    await handleSSLCommerzCallback(req, res, 'cancel');
+};
+exports.sslcommerzCancel = sslcommerzCancel;
 const mockCheckout = async (req, res) => {
     try {
         const payload = mockCheckoutSchema.parse(req.body);
@@ -215,6 +330,10 @@ const startTrial = async (req, res) => {
     catch (error) {
         if ((0, enterprise_compliance_service_1.isEnterpriseComplianceError)(error)) {
             res.status(error.status).json((0, enterprise_compliance_service_1.toEnterpriseComplianceErrorResponse)(error));
+            return;
+        }
+        if (error instanceof trialService.TrialServiceError && error.code === 'TRIAL_ALREADY_USED') {
+            res.status(400).json({ error: 'TRIAL_ALREADY_USED' });
             return;
         }
         if (error instanceof zod_1.z.ZodError) {

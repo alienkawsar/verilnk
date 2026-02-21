@@ -37,6 +37,7 @@ exports.updateUsersBulk = exports.deleteUsersBulk = exports.restrictUser = expor
 const userService = __importStar(require("../services/user.service"));
 const zod_1 = require("zod");
 const passwordPolicy_1 = require("../utils/passwordPolicy");
+const client_1 = require("../db/client");
 const createUserSchema = zod_1.z.object({
     email: zod_1.z.string().email(),
     password: zod_1.z.string().regex(passwordPolicy_1.STRONG_PASSWORD_REGEX, passwordPolicy_1.STRONG_PASSWORD_MESSAGE),
@@ -58,6 +59,24 @@ const updateUserSchema = zod_1.z.object({
     requestLimit: zod_1.z.number().nullable().optional(),
     requestLimitWindow: zod_1.z.number().optional()
 });
+const isGlobalCountryValue = async (value) => {
+    if (!value)
+        return false;
+    const normalized = value.trim().toUpperCase();
+    if (normalized === 'GLOBAL' || normalized === 'GL' || normalized === 'WW') {
+        return true;
+    }
+    const asUuid = zod_1.z.string().uuid().safeParse(value);
+    if (!asUuid.success)
+        return false;
+    const country = await client_1.prisma.country.findUnique({
+        where: { id: value },
+        select: { code: true, name: true }
+    });
+    const code = String(country?.code || '').trim().toUpperCase();
+    const name = String(country?.name || '').trim().toUpperCase();
+    return code === 'GL' || code === 'WW' || name === 'GLOBAL';
+};
 const getUsers = async (req, res) => {
     try {
         const { country, stateId, categoryId, type } = req.query;
@@ -78,6 +97,13 @@ exports.getUsers = getUsers;
 const createUser = async (req, res) => {
     try {
         const data = createUserSchema.parse(req.body);
+        if (await isGlobalCountryValue(data.country)) {
+            res.status(400).json({
+                code: 'INVALID_COUNTRY',
+                message: 'Global is not allowed for user country'
+            });
+            return;
+        }
         // @ts-ignore
         const user = req.user;
         const auditContext = user ? { adminId: user.id, ip: req.ip, userAgent: req.headers['user-agent'] } : undefined;
@@ -97,6 +123,13 @@ const updateUser = async (req, res) => {
     try {
         const { id } = req.params;
         const data = updateUserSchema.parse(req.body);
+        if (await isGlobalCountryValue(data.country)) {
+            res.status(400).json({
+                code: 'INVALID_COUNTRY',
+                message: 'Global is not allowed for user country'
+            });
+            return;
+        }
         // @ts-ignore
         const requester = req.user;
         const auditContext = requester ? { adminId: requester.id, ip: req.ip, userAgent: req.headers['user-agent'] } : undefined;
@@ -127,7 +160,7 @@ const deleteUser = async (req, res) => {
 };
 exports.deleteUser = deleteUser;
 const auditService = __importStar(require("../services/audit.service"));
-const client_1 = require("@prisma/client");
+const client_2 = require("@prisma/client");
 const restrictUser = async (req, res) => {
     try {
         const { id } = req.params;
@@ -151,7 +184,7 @@ const restrictUser = async (req, res) => {
         const user = await userService.restrictUser(id, restrictedBool);
         auditService.logAction({
             adminId,
-            action: client_1.AuditActionType.SUSPEND,
+            action: client_2.AuditActionType.SUSPEND,
             entity: 'User',
             targetId: id,
             details: `User restriction set to: ${restrictedBool}`,

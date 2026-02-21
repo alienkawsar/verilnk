@@ -1,5 +1,6 @@
 import { PlanStatus, PlanType, OrgStatus } from '@prisma/client';
 import { prisma } from '../db/client';
+import { computePlanLifecycleState } from './plan-lifecycle.service';
 
 export type EnterpriseQuotaResource = 'WORKSPACES' | 'LINKED_ORGS' | 'API_KEYS' | 'MEMBERS';
 
@@ -60,7 +61,12 @@ const hasActiveEnterprisePlan = (organization: {
     if (organization.planStatus !== PlanStatus.ACTIVE) return false;
     if (organization.status !== OrgStatus.APPROVED) return false;
     if (organization.isRestricted) return false;
-    if (organization.planEndAt && organization.planEndAt.getTime() < Date.now()) return false;
+    const lifecycle = computePlanLifecycleState({
+        planType: organization.planType,
+        paidTermEndAt: organization.planEndAt || null,
+        now: new Date()
+    });
+    if (lifecycle.isExpired) return false;
     return true;
 };
 

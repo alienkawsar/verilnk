@@ -11,6 +11,11 @@ import {
 } from '@prisma/client';
 import { getActiveTrialForOrganization } from './trial.service';
 import { isOrganizationEffectivelyRestricted } from './organization-visibility.service';
+import {
+    computePlanLifecycleState,
+    isEnterpriseManagedSyncedOrganization,
+    type PlanLifecycleState
+} from './plan-lifecycle.service';
 
 export type AnalyticsLevel = 'NONE' | 'BASIC' | 'ADVANCED' | 'BUSINESS';
 
@@ -22,6 +27,9 @@ export interface OrganizationEntitlements {
     supportTier: SupportTier;
     priorityLevel: OrgPriority;
     isExpired: boolean;
+    isInGrace: boolean;
+    graceEndsAt?: Date | null;
+    graceDays?: number;
     isTrial: boolean;
     trialEndsAt?: Date | null;
 }
@@ -50,14 +58,35 @@ const scoreToPriority = (score: number): OrgPriority => {
     return OrgPriority.LOW;
 };
 
-const isPlanExpired = (org: Organization, now: Date) => {
-    return !!org.planEndAt && org.planEndAt.getTime() < now.getTime();
+interface OrganizationPlanLifecycle extends PlanLifecycleState {
+    graceSuppressed: boolean;
+}
+
+const resolvePlanLifecycleForOrganization = async (
+    org: Organization,
+    now: Date
+): Promise<OrganizationPlanLifecycle> => {
+    const graceSuppressed = org.planType !== PlanType.FREE && org.planEndAt
+        ? await isEnterpriseManagedSyncedOrganization(org.id)
+        : false;
+
+    const lifecycle = computePlanLifecycleState({
+        planType: org.planType,
+        paidTermEndAt: org.planEndAt || null,
+        now,
+        graceSuppressed
+    });
+
+    return {
+        ...lifecycle,
+        graceSuppressed
+    };
 };
 
-const isActivePaidPlan = (org: Organization, now: Date) => {
+const isActivePaidPlan = (org: Organization, lifecycle: PlanLifecycleState) => {
     if (org.planType === PlanType.FREE) return false;
     if (org.planStatus !== PlanStatus.ACTIVE) return false;
-    if (org.planEndAt && org.planEndAt.getTime() < now.getTime()) return false;
+    if (lifecycle.isExpired) return false;
     return true;
 };
 
@@ -110,12 +139,21 @@ const computePriorityLevel = (org: Organization, now: Date, isApproved: boolean,
     return OrgPriority.LOW;
 };
 
-export const getOrganizationEntitlements = (org: Organization, trial?: TrialSession | null): OrganizationEntitlements => {
+export const getOrganizationEntitlements = (
+    org: Organization,
+    trial?: TrialSession | null,
+    lifecycle?: PlanLifecycleState
+): OrganizationEntitlements => {
     const now = new Date();
+    const planLifecycle = lifecycle || computePlanLifecycleState({
+        planType: org.planType,
+        paidTermEndAt: org.planEndAt || null,
+        now
+    });
     const trialActive = !!trial && trial.status === TrialStatus.ACTIVE && trial.endsAt.getTime() > now.getTime();
-    const activePaid = isActivePaidPlan(org, now);
+    const activePaid = isActivePaidPlan(org, planLifecycle);
     const isApproved = org.status === OrgStatus.APPROVED;
-    const isExpired = org.planStatus === PlanStatus.EXPIRED || isPlanExpired(org, now);
+    const isExpired = org.planStatus === PlanStatus.EXPIRED || planLifecycle.isExpired;
     const effectivePlan = activePaid ? org.planType : (trialActive ? PlanType.PRO : PlanType.FREE);
 
     const canAccessOrgPage = isApproved && !org.isRestricted && effectivePlan !== PlanType.FREE;
@@ -154,14 +192,19 @@ export const getOrganizationEntitlements = (org: Organization, trial?: TrialSess
         supportTier,
         priorityLevel,
         isExpired,
+        isInGrace: activePaid && planLifecycle.isInGrace,
+        graceEndsAt: activePaid && planLifecycle.isInGrace ? planLifecycle.graceEndsAt : null,
+        graceDays: activePaid ? planLifecycle.graceDays : 0,
         isTrial: trialActive,
         trialEndsAt: trialActive ? trial?.endsAt : null
     };
 };
 
-const applyPlanExpiryIfNeeded = async (org: Organization): Promise<{ organization: Organization; wasUpdated: boolean }> => {
-    const now = new Date();
-    const shouldDowngrade = org.planType !== PlanType.FREE && isPlanExpired(org, now);
+const applyPlanExpiryIfNeeded = async (
+    org: Organization,
+    lifecycle: OrganizationPlanLifecycle
+): Promise<{ organization: Organization; wasUpdated: boolean }> => {
+    const shouldDowngrade = org.planType !== PlanType.FREE && lifecycle.isExpired;
     if (!shouldDowngrade) {
         return { organization: org, wasUpdated: false };
     }
@@ -180,15 +223,32 @@ const applyPlanExpiryIfNeeded = async (org: Organization): Promise<{ organizatio
 };
 
 export const resolveOrganizationEntitlements = async (org: Organization): Promise<{ entitlements: OrganizationEntitlements; organization: Organization; wasUpdated: boolean }> => {
-    const { organization, wasUpdated } = await applyPlanExpiryIfNeeded(org);
+    const now = new Date();
+    const lifecycle = await resolvePlanLifecycleForOrganization(org, now);
+    const { organization, wasUpdated } = await applyPlanExpiryIfNeeded(org, lifecycle);
     const effectiveRestricted = await isOrganizationEffectivelyRestricted(organization.id);
     const organizationWithEffectiveRestriction = effectiveRestricted && !organization.isRestricted
         ? { ...organization, isRestricted: true }
         : organization;
     const trial = await getActiveTrialForOrganization(organizationWithEffectiveRestriction.id);
 
+    const effectiveLifecycle =
+        organizationWithEffectiveRestriction.id === org.id
+            && organizationWithEffectiveRestriction.planType === org.planType
+            && organizationWithEffectiveRestriction.planEndAt?.getTime() === org.planEndAt?.getTime()
+        ? lifecycle
+        : computePlanLifecycleState({
+            planType: organizationWithEffectiveRestriction.planType,
+            paidTermEndAt: organizationWithEffectiveRestriction.planEndAt || null,
+            now
+        });
+
     return {
-        entitlements: getOrganizationEntitlements(organizationWithEffectiveRestriction, trial),
+        entitlements: getOrganizationEntitlements(
+            organizationWithEffectiveRestriction,
+            trial,
+            effectiveLifecycle
+        ),
         organization: organizationWithEffectiveRestriction,
         wasUpdated: wasUpdated || organizationWithEffectiveRestriction.isRestricted !== organization.isRestricted
     };

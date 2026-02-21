@@ -63,6 +63,7 @@ const invoice_pdf_service_1 = require("../services/invoice-pdf.service");
 const invoice_filename_service_1 = require("../services/invoice-filename.service");
 const enterprise_compliance_service_1 = require("../services/enterprise-compliance.service");
 const workspace_lifecycle_service_1 = require("../services/workspace-lifecycle.service");
+const plan_lifecycle_service_1 = require("../services/plan-lifecycle.service");
 const router = (0, express_1.Router)();
 // All routes require user authentication
 router.use(auth_middleware_1.authenticateUser);
@@ -2366,12 +2367,25 @@ router.get('/profile', async (req, res) => {
         if (!context) {
             return res.status(403).json({ message: 'Enterprise access required' });
         }
+        const graceSuppressed = await (0, plan_lifecycle_service_1.isEnterpriseManagedSyncedOrganization)(context.organization.id);
+        const billingLifecycle = (0, plan_lifecycle_service_1.computePlanLifecycleState)({
+            planType: context.organization.planType,
+            paidTermEndAt: context.organization.planEndAt || null,
+            now: new Date(),
+            graceSuppressed
+        });
         applyNoStoreHeaders(res);
         res.json({
             organization: context.organization,
             role: context.role,
             canEdit: context.canEdit,
-            entitlements: context.access.entitlements || null
+            entitlements: context.access.entitlements || null,
+            billingLifecycle: {
+                paidTermEndAt: billingLifecycle.paidTermEndAt,
+                graceEndsAt: billingLifecycle.graceEndsAt,
+                graceDays: billingLifecycle.graceDays,
+                isInGrace: billingLifecycle.isInGrace
+            }
         });
     }
     catch (error) {

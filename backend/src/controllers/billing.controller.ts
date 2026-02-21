@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { PlanType } from '@prisma/client';
 import * as billingService from '../services/billing.service';
 import { prisma } from '../db/client';
+import { PaymentConfigurationError } from '../config/payment.config';
 import * as trialService from '../services/trial.service';
 import { verifyWebhookSignature } from '../services/billing-security.service';
 import {
@@ -12,6 +13,8 @@ import {
 } from '../services/enterprise-compliance.service';
 
 const BILLING_TERM_VALUES = ['MONTHLY', 'ANNUAL'] as const;
+const CHECKOUT_PLAN_VALUES = ['BASIC', 'PRO', 'BUSINESS'] as const;
+const PAYMENT_MISCONFIGURED_MESSAGE = 'Payment system misconfigured. Please contact support.';
 
 const mockCheckoutSchema = z.object({
     organizationId: z.string().uuid().optional(),
@@ -31,9 +34,17 @@ const mockCallbackSchema = z.object({
 });
 
 const startTrialSchema = z.object({
-    durationDays: z.number().int().positive(),
+    durationDays: z
+        .literal(trialService.PRO_TRIAL_DURATION_DAYS)
+        .optional()
+        .default(trialService.PRO_TRIAL_DURATION_DAYS),
     planType: z.nativeEnum(PlanType).optional()
 });
+
+const checkoutSchema = z.object({
+    plan: z.enum(CHECKOUT_PLAN_VALUES),
+    billingCadence: z.enum(BILLING_TERM_VALUES)
+}).strict();
 
 const resolveOrganizationId = async (actor?: { id?: string; organizationId?: string }) => {
     if (!actor) return null;
@@ -70,6 +81,127 @@ const assertBillingComplianceForOrganization = async (
         action: 'BILLING_CHANGE',
         actorRole
     });
+};
+
+const resolveAppUrl = () => {
+    const appUrl = (process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:3000').trim();
+    return appUrl.replace(/\/+$/g, '');
+};
+
+const resolveSSLCommerzFailureRedirect = () => {
+    return `${resolveAppUrl()}/org/upgrade?status=failed`;
+};
+
+const handlePaymentConfigurationError = (
+    error: unknown,
+    res: Response
+): boolean => {
+    if (!(error instanceof PaymentConfigurationError)) {
+        return false;
+    }
+
+    // Keep full diagnostics in logs while masking config internals from clients.
+    console.error('[Billing] Payment configuration error:', error);
+    res.status(500).json({ message: PAYMENT_MISCONFIGURED_MESSAGE });
+    return true;
+};
+
+export const checkout = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const payload = checkoutSchema.parse(req.body);
+        const actor = (req as any).user;
+
+        if (actor?.role) {
+            res.status(403).json({ message: 'Checkout is limited to organization accounts' });
+            return;
+        }
+
+        const resolvedOrgId = await resolveOrganizationId(actor);
+        if (!resolvedOrgId) {
+            res.status(403).json({ message: 'Organization user required' });
+            return;
+        }
+
+        await assertBillingComplianceForOrganization(resolvedOrgId, 'OWNER');
+
+        const idempotencyKey = req.headers['idempotency-key'] as string | undefined;
+        const result = await billingService.createCheckout({
+            organizationId: resolvedOrgId,
+            planType: payload.plan as PlanType,
+            billingTerm: payload.billingCadence,
+            idempotencyKey
+        });
+
+        res.json({ redirectUrl: result.redirectUrl });
+    } catch (error: any) {
+        if (isEnterpriseComplianceError(error)) {
+            res.status(error.status).json(toEnterpriseComplianceErrorResponse(error));
+            return;
+        }
+        if (handlePaymentConfigurationError(error, res)) {
+            return;
+        }
+        if (error instanceof z.ZodError) {
+            res.status(400).json({ errors: error.issues });
+            return;
+        }
+        res.status(400).json({ message: error.message || 'Checkout failed' });
+    }
+};
+
+export const stripeWebhook = async (req: Request, res: Response): Promise<void> => {
+    try {
+        const signature = req.headers['stripe-signature'] as string | undefined;
+        const rawBody = (req as any).rawBody;
+        if (typeof rawBody !== 'string' || rawBody.length === 0) {
+            res.status(400).json({ message: 'Missing raw webhook body' });
+            return;
+        }
+
+        const result = await billingService.handleStripeWebhook({
+            rawBody,
+            signature
+        });
+
+        res.json(result);
+    } catch (error: any) {
+        if (handlePaymentConfigurationError(error, res)) {
+            return;
+        }
+        res.status(400).json({ message: error.message || 'Stripe webhook rejected' });
+    }
+};
+
+const handleSSLCommerzCallback = async (
+    req: Request,
+    res: Response,
+    kind: 'success' | 'fail' | 'cancel'
+): Promise<void> => {
+    try {
+        const payload: Record<string, unknown> = {
+            ...(req.query as Record<string, unknown>),
+            ...((req.body || {}) as Record<string, unknown>)
+        };
+        const result = await billingService.processSSLCommerzCallback({ kind, payload });
+        res.redirect(302, result.redirectUrl);
+    } catch (error: any) {
+        if (error instanceof PaymentConfigurationError) {
+            console.error('[Billing] Payment configuration error during SSLCommerz callback:', error);
+        }
+        res.redirect(302, resolveSSLCommerzFailureRedirect());
+    }
+};
+
+export const sslcommerzSuccess = async (req: Request, res: Response): Promise<void> => {
+    await handleSSLCommerzCallback(req, res, 'success');
+};
+
+export const sslcommerzFail = async (req: Request, res: Response): Promise<void> => {
+    await handleSSLCommerzCallback(req, res, 'fail');
+};
+
+export const sslcommerzCancel = async (req: Request, res: Response): Promise<void> => {
+    await handleSSLCommerzCallback(req, res, 'cancel');
 };
 
 export const mockCheckout = async (req: Request, res: Response): Promise<void> => {
@@ -217,6 +349,10 @@ export const startTrial = async (req: Request, res: Response): Promise<void> => 
     } catch (error: any) {
         if (isEnterpriseComplianceError(error)) {
             res.status(error.status).json(toEnterpriseComplianceErrorResponse(error));
+            return;
+        }
+        if (error instanceof trialService.TrialServiceError && error.code === 'TRIAL_ALREADY_USED') {
+            res.status(400).json({ error: 'TRIAL_ALREADY_USED' });
             return;
         }
         if (error instanceof z.ZodError) {

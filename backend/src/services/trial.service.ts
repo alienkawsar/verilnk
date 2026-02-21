@@ -2,8 +2,24 @@ import { prisma } from '../db/client';
 import { AlertSeverity, BillingGateway, PlanStatus, PlanType, TrialSession, TrialStatus, SubscriptionStatus, SupportTier } from '@prisma/client';
 import * as alertService from './alert.service';
 
-const ALLOWED_TRIAL_DURATIONS = [7, 14];
+export const PRO_TRIAL_DURATION_DAYS = 14;
 const REMINDER_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
+
+export type TrialErrorCode =
+    | 'TRIAL_ALREADY_USED'
+    | 'TRIAL_DURATION_INVALID'
+    | 'TRIAL_PLAN_INVALID'
+    | 'TRIAL_ACTIVE_SUBSCRIPTION';
+
+export class TrialServiceError extends Error {
+    code: TrialErrorCode;
+
+    constructor(code: TrialErrorCode, message: string) {
+        super(message);
+        this.name = 'TrialServiceError';
+        this.code = code;
+    }
+}
 
 const ensureBillingAccount = async (organizationId: string) => {
     return prisma.billingAccount.upsert({
@@ -85,11 +101,11 @@ export const startTrial = async (params: {
     const planType = params.planType ?? PlanType.PRO;
 
     if (planType !== PlanType.PRO) {
-        throw new Error('Only PRO trials are supported');
+        throw new TrialServiceError('TRIAL_PLAN_INVALID', 'Only PRO trials are supported');
     }
 
-    if (!ALLOWED_TRIAL_DURATIONS.includes(params.durationDays)) {
-        throw new Error('Trial duration must be 7 or 14 days');
+    if (params.durationDays !== PRO_TRIAL_DURATION_DAYS) {
+        throw new TrialServiceError('TRIAL_DURATION_INVALID', 'Trial duration must be 14 days');
     }
 
     const billingAccount = await ensureBillingAccount(params.organizationId);
@@ -100,7 +116,7 @@ export const startTrial = async (params: {
     });
 
     if (existingTrial) {
-        throw new Error('Trial already used for this organization');
+        throw new TrialServiceError('TRIAL_ALREADY_USED', 'Trial already used for this organization');
     }
 
     const activeSubscription = await prisma.subscription.findFirst({
@@ -111,7 +127,7 @@ export const startTrial = async (params: {
     });
 
     if (activeSubscription) {
-        throw new Error('Active subscription found. Trial not available.');
+        throw new TrialServiceError('TRIAL_ACTIVE_SUBSCRIPTION', 'Active subscription found. Trial not available.');
     }
 
     const now = new Date();
@@ -131,15 +147,54 @@ export const startTrial = async (params: {
 };
 
 export const getTrialStatus = async (organizationId: string) => {
+    const now = new Date();
     const active = await getActiveTrialForOrganization(organizationId);
-    if (active) return { active: true, trial: active };
+    if (active) {
+        return {
+            active: true,
+            source: 'trial_session',
+            trial: active,
+            trialEndsAt: active.endsAt
+        };
+    }
+
+    const trialingSubscription = await prisma.subscription.findFirst({
+        where: {
+            status: SubscriptionStatus.TRIALING,
+            billingAccount: { organizationId }
+        },
+        orderBy: { trialEndsAt: 'desc' },
+        select: {
+            id: true,
+            status: true,
+            planType: true,
+            trialEndsAt: true,
+            currentPeriodEnd: true
+        }
+    });
+
+    const subscriptionTrialEndAt = trialingSubscription?.trialEndsAt || trialingSubscription?.currentPeriodEnd || null;
+    if (trialingSubscription && subscriptionTrialEndAt && subscriptionTrialEndAt.getTime() > now.getTime()) {
+        return {
+            active: true,
+            source: 'subscription',
+            trial: null,
+            subscription: trialingSubscription,
+            trialEndsAt: subscriptionTrialEndAt
+        };
+    }
 
     const latest = await prisma.trialSession.findFirst({
         where: { billingAccount: { organizationId } },
         orderBy: { createdAt: 'desc' }
     });
 
-    return { active: false, trial: latest };
+    return {
+        active: false,
+        source: 'none',
+        trial: latest,
+        trialEndsAt: latest?.endsAt || null
+    };
 };
 
 export const extendTrial = async (params: { organizationId: string; extraDays: number }) => {
