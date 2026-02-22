@@ -60,7 +60,10 @@ const stableStringify = (payload) => {
     return JSON.stringify(sorted);
 };
 const computeHash = (payload) => {
-    return crypto_1.default.createHash('sha256').update(stableStringify(payload)).digest('hex');
+    return crypto_1.default
+        .createHash('sha256')
+        .update(stableStringify(payload))
+        .digest('hex');
 };
 const buildInvoiceNumber = () => {
     const now = new Date();
@@ -68,16 +71,19 @@ const buildInvoiceNumber = () => {
     return `INV-${stamp}-${crypto_1.default.randomBytes(3).toString('hex').toUpperCase()}`;
 };
 const ensureBillingAccount = async (organizationId, details) => {
-    const existing = await client_1.prisma.billingAccount.findUnique({ where: { organizationId } });
+    const existing = await client_1.prisma.billingAccount.findUnique({
+        where: { organizationId },
+    });
     if (existing) {
-        if ((details?.billingEmail && existing.billingEmail !== details.billingEmail) ||
+        if ((details?.billingEmail &&
+            existing.billingEmail !== details.billingEmail) ||
             (details?.billingName && existing.billingName !== details.billingName)) {
             return client_1.prisma.billingAccount.update({
                 where: { id: existing.id },
                 data: {
                     billingEmail: details?.billingEmail ?? existing.billingEmail,
-                    billingName: details?.billingName ?? existing.billingName
-                }
+                    billingName: details?.billingName ?? existing.billingName,
+                },
             });
         }
         return existing;
@@ -87,8 +93,8 @@ const ensureBillingAccount = async (organizationId, details) => {
             organizationId,
             gateway: client_2.BillingGateway.NONE,
             billingEmail: details?.billingEmail,
-            billingName: details?.billingName
-        }
+            billingName: details?.billingName,
+        },
     });
 };
 const createMockCheckout = async (params) => {
@@ -96,22 +102,26 @@ const createMockCheckout = async (params) => {
         throw new Error('Mock checkout is disabled');
     }
     const billingTerm = (0, billing_pricing_service_1.resolveBillingTerm)(params.billingTerm || null, params.durationDays);
-    const durationDays = typeof params.durationDays === 'number' && Number.isFinite(params.durationDays) && params.durationDays > 0
+    const durationDays = typeof params.durationDays === 'number' &&
+        Number.isFinite(params.durationDays) &&
+        params.durationDays > 0
         ? Math.floor(params.durationDays)
         : (0, billing_pricing_service_1.billingTermToDurationDays)(billingTerm);
     const amountCents = (0, billing_pricing_service_1.resolvePlanChargeAmountCents)({
         planType: params.planType,
         billingTerm,
-        requestedAmountCents: params.amountCents
+        requestedAmountCents: params.amountCents,
     });
     const currency = params.currency || 'USD';
-    const org = await client_1.prisma.organization.findUnique({ where: { id: params.organizationId } });
+    const org = await client_1.prisma.organization.findUnique({
+        where: { id: params.organizationId },
+    });
     if (!org) {
         throw new Error('Organization not found');
     }
     const billingAccount = await ensureBillingAccount(params.organizationId, {
         billingEmail: params.billingEmail ?? org.email,
-        billingName: params.billingName ?? org.name
+        billingName: params.billingName ?? org.name,
     });
     const payloadHash = computeHash({
         organizationId: params.organizationId,
@@ -119,24 +129,25 @@ const createMockCheckout = async (params) => {
         amountCents,
         currency,
         billingTerm,
-        durationDays
+        durationDays,
     });
     if (params.idempotencyKey) {
         const existingAttempt = await client_1.prisma.paymentAttempt.findFirst({
             where: {
                 billingAccountId: billingAccount.id,
-                idempotencyKey: params.idempotencyKey
+                idempotencyKey: params.idempotencyKey,
             },
-            include: { invoice: true }
+            include: { invoice: true },
         });
         if (existingAttempt) {
-            if (existingAttempt.requestHash && existingAttempt.requestHash !== payloadHash) {
+            if (existingAttempt.requestHash &&
+                existingAttempt.requestHash !== payloadHash) {
                 throw new Error('Idempotency key reuse with different payload');
             }
             return {
                 paymentAttempt: existingAttempt,
                 invoice: existingAttempt.invoice,
-                callbackUrl: '/api/billing/mock/callback'
+                callbackUrl: '/api/billing/mock/callback',
             };
         }
     }
@@ -144,13 +155,13 @@ const createMockCheckout = async (params) => {
         planType: params.planType,
         billingTerm,
         durationDays,
-        organizationId: params.organizationId
+        organizationId: params.organizationId,
     };
     const invoiceIntegrityHash = (0, billing_security_service_1.computeInvoiceIntegrity)({
         planType: params.planType,
         amountCents,
         currency,
-        organizationId: params.organizationId
+        organizationId: params.organizationId,
     });
     const invoice = await client_1.prisma.invoice.create({
         data: {
@@ -160,8 +171,8 @@ const createMockCheckout = async (params) => {
             currency,
             invoiceNumber: buildInvoiceNumber(),
             metadata: invoiceMetadata,
-            integrityHash: invoiceIntegrityHash
-        }
+            integrityHash: invoiceIntegrityHash,
+        },
     });
     const paymentAttempt = await client_1.prisma.paymentAttempt.create({
         data: {
@@ -173,19 +184,19 @@ const createMockCheckout = async (params) => {
             gateway: client_2.BillingGateway.MOCK,
             gatewayPaymentId: buildMockId('mock_pay'),
             idempotencyKey: params.idempotencyKey,
-            requestHash: payloadHash
-        }
+            requestHash: payloadHash,
+        },
     });
     if (params.simulate) {
         return (0, exports.processMockCallback)({
             paymentAttemptId: paymentAttempt.id,
-            result: params.simulate
+            result: params.simulate,
         });
     }
     return {
         paymentAttempt,
         invoice,
-        callbackUrl: '/api/billing/mock/callback'
+        callbackUrl: '/api/billing/mock/callback',
     };
 };
 exports.createMockCheckout = createMockCheckout;
@@ -194,13 +205,15 @@ const provisionOrganizationPlanFromCheckout = async (params) => {
     // Public /billing/mock/checkout is the canonical invoice+subscription flow.
     // Super Admin org creation reuses this path to avoid divergent billing logic.
     const billingTerm = (0, billing_pricing_service_1.resolveBillingTerm)(params.billingTerm || null, params.durationDays);
-    const durationDays = typeof params.durationDays === 'number' && Number.isFinite(params.durationDays) && params.durationDays > 0
+    const durationDays = typeof params.durationDays === 'number' &&
+        Number.isFinite(params.durationDays) &&
+        params.durationDays > 0
         ? Math.floor(params.durationDays)
         : (0, billing_pricing_service_1.billingTermToDurationDays)(billingTerm);
     const amountCents = (0, billing_pricing_service_1.resolvePlanChargeAmountCents)({
         planType: params.planType,
         billingTerm,
-        requestedAmountCents: params.amountCents
+        requestedAmountCents: params.amountCents,
     });
     const checkoutResult = await (0, exports.createMockCheckout)({
         organizationId: params.organizationId,
@@ -212,13 +225,13 @@ const provisionOrganizationPlanFromCheckout = async (params) => {
         billingEmail: params.billingEmail,
         billingName: params.billingName,
         idempotencyKey: params.idempotencyKey,
-        simulate: 'success'
+        simulate: 'success',
     });
     return {
         ...checkoutResult,
         billingTerm,
         durationDays,
-        amountCents
+        amountCents,
     };
 };
 exports.provisionOrganizationPlanFromCheckout = provisionOrganizationPlanFromCheckout;
@@ -230,8 +243,8 @@ const processMockCallback = async (params) => {
         where: { id: params.paymentAttemptId },
         include: {
             invoice: true,
-            billingAccount: true
-        }
+            billingAccount: true,
+        },
     });
     if (!attempt) {
         throw new Error('Payment attempt not found');
@@ -241,13 +254,14 @@ const processMockCallback = async (params) => {
             paymentAttempt: attempt,
             invoice: attempt.invoice,
             idempotent: true,
-            replayed: true
+            replayed: true,
         };
     }
     if (!attempt.invoice) {
         throw new Error('Invoice not found');
     }
-    if (attempt.amountCents !== attempt.invoice.amountCents || attempt.currency !== attempt.invoice.currency) {
+    if (attempt.amountCents !== attempt.invoice.amountCents ||
+        attempt.currency !== attempt.invoice.currency) {
         throw new Error('Amount validation failed');
     }
     const integrityCheck = (0, billing_security_service_1.validateInvoiceIntegrity)({
@@ -255,7 +269,7 @@ const processMockCallback = async (params) => {
         planType: attempt.invoice.metadata?.planType,
         amountCents: attempt.invoice.amountCents,
         currency: attempt.invoice.currency,
-        integrityHash: attempt.invoice.integrityHash
+        integrityHash: attempt.invoice.integrityHash,
     });
     if (!integrityCheck.valid) {
         await client_1.prisma.$transaction([
@@ -264,15 +278,15 @@ const processMockCallback = async (params) => {
                 data: {
                     status: client_2.PaymentAttemptStatus.FAILED,
                     processedAt: new Date(),
-                    errorMessage: 'Invoice integrity validation failed'
-                }
+                    errorMessage: 'Invoice integrity validation failed',
+                },
             }),
             client_1.prisma.invoice.update({
                 where: { id: attempt.invoice.id },
                 data: {
-                    status: client_2.InvoiceStatus.VOID
-                }
-            })
+                    status: client_2.InvoiceStatus.VOID,
+                },
+            }),
         ]);
         throw new Error('Invoice integrity validation failed');
     }
@@ -284,15 +298,15 @@ const processMockCallback = async (params) => {
                 data: {
                     status: client_2.PaymentAttemptStatus.FAILED,
                     processedAt: now,
-                    errorMessage: 'Mock payment failed'
-                }
+                    errorMessage: 'Mock payment failed',
+                },
             }),
             client_1.prisma.invoice.update({
                 where: { id: attempt.invoice.id },
                 data: {
-                    status: client_2.InvoiceStatus.VOID
-                }
-            })
+                    status: client_2.InvoiceStatus.VOID,
+                },
+            }),
         ]);
         return { paymentAttempt, invoice };
     }
@@ -301,7 +315,8 @@ const processMockCallback = async (params) => {
     if (!planType) {
         throw new Error('Plan type missing from invoice metadata');
     }
-    const durationDays = typeof metadata.durationDays === 'number' && Number.isFinite(metadata.durationDays)
+    const durationDays = typeof metadata.durationDays === 'number' &&
+        Number.isFinite(metadata.durationDays)
         ? Math.max(1, Math.floor(metadata.durationDays))
         : 30;
     const billingTerm = (0, billing_pricing_service_1.resolveBillingTerm)(metadata.billingTerm || null, durationDays);
@@ -310,14 +325,14 @@ const processMockCallback = async (params) => {
     const activeSubscription = await client_1.prisma.subscription.findFirst({
         where: {
             billingAccountId: attempt.billingAccountId,
-            status: client_2.SubscriptionStatus.ACTIVE
-        }
+            status: client_2.SubscriptionStatus.ACTIVE,
+        },
     });
     const activeTrial = await client_1.prisma.trialSession.findFirst({
         where: {
             billingAccountId: attempt.billingAccountId,
-            status: client_2.TrialStatus.ACTIVE
-        }
+            status: client_2.TrialStatus.ACTIVE,
+        },
     });
     const [paymentAttempt, invoice, subscription] = await client_1.prisma.$transaction([
         client_1.prisma.paymentAttempt.update({
@@ -325,15 +340,15 @@ const processMockCallback = async (params) => {
             data: {
                 status: client_2.PaymentAttemptStatus.SUCCESS,
                 processedAt: now,
-                gatewayPaymentId: attempt.gatewayPaymentId || buildMockId('mock_txn')
-            }
+                gatewayPaymentId: attempt.gatewayPaymentId || buildMockId('mock_txn'),
+            },
         }),
         client_1.prisma.invoice.update({
             where: { id: attempt.invoice.id },
             data: {
                 status: client_2.InvoiceStatus.PAID,
-                paidAt: now
-            }
+                paidAt: now,
+            },
         }),
         client_1.prisma.subscription.create({
             data: {
@@ -347,18 +362,18 @@ const processMockCallback = async (params) => {
                 currentPeriodEnd: subscriptionPeriodEnd,
                 metadata: {
                     billingTerm,
-                    durationDays
-                }
-            }
-        })
+                    durationDays,
+                },
+            },
+        }),
     ]);
     if (activeSubscription) {
         await client_1.prisma.subscription.update({
             where: { id: activeSubscription.id },
             data: {
                 status: client_2.SubscriptionStatus.CANCELED,
-                canceledAt: now
-            }
+                canceledAt: now,
+            },
         });
     }
     if (activeTrial) {
@@ -366,39 +381,41 @@ const processMockCallback = async (params) => {
             where: { id: activeTrial.id },
             data: {
                 status: client_2.TrialStatus.CONVERTED,
-                convertedAt: now
-            }
+                convertedAt: now,
+            },
         });
     }
     await client_1.prisma.billingAccount.update({
         where: { id: attempt.billingAccountId },
         data: {
-            gateway: client_2.BillingGateway.MOCK
-        }
+            gateway: client_2.BillingGateway.MOCK,
+        },
     });
     await organizationService.updateOrganizationPlan(attempt.billingAccount.organizationId, {
         planType,
         planStatus: client_2.PlanStatus.ACTIVE,
-        durationDays
+        durationDays,
     });
     return {
         paymentAttempt,
         invoice,
-        subscription
+        subscription,
     };
 };
 exports.processMockCallback = processMockCallback;
 const PROVIDER_GATEWAY_MAP = {
     stripe: client_2.BillingGateway.STRIPE,
-    sslcommerz: client_2.BillingGateway.SSLCOMMERZ
+    sslcommerz: client_2.BillingGateway.SSLCOMMERZ,
 };
 const SELF_SERVE_CHECKOUT_PLANS = new Set([
     client_2.PlanType.BASIC,
     client_2.PlanType.PRO,
-    client_2.PlanType.BUSINESS
+    client_2.PlanType.BUSINESS,
 ]);
 const resolveAppUrl = () => {
-    const appUrl = (process.env.APP_URL || process.env.FRONTEND_URL || DEFAULT_APP_URL).trim();
+    const appUrl = (process.env.APP_URL ||
+        process.env.FRONTEND_URL ||
+        DEFAULT_APP_URL).trim();
     return appUrl.replace(/\/+$/g, '');
 };
 const resolveSSLCommerzBaseUrl = () => {
@@ -456,15 +473,16 @@ const getInvoiceMetadata = (invoice) => {
 const upsertInvoiceMetadata = async (invoice, patch) => {
     const merged = {
         ...getInvoiceMetadata(invoice),
-        ...patch
+        ...patch,
     };
     return client_1.prisma.invoice.update({
         where: { id: invoice.id },
-        data: { metadata: merged }
+        data: { metadata: merged },
     });
 };
 const resolveDurationFromInvoiceMetadata = (metadata) => {
-    if (typeof metadata.durationDays === 'number' && Number.isFinite(metadata.durationDays)) {
+    if (typeof metadata.durationDays === 'number' &&
+        Number.isFinite(metadata.durationDays)) {
         return Math.max(1, Math.floor(metadata.durationDays));
     }
     const billingTerm = metadata.billingTerm === 'ANNUAL' ? 'ANNUAL' : 'MONTHLY';
@@ -478,15 +496,15 @@ const createPendingAttempt = async (params) => {
             name: true,
             email: true,
             address: true,
-            phone: true
-        }
+            phone: true,
+        },
     });
     if (!organization) {
         throw new Error('Organization not found');
     }
     const billingAccount = await ensureBillingAccount(params.organizationId, {
         billingEmail: organization.email,
-        billingName: organization.name
+        billingName: organization.name,
     });
     const durationDays = resolveCheckoutDurationDays(params.billingTerm);
     const requestHash = computeHash({
@@ -496,18 +514,19 @@ const createPendingAttempt = async (params) => {
         provider: params.provider,
         amountCents: params.amountCents,
         currency: params.currency,
-        durationDays
+        durationDays,
     });
     if (params.idempotencyKey) {
         const existingAttempt = await client_1.prisma.paymentAttempt.findFirst({
             where: {
                 billingAccountId: billingAccount.id,
-                idempotencyKey: params.idempotencyKey
+                idempotencyKey: params.idempotencyKey,
             },
-            include: { invoice: true }
+            include: { invoice: true },
         });
         if (existingAttempt) {
-            if (existingAttempt.requestHash && existingAttempt.requestHash !== requestHash) {
+            if (existingAttempt.requestHash &&
+                existingAttempt.requestHash !== requestHash) {
                 throw new Error('Idempotency key reuse with different payload');
             }
             if (!existingAttempt.invoice) {
@@ -523,7 +542,7 @@ const createPendingAttempt = async (params) => {
                 paymentAttempt: existingAttempt,
                 invoice: existingAttempt.invoice,
                 idempotent: true,
-                redirectUrl
+                redirectUrl,
             };
         }
     }
@@ -532,13 +551,13 @@ const createPendingAttempt = async (params) => {
         billingTerm: params.billingTerm,
         durationDays,
         organizationId: params.organizationId,
-        provider: params.provider
+        provider: params.provider,
     };
     const integrityHash = (0, billing_security_service_1.computeInvoiceIntegrity)({
         planType: params.planType,
         amountCents: params.amountCents,
         currency: params.currency,
-        organizationId: params.organizationId
+        organizationId: params.organizationId,
     });
     const invoice = await client_1.prisma.invoice.create({
         data: {
@@ -548,8 +567,8 @@ const createPendingAttempt = async (params) => {
             currency: params.currency,
             invoiceNumber: buildInvoiceNumber(),
             metadata: invoiceMetadata,
-            integrityHash
-        }
+            integrityHash,
+        },
     });
     const paymentAttempt = await client_1.prisma.paymentAttempt.create({
         data: {
@@ -560,8 +579,8 @@ const createPendingAttempt = async (params) => {
             currency: params.currency,
             gateway: PROVIDER_GATEWAY_MAP[params.provider],
             idempotencyKey: params.idempotencyKey,
-            requestHash
-        }
+            requestHash,
+        },
     });
     return {
         organization,
@@ -569,7 +588,7 @@ const createPendingAttempt = async (params) => {
         paymentAttempt,
         invoice,
         idempotent: false,
-        redirectUrl: null
+        redirectUrl: null,
     };
 };
 const markAttemptFailed = async (params) => {
@@ -578,7 +597,7 @@ const markAttemptFailed = async (params) => {
         : client_2.PaymentAttemptStatus.FAILED;
     const attempt = await client_1.prisma.paymentAttempt.findUnique({
         where: { id: params.paymentAttemptId },
-        include: { invoice: true }
+        include: { invoice: true },
     });
     if (!attempt) {
         throw new Error('Payment attempt not found');
@@ -587,14 +606,14 @@ const markAttemptFailed = async (params) => {
         return {
             paymentAttempt: attempt,
             invoice: attempt.invoice,
-            idempotent: true
+            idempotent: true,
         };
     }
     if (attempt.status !== client_2.PaymentAttemptStatus.PENDING) {
         return {
             paymentAttempt: attempt,
             invoice: attempt.invoice,
-            idempotent: true
+            idempotent: true,
         };
     }
     const now = new Date();
@@ -606,16 +625,16 @@ const markAttemptFailed = async (params) => {
                 processedAt: now,
                 gateway: params.gateway,
                 gatewayPaymentId: params.gatewayPaymentId || attempt.gatewayPaymentId,
-                errorMessage: params.reason
-            }
+                errorMessage: params.reason,
+            },
         });
         let invoice = attempt.invoice;
         if (attempt.invoice) {
             invoice = await tx.invoice.update({
                 where: { id: attempt.invoice.id },
                 data: {
-                    status: client_2.InvoiceStatus.VOID
-                }
+                    status: client_2.InvoiceStatus.VOID,
+                },
             });
         }
         return { paymentAttempt, invoice };
@@ -627,8 +646,8 @@ const activateSuccessfulPayment = async (params) => {
         where: { id: params.paymentAttemptId },
         include: {
             invoice: true,
-            billingAccount: true
-        }
+            billingAccount: true,
+        },
     });
     if (!attempt) {
         throw new Error('Payment attempt not found');
@@ -638,49 +657,57 @@ const activateSuccessfulPayment = async (params) => {
             paymentAttempt: attempt,
             invoice: attempt.invoice,
             idempotent: true,
-            replayed: true
+            replayed: true,
         };
     }
     if (attempt.status !== client_2.PaymentAttemptStatus.PENDING) {
         return {
             paymentAttempt: attempt,
             invoice: attempt.invoice,
-            idempotent: true
+            idempotent: true,
         };
     }
     if (!attempt.invoice) {
         throw new Error('Invoice not found');
     }
-    if (attempt.amountCents !== attempt.invoice.amountCents || attempt.currency !== attempt.invoice.currency) {
+    if (attempt.amountCents !== attempt.invoice.amountCents ||
+        attempt.currency !== attempt.invoice.currency) {
         throw new Error('Amount validation failed');
     }
-    if (typeof params.expectedAmountCents === 'number'
-        && Number.isFinite(params.expectedAmountCents)
-        && params.expectedAmountCents > 0
-        && params.expectedAmountCents !== attempt.amountCents) {
+    if (typeof params.expectedAmountCents === 'number' &&
+        Number.isFinite(params.expectedAmountCents) &&
+        params.expectedAmountCents > 0 &&
+        params.expectedAmountCents !== attempt.amountCents) {
         throw new Error('Provider amount mismatch');
     }
     const expectedCurrency = normalizeCurrency(params.expectedCurrency || undefined);
-    if (expectedCurrency && expectedCurrency !== normalizeCurrency(attempt.currency)) {
+    if (expectedCurrency &&
+        expectedCurrency !== normalizeCurrency(attempt.currency)) {
         throw new Error('Provider currency mismatch');
     }
     const invoiceMetadata = getInvoiceMetadata(attempt.invoice);
     const integrityCheck = (0, billing_security_service_1.validateInvoiceIntegrity)({
-        organizationId: typeof invoiceMetadata.organizationId === 'string' ? invoiceMetadata.organizationId : undefined,
-        planType: typeof invoiceMetadata.planType === 'string' ? invoiceMetadata.planType : undefined,
+        organizationId: typeof invoiceMetadata.organizationId === 'string'
+            ? invoiceMetadata.organizationId
+            : undefined,
+        planType: typeof invoiceMetadata.planType === 'string'
+            ? invoiceMetadata.planType
+            : undefined,
         amountCents: attempt.invoice.amountCents,
         currency: attempt.invoice.currency,
-        integrityHash: attempt.invoice.integrityHash
+        integrityHash: attempt.invoice.integrityHash,
     });
     if (!integrityCheck.valid) {
         await markAttemptFailed({
             paymentAttemptId: attempt.id,
             gateway: params.gateway,
-            reason: 'Invoice integrity validation failed'
+            reason: 'Invoice integrity validation failed',
         });
         throw new Error('Invoice integrity validation failed');
     }
-    const rawPlanType = typeof invoiceMetadata.planType === 'string' ? invoiceMetadata.planType : '';
+    const rawPlanType = typeof invoiceMetadata.planType === 'string'
+        ? invoiceMetadata.planType
+        : '';
     if (!Object.values(client_2.PlanType).includes(rawPlanType)) {
         throw new Error('Plan type missing from invoice metadata');
     }
@@ -693,14 +720,14 @@ const activateSuccessfulPayment = async (params) => {
     const activeSubscription = await client_1.prisma.subscription.findFirst({
         where: {
             billingAccountId: attempt.billingAccountId,
-            status: client_2.SubscriptionStatus.ACTIVE
-        }
+            status: client_2.SubscriptionStatus.ACTIVE,
+        },
     });
     const activeTrial = await client_1.prisma.trialSession.findFirst({
         where: {
             billingAccountId: attempt.billingAccountId,
-            status: client_2.TrialStatus.ACTIVE
-        }
+            status: client_2.TrialStatus.ACTIVE,
+        },
     });
     const [paymentAttempt, invoice, subscription] = await client_1.prisma.$transaction([
         client_1.prisma.paymentAttempt.update({
@@ -710,15 +737,15 @@ const activateSuccessfulPayment = async (params) => {
                 processedAt: now,
                 gateway: params.gateway,
                 gatewayPaymentId: params.gatewayPaymentId || attempt.gatewayPaymentId,
-                errorMessage: null
-            }
+                errorMessage: null,
+            },
         }),
         client_1.prisma.invoice.update({
             where: { id: attempt.invoice.id },
             data: {
                 status: client_2.InvoiceStatus.PAID,
-                paidAt: now
-            }
+                paidAt: now,
+            },
         }),
         client_1.prisma.subscription.create({
             data: {
@@ -732,18 +759,18 @@ const activateSuccessfulPayment = async (params) => {
                 currentPeriodEnd: subscriptionPeriodEnd,
                 metadata: {
                     billingTerm,
-                    durationDays
-                }
-            }
-        })
+                    durationDays,
+                },
+            },
+        }),
     ]);
     if (activeSubscription) {
         await client_1.prisma.subscription.update({
             where: { id: activeSubscription.id },
             data: {
                 status: client_2.SubscriptionStatus.CANCELED,
-                canceledAt: now
-            }
+                canceledAt: now,
+            },
         });
     }
     if (activeTrial) {
@@ -751,26 +778,26 @@ const activateSuccessfulPayment = async (params) => {
             where: { id: activeTrial.id },
             data: {
                 status: client_2.TrialStatus.CONVERTED,
-                convertedAt: now
-            }
+                convertedAt: now,
+            },
         });
     }
     await client_1.prisma.billingAccount.update({
         where: { id: attempt.billingAccountId },
         data: {
-            gateway: params.gateway
-        }
+            gateway: params.gateway,
+        },
     });
     await organizationService.updateOrganizationPlan(attempt.billingAccount.organizationId, {
         planType,
         planStatus: client_2.PlanStatus.ACTIVE,
-        durationDays
+        durationDays,
     });
     return {
         paymentAttempt,
         invoice,
         subscription,
-        idempotent: false
+        idempotent: false,
     };
 };
 const createStripeCheckout = async (params) => {
@@ -793,18 +820,18 @@ const createStripeCheckout = async (params) => {
                     currency: normalizeCurrency(params.currency).toLowerCase(),
                     unit_amount: params.amountCents,
                     product_data: {
-                        name: `VeriLnk ${params.planType} ${params.billingTerm === 'ANNUAL' ? 'Annual' : 'Monthly'} Plan`
-                    }
-                }
-            }
+                        name: `VeriLnk ${params.planType} ${params.billingTerm === 'ANNUAL' ? 'Annual' : 'Monthly'} Plan`,
+                    },
+                },
+            },
         ],
         metadata: {
             paymentAttemptId: params.paymentAttempt.id,
             invoiceId: params.invoice.id,
             organizationId: params.organization.id,
             planType: params.planType,
-            billingTerm: params.billingTerm
-        }
+            billingTerm: params.billingTerm,
+        },
     });
     if (!session.url) {
         throw new Error('Stripe checkout URL was not returned');
@@ -813,31 +840,34 @@ const createStripeCheckout = async (params) => {
         where: { id: params.paymentAttempt.id },
         data: {
             gateway: client_2.BillingGateway.STRIPE,
-            gatewayPaymentId: session.id
-        }
+            gatewayPaymentId: session.id,
+        },
     });
     const updatedInvoice = await upsertInvoiceMetadata(params.invoice, {
         checkoutRedirectUrl: session.url,
-        checkoutSessionId: session.id
+        checkoutSessionId: session.id,
     });
     await client_1.prisma.invoice.update({
         where: { id: params.invoice.id },
         data: {
-            externalId: session.id
-        }
+            externalId: session.id,
+        },
     });
     return {
         redirectUrl: session.url,
         externalId: session.id,
-        invoice: updatedInvoice
+        invoice: updatedInvoice,
     };
 };
 const resolveSSLCommerzCallbackUrls = () => {
     const appUrl = resolveAppUrl();
     return {
-        successUrl: process.env.SSLCOMMERZ_SUCCESS_URL || `${appUrl}/api/billing/sslcommerz/success`,
-        failUrl: process.env.SSLCOMMERZ_FAIL_URL || `${appUrl}/api/billing/sslcommerz/fail`,
-        cancelUrl: process.env.SSLCOMMERZ_CANCEL_URL || `${appUrl}/api/billing/sslcommerz/cancel`
+        successUrl: process.env.SSLCOMMERZ_SUCCESS_URL ||
+            `${appUrl}/api/billing/sslcommerz/success`,
+        failUrl: process.env.SSLCOMMERZ_FAIL_URL ||
+            `${appUrl}/api/billing/sslcommerz/fail`,
+        cancelUrl: process.env.SSLCOMMERZ_CANCEL_URL ||
+            `${appUrl}/api/billing/sslcommerz/cancel`,
     };
 };
 const createSSLCommerzCheckout = async (params) => {
@@ -873,11 +903,11 @@ const createSSLCommerzCheckout = async (params) => {
     form.set('num_of_item', '1');
     const response = await axios_1.default.post(initUrl, form.toString(), {
         headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
+            'Content-Type': 'application/x-www-form-urlencoded',
         },
-        timeout: 15000
+        timeout: 15000,
     });
-    const payload = (response.data && typeof response.data === 'object')
+    const payload = response.data && typeof response.data === 'object'
         ? response.data
         : {};
     const redirectUrl = coerceString(payload.GatewayPageURL);
@@ -888,17 +918,17 @@ const createSSLCommerzCheckout = async (params) => {
         where: { id: params.paymentAttempt.id },
         data: {
             gateway: client_2.BillingGateway.SSLCOMMERZ,
-            gatewayPaymentId: transactionId
-        }
+            gatewayPaymentId: transactionId,
+        },
     });
     const updatedInvoice = await upsertInvoiceMetadata(params.invoice, {
         checkoutRedirectUrl: redirectUrl,
-        checkoutSessionId: coerceString(payload.sessionkey) || null
+        checkoutSessionId: coerceString(payload.sessionkey) || null,
     });
     return {
         redirectUrl,
         externalId: transactionId,
-        invoice: updatedInvoice
+        invoice: updatedInvoice,
     };
 };
 const verifySSLCommerzPayment = async (valId) => {
@@ -913,9 +943,9 @@ const verifySSLCommerzPayment = async (valId) => {
             val_id: valId,
             store_id: storeId,
             store_passwd: storePassword,
-            format: 'json'
+            format: 'json',
         },
-        timeout: 15000
+        timeout: 15000,
     });
     if (!response.data || typeof response.data !== 'object') {
         throw new Error('SSLCommerz validation payload was invalid');
@@ -927,7 +957,7 @@ const createCheckout = async (params) => {
     const provider = (0, payment_config_1.getConfiguredPaymentProvider)();
     const amountCents = (0, billing_pricing_service_1.resolvePlanChargeAmountCents)({
         planType: params.planType,
-        billingTerm: params.billingTerm
+        billingTerm: params.billingTerm,
     });
     const currency = 'USD';
     const pending = await createPendingAttempt({
@@ -937,7 +967,7 @@ const createCheckout = async (params) => {
         provider,
         amountCents,
         currency,
-        idempotencyKey: params.idempotencyKey
+        idempotencyKey: params.idempotencyKey,
     });
     if (pending.idempotent) {
         if (!pending.redirectUrl) {
@@ -945,7 +975,7 @@ const createCheckout = async (params) => {
         }
         return {
             redirectUrl: pending.redirectUrl,
-            idempotent: true
+            idempotent: true,
         };
     }
     const checkoutResult = provider === 'stripe'
@@ -956,7 +986,7 @@ const createCheckout = async (params) => {
             planType: params.planType,
             billingTerm: params.billingTerm,
             amountCents,
-            currency
+            currency,
         })
         : await createSSLCommerzCheckout({
             organization: pending.organization,
@@ -965,11 +995,11 @@ const createCheckout = async (params) => {
             planType: params.planType,
             billingTerm: params.billingTerm,
             amountCents,
-            currency
+            currency,
         });
     return {
         redirectUrl: checkoutResult.redirectUrl,
-        idempotent: false
+        idempotent: false,
     };
 };
 exports.createCheckout = createCheckout;
@@ -982,25 +1012,33 @@ const handleStripeWebhook = async (params) => {
     if (!params.signature) {
         throw new Error('Missing Stripe signature');
     }
-    const event = stripe.webhooks.constructEvent(params.rawBody, params.signature, webhookSecret);
-    if (event.type === 'checkout.session.completed'
-        || event.type === 'checkout.session.async_payment_succeeded'
-        || event.type === 'checkout.session.async_payment_failed'
-        || event.type === 'checkout.session.expired') {
+    const rawPayload = Buffer.isBuffer(params.rawBody)
+        ? params.rawBody
+        : Buffer.from(params.rawBody || '', 'utf8');
+    const event = stripe.webhooks.constructEvent(rawPayload, params.signature, webhookSecret);
+    if (event.type === 'checkout.session.completed' ||
+        event.type === 'checkout.session.async_payment_succeeded' ||
+        event.type === 'checkout.session.async_payment_failed' ||
+        event.type === 'checkout.session.expired') {
         const session = event.data.object;
         const paymentAttemptId = coerceString(session.metadata?.paymentAttemptId);
         if (!paymentAttemptId) {
             return { received: true, ignored: true, eventType: event.type };
         }
-        if (event.type === 'checkout.session.async_payment_failed' || event.type === 'checkout.session.expired') {
+        if (event.type === 'checkout.session.async_payment_failed' ||
+            event.type === 'checkout.session.expired') {
             await markAttemptFailed({
                 paymentAttemptId,
                 gateway: client_2.BillingGateway.STRIPE,
-                status: event.type === 'checkout.session.expired' ? client_2.PaymentAttemptStatus.CANCELED : client_2.PaymentAttemptStatus.FAILED,
-                gatewayPaymentId: typeof session.payment_intent === 'string' ? session.payment_intent : session.id,
+                status: event.type === 'checkout.session.expired'
+                    ? client_2.PaymentAttemptStatus.CANCELED
+                    : client_2.PaymentAttemptStatus.FAILED,
+                gatewayPaymentId: typeof session.payment_intent === 'string'
+                    ? session.payment_intent
+                    : session.id,
                 reason: event.type === 'checkout.session.expired'
                     ? 'Stripe checkout session expired'
-                    : 'Stripe payment failed'
+                    : 'Stripe payment failed',
             });
         }
         else {
@@ -1009,25 +1047,31 @@ const handleStripeWebhook = async (params) => {
                 await activateSuccessfulPayment({
                     paymentAttemptId,
                     gateway: client_2.BillingGateway.STRIPE,
-                    gatewayPaymentId: typeof session.payment_intent === 'string' ? session.payment_intent : session.id,
-                    expectedAmountCents: typeof session.amount_total === 'number' ? session.amount_total : null,
-                    expectedCurrency: typeof session.currency === 'string' ? session.currency : null
+                    gatewayPaymentId: typeof session.payment_intent === 'string'
+                        ? session.payment_intent
+                        : session.id,
+                    expectedAmountCents: typeof session.amount_total === 'number'
+                        ? session.amount_total
+                        : null,
+                    expectedCurrency: typeof session.currency === 'string' ? session.currency : null,
                 });
             }
         }
     }
     return {
         received: true,
-        eventType: event.type
+        eventType: event.type,
     };
 };
 exports.handleStripeWebhook = handleStripeWebhook;
 const processSSLCommerzCallback = async (params) => {
     const paymentAttemptId = coerceString(params.payload.tran_id);
-    const gatewayPaymentId = coerceString(params.payload.bank_tran_id) || coerceString(params.payload.val_id) || null;
+    const gatewayPaymentId = coerceString(params.payload.bank_tran_id) ||
+        coerceString(params.payload.val_id) ||
+        null;
     if (!paymentAttemptId) {
         return {
-            redirectUrl: buildUpgradeReturnUrl('failed')
+            redirectUrl: buildUpgradeReturnUrl('failed'),
         };
     }
     if (params.kind === 'cancel') {
@@ -1036,10 +1080,10 @@ const processSSLCommerzCallback = async (params) => {
             gateway: client_2.BillingGateway.SSLCOMMERZ,
             status: client_2.PaymentAttemptStatus.CANCELED,
             gatewayPaymentId,
-            reason: 'SSLCommerz payment canceled by user'
+            reason: 'SSLCommerz payment canceled by user',
         });
         return {
-            redirectUrl: buildUpgradeReturnUrl('canceled', paymentAttemptId)
+            redirectUrl: buildUpgradeReturnUrl('canceled', paymentAttemptId),
         };
     }
     if (params.kind === 'fail') {
@@ -1048,10 +1092,10 @@ const processSSLCommerzCallback = async (params) => {
             gateway: client_2.BillingGateway.SSLCOMMERZ,
             status: client_2.PaymentAttemptStatus.FAILED,
             gatewayPaymentId,
-            reason: 'SSLCommerz payment failed'
+            reason: 'SSLCommerz payment failed',
         });
         return {
-            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId)
+            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId),
         };
     }
     const valId = coerceString(params.payload.val_id);
@@ -1061,10 +1105,10 @@ const processSSLCommerzCallback = async (params) => {
             gateway: client_2.BillingGateway.SSLCOMMERZ,
             status: client_2.PaymentAttemptStatus.FAILED,
             gatewayPaymentId,
-            reason: 'SSLCommerz validation ID missing'
+            reason: 'SSLCommerz validation ID missing',
         });
         return {
-            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId)
+            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId),
         };
     }
     const validation = await verifySSLCommerzPayment(valId);
@@ -1075,10 +1119,10 @@ const processSSLCommerzCallback = async (params) => {
             gateway: client_2.BillingGateway.SSLCOMMERZ,
             status: client_2.PaymentAttemptStatus.FAILED,
             gatewayPaymentId,
-            reason: 'SSLCommerz validation failed'
+            reason: 'SSLCommerz validation failed',
         });
         return {
-            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId)
+            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId),
         };
     }
     const validatedTranId = coerceString(validation.tran_id);
@@ -1088,10 +1132,10 @@ const processSSLCommerzCallback = async (params) => {
             gateway: client_2.BillingGateway.SSLCOMMERZ,
             status: client_2.PaymentAttemptStatus.FAILED,
             gatewayPaymentId,
-            reason: 'SSLCommerz transaction mismatch'
+            reason: 'SSLCommerz transaction mismatch',
         });
         return {
-            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId)
+            redirectUrl: buildUpgradeReturnUrl('failed', paymentAttemptId),
         };
     }
     const expectedAmountCents = parseAmountToCents(validation.amount);
@@ -1101,10 +1145,10 @@ const processSSLCommerzCallback = async (params) => {
         gateway: client_2.BillingGateway.SSLCOMMERZ,
         gatewayPaymentId: coerceString(validation.bank_tran_id) || gatewayPaymentId,
         expectedAmountCents,
-        expectedCurrency
+        expectedCurrency,
     });
     return {
-        redirectUrl: buildUpgradeReturnUrl('success', paymentAttemptId)
+        redirectUrl: buildUpgradeReturnUrl('success', paymentAttemptId),
     };
 };
 exports.processSSLCommerzCallback = processSSLCommerzCallback;

@@ -66,7 +66,6 @@ const validatePaymentConfiguration = () => {
             throw new PaymentConfigurationError('SSLCOMMERZ_IS_SANDBOX must be a boolean token: true/false/1/0/yes/no.');
         }
     }
-    cachedProvider = provider;
     return provider;
 };
 exports.validatePaymentConfiguration = validatePaymentConfiguration;

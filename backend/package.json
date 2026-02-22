@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node -r dotenv/config dist/server.js",
-    "dev": "nodemon -r dotenv/config src/server.ts",
+    "dev": "nodemon",
     "build": "prisma generate && tsc",
     "reindex": "ts-node -r dotenv/config src/scripts/reindex.ts",
     "test": "vitest run"

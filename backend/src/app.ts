@@ -10,22 +10,27 @@ import { requestTimeout } from './middleware/timeout.middleware';
 import './config/ml.config'; // Load ML Environment Config
 
 const app = express();
+const STRIPE_WEBHOOK_PATH_PREFIX = '/api/billing/webhooks/stripe';
 
 // Security & Optimization Middleware
-app.use(helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // Allow resource loading if needed
-}));
-app.use(compression({
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' }, // Allow resource loading if needed
+  }),
+);
+app.use(
+  compression({
     filter: (req, res) => {
-        if (req.headers['x-no-compression']) {
-            return false;
-        }
-        if (res.getHeader('Content-Type') === 'text/event-stream') {
-            return false;
-        }
-        return compression.filter(req, res);
-    }
-}));
+      if (req.headers['x-no-compression']) {
+        return false;
+      }
+      if (res.getHeader('Content-Type') === 'text/event-stream') {
+        return false;
+      }
+      return compression.filter(req, res);
+    },
+  }),
+);
 app.use(morgan('combined')); // Structured logging
 
 // Custom Security Middleware (Legacy/Custom)
@@ -35,13 +40,18 @@ app.use(globalRateLimiter);
 
 import cookieParser from 'cookie-parser';
 
-app.use(express.json({
+app.use(
+  express.json({
     verify: (req, _res, buffer) => {
-        if ((req as any).originalUrl?.startsWith('/api/billing/webhooks/stripe')) {
-            (req as any).rawBody = buffer.toString('utf8');
-        }
-    }
-}));
+      const expressReq = req as unknown as Request;
+      const url = expressReq.originalUrl || expressReq.url || '';
+      if (url.startsWith(STRIPE_WEBHOOK_PATH_PREFIX)) {
+        expressReq.rawBody = buffer;
+        expressReq.rawBodyText = buffer.toString('utf8');
+      }
+    },
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use(requestTimeout(20000));
@@ -83,7 +93,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/sites', siteRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/v1', searchRoutes);
-app.use('/api/v1', enterpriseApiRoutes);  // Enterprise API (read-only, API key auth)
+app.use('/api/v1', enterpriseApiRoutes); // Enterprise API (read-only, API key auth)
 app.use('/api/upload', uploadRoutes);
 app.use('/api/states', stateRoutes);
 app.use('/api/admin', adminRoutes);
@@ -98,31 +108,35 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/billing', billingRoutes);
 app.use('/api/speech', speechRoutes);
 app.use('/api/realtime', realtimeRoutes);
-app.use('/api/enterprise', enterpriseRoutes);  // Enterprise dashboard (user auth)
+app.use('/api/enterprise', enterpriseRoutes); // Enterprise dashboard (user auth)
 import healthRoutes from './routes/health.routes';
 app.use('/health', healthRoutes);
-console.log('Routes mounted: /api/speech, /api/realtime, /api/admin/audit, /api/enterprise, /health');
+console.log(
+  'Routes mounted: /api/speech, /api/realtime, /api/admin/audit, /api/enterprise, /health',
+);
 
 // Optional compliance scheduler (daily)
 if (process.env.ENABLE_COMPLIANCE_SCHEDULER === 'true') {
-    const adminId = process.env.COMPLIANCE_SYSTEM_ADMIN_ID;
-    if (!adminId) {
-        console.warn('Compliance scheduler enabled but COMPLIANCE_SYSTEM_ADMIN_ID is missing.');
-    } else {
-        const oneDayMs = 24 * 60 * 60 * 1000;
-        setInterval(() => {
-            runScheduledComplianceJobs(adminId, 'SUPER_ADMIN').catch((err) => {
-                console.error('Compliance scheduled job failed:', err);
-            });
-        }, oneDayMs);
-    }
+  const adminId = process.env.COMPLIANCE_SYSTEM_ADMIN_ID;
+  if (!adminId) {
+    console.warn(
+      'Compliance scheduler enabled but COMPLIANCE_SYSTEM_ADMIN_ID is missing.',
+    );
+  } else {
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    setInterval(() => {
+      runScheduledComplianceJobs(adminId, 'SUPER_ADMIN').catch((err) => {
+        console.error('Compliance scheduled job failed:', err);
+      });
+    }, oneDayMs);
+  }
 }
 
 // Initialize Vosk Model (Lazy Loaded via Service)
 // initSpeechModel();
 
 app.get('/', (req: Request, res: Response) => {
-    res.send('Express server is running');
+  res.send('Express server is running');
 });
 
 // Error Handling Middleware (must be last)

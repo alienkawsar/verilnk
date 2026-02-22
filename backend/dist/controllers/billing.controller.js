@@ -54,23 +54,25 @@ const mockCheckoutSchema = zod_1.z.object({
     billingTerm: zod_1.z.enum(BILLING_TERM_VALUES).optional(),
     billingEmail: zod_1.z.string().email().optional(),
     billingName: zod_1.z.string().optional(),
-    simulate: zod_1.z.enum(['success', 'failure']).optional()
+    simulate: zod_1.z.enum(['success', 'failure']).optional(),
 });
 const mockCallbackSchema = zod_1.z.object({
     paymentAttemptId: zod_1.z.string().uuid(),
-    result: zod_1.z.enum(['success', 'failure'])
+    result: zod_1.z.enum(['success', 'failure']),
 });
 const startTrialSchema = zod_1.z.object({
     durationDays: zod_1.z
         .literal(trialService.PRO_TRIAL_DURATION_DAYS)
         .optional()
         .default(trialService.PRO_TRIAL_DURATION_DAYS),
-    planType: zod_1.z.nativeEnum(client_1.PlanType).optional()
+    planType: zod_1.z.nativeEnum(client_1.PlanType).optional(),
 });
-const checkoutSchema = zod_1.z.object({
+const checkoutSchema = zod_1.z
+    .object({
     plan: zod_1.z.enum(CHECKOUT_PLAN_VALUES),
-    billingCadence: zod_1.z.enum(BILLING_TERM_VALUES)
-}).strict();
+    billingCadence: zod_1.z.enum(BILLING_TERM_VALUES),
+})
+    .strict();
 const resolveOrganizationId = async (actor) => {
     if (!actor)
         return null;
@@ -80,14 +82,14 @@ const resolveOrganizationId = async (actor) => {
         return null;
     const user = await client_2.prisma.user.findUnique({
         where: { id: actor.id },
-        select: { organizationId: true }
+        select: { organizationId: true },
     });
     return user?.organizationId ?? null;
 };
 const assertBillingComplianceForOrganization = async (organizationId, actorRole) => {
     const organization = await client_2.prisma.organization.findUnique({
         where: { id: organizationId },
-        select: { id: true, planType: true, deletedAt: true }
+        select: { id: true, planType: true, deletedAt: true },
     });
     if (!organization || organization.deletedAt) {
         throw new Error('Organization not found');
@@ -98,11 +100,14 @@ const assertBillingComplianceForOrganization = async (organizationId, actorRole)
     await (0, enterprise_compliance_service_1.assertEnterpriseCompliance)({
         enterpriseId: organization.id,
         action: 'BILLING_CHANGE',
-        actorRole
+        actorRole,
     });
 };
 const resolveAppUrl = () => {
-    const appUrl = (process.env.APP_URL || process.env.FRONTEND_URL || 'http://localhost:3000').trim();
+    const appUrl = (process.env.APP_URL || '').trim();
+    if (!appUrl) {
+        throw new payment_config_1.PaymentConfigurationError('APP_URL must be set.');
+    }
     return appUrl.replace(/\/+$/g, '');
 };
 const resolveSSLCommerzFailureRedirect = () => {
@@ -114,7 +119,10 @@ const handlePaymentConfigurationError = (error, res) => {
     }
     // Keep full diagnostics in logs while masking config internals from clients.
     console.error('[Billing] Payment configuration error:', error);
-    res.status(500).json({ message: PAYMENT_MISCONFIGURED_MESSAGE });
+    const message = process.env.NODE_ENV === 'production'
+        ? PAYMENT_MISCONFIGURED_MESSAGE
+        : error.message;
+    res.status(500).json({ message });
     return true;
 };
 const checkout = async (req, res) => {
@@ -122,7 +130,9 @@ const checkout = async (req, res) => {
         const payload = checkoutSchema.parse(req.body);
         const actor = req.user;
         if (actor?.role) {
-            res.status(403).json({ message: 'Checkout is limited to organization accounts' });
+            res
+                .status(403)
+                .json({ message: 'Checkout is limited to organization accounts' });
             return;
         }
         const resolvedOrgId = await resolveOrganizationId(actor);
@@ -136,7 +146,7 @@ const checkout = async (req, res) => {
             organizationId: resolvedOrgId,
             planType: payload.plan,
             billingTerm: payload.billingCadence,
-            idempotencyKey
+            idempotencyKey,
         });
         res.json({ redirectUrl: result.redirectUrl });
     }
@@ -159,14 +169,14 @@ exports.checkout = checkout;
 const stripeWebhook = async (req, res) => {
     try {
         const signature = req.headers['stripe-signature'];
-        const rawBody = req.rawBody;
-        if (typeof rawBody !== 'string' || rawBody.length === 0) {
+        const rawBody = req.rawBody ?? req.rawBodyText ?? null;
+        if (!rawBody) {
             res.status(400).json({ message: 'Missing raw webhook body' });
             return;
         }
         const result = await billingService.handleStripeWebhook({
             rawBody,
-            signature
+            signature,
         });
         res.json(result);
     }
@@ -174,7 +184,9 @@ const stripeWebhook = async (req, res) => {
         if (handlePaymentConfigurationError(error, res)) {
             return;
         }
-        res.status(400).json({ message: error.message || 'Stripe webhook rejected' });
+        res
+            .status(400)
+            .json({ message: error.message || 'Stripe webhook rejected' });
     }
 };
 exports.stripeWebhook = stripeWebhook;
@@ -182,16 +194,29 @@ const handleSSLCommerzCallback = async (req, res, kind) => {
     try {
         const payload = {
             ...req.query,
-            ...(req.body || {})
+            ...(req.body || {}),
         };
-        const result = await billingService.processSSLCommerzCallback({ kind, payload });
+        const result = await billingService.processSSLCommerzCallback({
+            kind,
+            payload,
+        });
         res.redirect(302, result.redirectUrl);
     }
     catch (error) {
         if (error instanceof payment_config_1.PaymentConfigurationError) {
             console.error('[Billing] Payment configuration error during SSLCommerz callback:', error);
         }
-        res.redirect(302, resolveSSLCommerzFailureRedirect());
+        else {
+            console.error('[Billing] SSLCommerz callback failed:', error);
+        }
+        let fallbackRedirect = '/org/upgrade?status=failed';
+        try {
+            fallbackRedirect = resolveSSLCommerzFailureRedirect();
+        }
+        catch (redirectError) {
+            console.error('[Billing] Failed to resolve SSLCommerz failure redirect:', redirectError);
+        }
+        res.redirect(302, fallbackRedirect);
     }
 };
 const sslcommerzSuccess = async (req, res) => {
@@ -213,7 +238,9 @@ const mockCheckout = async (req, res) => {
         let organizationId = payload.organizationId;
         if (actor?.role) {
             if (!organizationId) {
-                res.status(400).json({ message: 'organizationId is required for admin checkout' });
+                res
+                    .status(400)
+                    .json({ message: 'organizationId is required for admin checkout' });
                 return;
             }
         }
@@ -238,7 +265,7 @@ const mockCheckout = async (req, res) => {
         const result = await billingService.createMockCheckout({
             ...payload,
             organizationId,
-            idempotencyKey
+            idempotencyKey,
         });
         res.json(result);
     }
@@ -260,7 +287,9 @@ const mockCallback = async (req, res) => {
         const signature = req.headers['x-webhook-signature'];
         const signatureCheck = (0, billing_security_service_1.verifyWebhookSignature)(req.body || {}, signature);
         if (!signatureCheck.verified) {
-            res.status(400).json({ message: signatureCheck.reason || 'Invalid signature' });
+            res
+                .status(400)
+                .json({ message: signatureCheck.reason || 'Invalid signature' });
             return;
         }
         const payload = mockCallbackSchema.parse(req.body);
@@ -270,10 +299,10 @@ const mockCallback = async (req, res) => {
             include: {
                 billingAccount: {
                     select: {
-                        organizationId: true
-                    }
-                }
-            }
+                        organizationId: true,
+                    },
+                },
+            },
         });
         if (!actor?.role) {
             const resolvedOrgId = await resolveOrganizationId(actor);
@@ -281,8 +310,8 @@ const mockCallback = async (req, res) => {
                 res.status(403).json({ message: 'Organization user required' });
                 return;
             }
-            if (!attemptForCompliance
-                || attemptForCompliance.billingAccount.organizationId !== resolvedOrgId) {
+            if (!attemptForCompliance ||
+                attemptForCompliance.billingAccount.organizationId !== resolvedOrgId) {
                 res.status(403).json({ message: 'Forbidden' });
                 return;
             }
@@ -311,7 +340,9 @@ const startTrial = async (req, res) => {
         const payload = startTrialSchema.parse(req.body);
         const actor = req.user;
         if (actor?.role) {
-            res.status(403).json({ message: 'Trial start is limited to organization accounts' });
+            res
+                .status(403)
+                .json({ message: 'Trial start is limited to organization accounts' });
             return;
         }
         const resolvedOrgId = await resolveOrganizationId(actor);
@@ -323,7 +354,7 @@ const startTrial = async (req, res) => {
         const trial = await trialService.startTrial({
             organizationId: resolvedOrgId,
             durationDays: payload.durationDays,
-            planType: payload.planType
+            planType: payload.planType,
         });
         res.json({ trial });
     }
@@ -332,7 +363,8 @@ const startTrial = async (req, res) => {
             res.status(error.status).json((0, enterprise_compliance_service_1.toEnterpriseComplianceErrorResponse)(error));
             return;
         }
-        if (error instanceof trialService.TrialServiceError && error.code === 'TRIAL_ALREADY_USED') {
+        if (error instanceof trialService.TrialServiceError &&
+            error.code === 'TRIAL_ALREADY_USED') {
             res.status(400).json({ error: 'TRIAL_ALREADY_USED' });
             return;
         }
@@ -348,7 +380,9 @@ const getTrialStatus = async (req, res) => {
     try {
         const actor = req.user;
         if (actor?.role) {
-            res.status(403).json({ message: 'Trial status is limited to organization accounts' });
+            res
+                .status(403)
+                .json({ message: 'Trial status is limited to organization accounts' });
             return;
         }
         const resolvedOrgId = await resolveOrganizationId(actor);
@@ -360,7 +394,9 @@ const getTrialStatus = async (req, res) => {
         res.json(status);
     }
     catch (error) {
-        res.status(500).json({ message: error.message || 'Failed to load trial status' });
+        res
+            .status(500)
+            .json({ message: error.message || 'Failed to load trial status' });
     }
 };
 exports.getTrialStatus = getTrialStatus;

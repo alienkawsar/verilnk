@@ -43,11 +43,24 @@ const meilisearch_service_1 = require("./services/meilisearch.service");
 const jwt_1 = require("./config/jwt");
 const payment_config_1 = require("./config/payment.config");
 const PORT = process.env.PORT || 8000;
-console.log("DB_URL present:", !!process.env.DATABASE_URL);
-console.log("Current Directory:", process.cwd());
+const isProduction = process.env.NODE_ENV === 'production';
+if (!isProduction) {
+    console.log('DB_URL present:', !!process.env.DATABASE_URL);
+    console.log('Current Directory:', process.cwd());
+}
 (0, jwt_1.ensureJwtSecret)();
 // Fail fast on invalid payment configuration before app bootstrap.
-(0, payment_config_1.validatePaymentConfiguration)();
+try {
+    (0, payment_config_1.validatePaymentConfiguration)();
+}
+catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const appUrlHint = message.includes('APP_URL')
+        ? ' Set APP_URL=http://localhost:3000 (dev).'
+        : '';
+    console.error(`❌ Payment configuration invalid: ${message}${appUrlHint}`);
+    process.exit(1);
+}
 async function checkDatabase() {
     try {
         // Quick check to see if critical tables exist

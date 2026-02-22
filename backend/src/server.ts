@@ -7,47 +7,63 @@ import { ensureJwtSecret } from './config/jwt';
 import { validatePaymentConfiguration } from './config/payment.config';
 
 const PORT = process.env.PORT || 8000;
-console.log("DB_URL present:", !!process.env.DATABASE_URL);
-console.log("Current Directory:", process.cwd());
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (!isProduction) {
+  console.log('DB_URL present:', !!process.env.DATABASE_URL);
+  console.log('Current Directory:', process.cwd());
+}
+
 ensureJwtSecret();
 // Fail fast on invalid payment configuration before app bootstrap.
-validatePaymentConfiguration();
+try {
+  validatePaymentConfiguration();
+} catch (error: any) {
+  const message = error instanceof Error ? error.message : String(error);
+  const appUrlHint = message.includes('APP_URL')
+    ? ' Set APP_URL=http://localhost:3000 (dev).'
+    : '';
+  console.error(`❌ Payment configuration invalid: ${message}${appUrlHint}`);
+  process.exit(1);
+}
 
 async function checkDatabase() {
-    try {
-        // Quick check to see if critical tables exist
-        await prisma.bulkImportJob.count();
-        console.log('✅ Integrity Check: BulkImportJob table exists');
-    } catch (e: any) {
-        console.error('❌ CRITICAL ERROR: BulkImportJob table missing or DB unreachable.');
-        console.error('❌ Please run: "npx prisma migrate dev" in backend/');
-    }
+  try {
+    // Quick check to see if critical tables exist
+    await prisma.bulkImportJob.count();
+    console.log('✅ Integrity Check: BulkImportJob table exists');
+  } catch (e: any) {
+    console.error(
+      '❌ CRITICAL ERROR: BulkImportJob table missing or DB unreachable.',
+    );
+    console.error('❌ Please run: "npx prisma migrate dev" in backend/');
+  }
 }
 
 const startServer = async () => {
-    const { default: app } = await import('./app');
-    app.listen(PORT, async () => {
-        await checkDatabase();
-        await initializeMeilisearch();
-        console.log(`Server is running on port ${PORT}`);
-    });
+  const { default: app } = await import('./app');
+  app.listen(PORT, async () => {
+    await checkDatabase();
+    await initializeMeilisearch();
+    console.log(`Server is running on port ${PORT}`);
+  });
 };
 
 void startServer().catch((error) => {
-    console.error('❌ Server bootstrap failed:', error);
-    process.exit(1);
+  console.error('❌ Server bootstrap failed:', error);
+  process.exit(1);
 });
 
 const shutdown = async (signal: 'SIGTERM' | 'SIGINT') => {
-    console.log(`${signal} received, disconnecting Prisma...`);
-    await prisma.$disconnect();
-    process.exit(0);
+  console.log(`${signal} received, disconnecting Prisma...`);
+  await prisma.$disconnect();
+  process.exit(0);
 };
 
 process.on('SIGTERM', () => {
-    void shutdown('SIGTERM');
+  void shutdown('SIGTERM');
 });
 
 process.on('SIGINT', () => {
-    void shutdown('SIGINT');
+  void shutdown('SIGINT');
 });

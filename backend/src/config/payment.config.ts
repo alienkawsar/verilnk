@@ -88,7 +88,6 @@ export const validatePaymentConfiguration = (): PaymentProvider => {
     }
   }
 
-  cachedProvider = provider;
   return provider;
 };
 
