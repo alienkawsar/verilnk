@@ -397,6 +397,54 @@ export const searchSites = async (
     return promise;
 };
 
+export interface SavedSiteItem {
+    id: string;
+    name?: string;
+    title?: string;
+    url: string;
+    description?: string;
+    country_name?: string;
+    country?: { name: string };
+    category_name?: string;
+    category?: { name: string };
+    verification?: string;
+    status?: string;
+    organization_id?: string | null;
+    organization_public?: boolean;
+    organizationId?: string | null;
+    organizationPublic?: boolean;
+    organizationWebsite?: string | null;
+    organization_website?: string | null;
+    organization?: { website?: string | null } | null;
+}
+
+export interface SavedSitesListResponse {
+    items: SavedSiteItem[];
+    nextCursor: string | null;
+}
+
+export const fetchMySavedSites = async (params?: { cursor?: string; limit?: number }) => {
+    const response = await api.get('/users/me/saved-sites', {
+        params: sanitizeQueryParams(params)
+    });
+    return response.data as SavedSitesListResponse;
+};
+
+export const fetchMySavedSiteIds = async () => {
+    const response = await api.get('/users/me/saved-sites/ids');
+    return response.data as { siteIds: string[] };
+};
+
+export const saveMySite = async (siteId: string) => {
+    const response = await api.post(`/users/me/saved-sites/${siteId}`);
+    return response.data as { ok: true };
+};
+
+export const unsaveMySite = async (siteId: string) => {
+    const response = await api.delete(`/users/me/saved-sites/${siteId}`);
+    return response.data as { ok: true };
+};
+
 export const fetchSiteById = async (id: string) => {
     const response = await api.get(`/sites/${id}`);
     return response.data;

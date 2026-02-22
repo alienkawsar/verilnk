@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, Bookmark, ShieldCheck } from 'lucide-react';
 import ReportModal from '@/components/ReportModal';
 import LoginModal from '@/components/auth/LoginModal';
 import SignupModal from '@/components/auth/SignupModal';
 import { useAuth } from '@/context/AuthContext';
+import { useSavedSites } from '@/hooks/useSavedSites';
 import { trackClickFireAndForget } from '@/lib/api';
 
 interface Site {
@@ -32,6 +33,7 @@ interface Site {
 
 export default function SiteCard({ site }: { site: Site }) {
     const { user } = useAuth();
+    const { isSaved, isUpdating, toggle } = useSavedSites();
     const [isReportOpen, setIsReportOpen] = useState(false);
     const [isLoginOpen, setIsLoginOpen] = useState(false);
     const [isSignupOpen, setIsSignupOpen] = useState(false);
@@ -51,6 +53,8 @@ export default function SiteCard({ site }: { site: Site }) {
     const orgPublic = site.organization_public ?? site.organizationPublic ?? false;
     const hasVerifiedProfile = !!orgId && orgPublic === true;
     const websiteLabel = orgId ? 'Official Website ↗' : 'Visit Website ↗';
+    const saved = isSaved(site.id);
+    const savePending = isUpdating(site.id);
 
     const handleReportClick = (e: React.MouseEvent) => {
         e.preventDefault();
@@ -67,19 +71,44 @@ export default function SiteCard({ site }: { site: Site }) {
         trackClickFireAndForget(orgId, site.id);
     };
 
+    const handleSaveClick = async (e: React.MouseEvent<HTMLButtonElement>) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!user) {
+            setIsLoginOpen(true);
+            return;
+        }
+
+        await toggle(site.id);
+    };
+
     return (
         <>
             <div className="group relative surface-card rounded-xl transition-all duration-300 overflow-hidden shadow-md hover:shadow-[0_8px_30px_rgba(0,0,0,0.1)] hover:border-blue-500/40">
                 <div className="p-6">
-                    <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-lg font-bold text-[var(--app-text-primary)] group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex items-center gap-2">
-                            {displayName}
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                        <h3 className="text-lg font-bold text-[var(--app-text-primary)] group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors flex items-center gap-2 min-w-0">
+                            <span className="truncate">{displayName}</span>
                             {isVerified && (
                                 <>
                                     <ShieldCheck className="w-5 h-5 text-[var(--app-primary)]" />
                                 </>
                             )}
                         </h3>
+                        <button
+                            type="button"
+                            onClick={handleSaveClick}
+                            disabled={savePending}
+                            aria-label={saved ? 'Unsave site' : 'Save site'}
+                            title={saved ? 'Unsave site' : 'Save site'}
+                            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/50 ${saved
+                                ? 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-300'
+                                : 'border-[var(--app-border)] text-[var(--app-text-secondary)] hover:bg-slate-100 dark:hover:bg-white/10'
+                                } ${savePending ? 'opacity-70 cursor-wait' : ''}`}
+                        >
+                            <Bookmark className={`h-4 w-4 ${saved ? 'fill-current' : ''}`} />
+                        </button>
                     </div>
                     <span className="inline-flex items-center text-sm text-[var(--app-text-secondary)] mb-4">
                         {hostname}

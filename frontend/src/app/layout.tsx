@@ -86,6 +86,7 @@ import { NextAuthProvider } from "@/components/auth/NextAuthProvider";
 import RecaptchaProvider from "@/components/auth/RecaptchaProvider";
 import { CountryProvider } from "@/context/CountryContext";
 import { AuthProvider } from "@/context/AuthContext";
+import { SavedSitesProvider } from "@/context/SavedSitesContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ThemeProvider } from "@/context/ThemeContext";
 import MainLayoutWrapper from "@/components/layout/MainLayoutWrapper";
@@ -108,14 +109,16 @@ export default function RootLayout({
             <AuthProvider>
               <CountryProvider>
                 <ToastProvider>
-                  <ThemeProvider>
-                    <ConnectivityProvider>
-                      <MainLayoutWrapper>
-                        {children}
-                      </MainLayoutWrapper>
-                      <SessionMonitor />
-                    </ConnectivityProvider>
-                  </ThemeProvider>
+                  <SavedSitesProvider>
+                    <ThemeProvider>
+                      <ConnectivityProvider>
+                        <MainLayoutWrapper>
+                          {children}
+                        </MainLayoutWrapper>
+                        <SessionMonitor />
+                      </ConnectivityProvider>
+                    </ThemeProvider>
+                  </SavedSitesProvider>
                 </ToastProvider>
               </CountryProvider>
             </AuthProvider>

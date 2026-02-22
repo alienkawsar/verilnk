@@ -16,7 +16,7 @@ import {
 import LoginModal from '@/components/auth/LoginModal';
 import SignupModal from '@/components/auth/SignupModal';
 import { useAuth } from '@/context/AuthContext';
-import { LogIn, User as UserIcon, LogOut, Menu } from 'lucide-react';
+import { Bookmark, LogIn, User as UserIcon, LogOut, Menu } from 'lucide-react';
 import { Skeleton } from '@/components/ui/Skeleton'; // Added Skeleton import
 
 import { useTheme } from '@/context/ThemeContext';
@@ -295,6 +295,18 @@ function NavbarContent() {
                               <UserIcon className='w-4 h-4' />
                             </div>
                             Dashboard
+                          </Link>
+
+                          <Link
+                            href='/saved-sites'
+                            onClick={() => setDropdownOpen(false)}
+                            className='flex items-center gap-2 px-3 py-2 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors'
+                          >
+                            <div className='w-8 h-8 rounded-lg bg-blue-500/10 flex items-center justify-center text-blue-600 dark:text-blue-400'>
+                              <Bookmark className='w-4 h-4' />
+                            </div>
+                            <span className='hidden sm:inline'>Saved sites</span>
+                            <span className='sm:hidden'>Saved</span>
                           </Link>
 
                           <div className='lg:hidden flex items-center justify-between px-3 py-2 text-sm text-slate-700 dark:text-slate-300'>

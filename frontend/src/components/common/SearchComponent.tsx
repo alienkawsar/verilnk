@@ -33,6 +33,7 @@ export default function SearchComponent() {
     const abortRef = useRef<AbortController | null>(null);
     const router = useRouter();
     const wrapperRef = useRef<HTMLDivElement>(null);
+    const inputRef = useRef<HTMLInputElement>(null);
 
     // Modal States
     const [reportSite, setReportSite] = useState<{ id: string; url: string } | null>(null);
@@ -118,6 +119,18 @@ export default function SearchComponent() {
         }
     };
 
+    const clearQuery = () => {
+        if (!query) return;
+        if (abortRef.current) {
+            abortRef.current.abort();
+        }
+        setQuery('');
+        setResults([]);
+        setShowResults(false);
+        setLoading(false);
+        inputRef.current?.focus();
+    };
+
     const getBadge = (status: string) => {
         switch (status) {
             case 'SUCCESS':
@@ -142,25 +155,34 @@ export default function SearchComponent() {
                     <div className="text-slate-400 group-focus-within:text-blue-500 dark:group-focus-within:text-blue-400 transition-colors">
                         <Search className={`h-5 w-5 ${loading ? 'animate-pulse text-blue-500' : ''}`} />
                     </div>
-                    <input
-                        type="text"
-                        className="flex-1 h-full min-w-0 bg-transparent border-none text-[var(--app-text-primary)] placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-0 px-1 text-base font-medium tracking-tight selection:bg-blue-500/30"
-                        placeholder="Search verified sites (e.g., 'Ministry of Education', 'Tax Portal')..."
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        onFocus={() => query.length > 1 && setShowResults(true)}
-                    />
-                    <div className="flex items-center gap-1.5">
+                    <div className="relative flex-1 h-full min-w-0">
+                        <input
+                            type="text"
+                            ref={inputRef}
+                            className="h-full w-full min-w-0 bg-transparent border-none text-[var(--app-text-primary)] placeholder-slate-500 dark:placeholder-slate-400 focus:outline-none focus:ring-0 px-1 pr-10 text-base font-medium tracking-tight selection:bg-blue-500/30"
+                            placeholder="Search verified sites (e.g., 'Ministry of Education', 'Tax Portal')..."
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            onFocus={() => query.length > 1 && setShowResults(true)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Escape' && query) {
+                                    e.preventDefault();
+                                    clearQuery();
+                                }
+                            }}
+                        />
                         {query && (
                             <button
                                 type="button"
-                                onClick={() => setQuery('')}
-                                className="h-9 w-9 inline-flex items-center justify-center rounded-full border border-black/5 text-slate-400 hover:text-slate-600 dark:border-white/10 dark:hover:text-slate-200 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-primary)]/50"
+                                onClick={clearQuery}
+                                className="absolute right-1 top-1/2 -translate-y-1/2 h-8 w-8 inline-flex items-center justify-center rounded-full text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 opacity-80 hover:opacity-100 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-primary)]/50"
                                 aria-label="Clear search"
                             >
                                 <X className="w-4 h-4" />
                             </button>
                         )}
+                    </div>
+                    <div className="flex items-center gap-1.5">
                         <button
                             type="submit"
                             className="h-[38px] w-[38px] inline-flex items-center justify-center rounded-full btn-primary shadow-md hover:shadow-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--btn-primary)]/50"
